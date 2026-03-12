@@ -1,0 +1,15 @@
+---
+description: Always provide clickable links for SQL and Markdown files
+alwaysApply: true
+---
+
+# SQL and Markdown Link Rule
+
+When referencing any SQL or Markdown file in responses:
+
+- Always include a clickable Markdown link to the file path.
+- Prefer relative project paths in links (for example, `[Phase 1+2 Test Plan](docs/phase1-phase2-test-plan.md)`).
+- If sharing SQL/MD content that already exists in the repo, include the file link before or alongside the content.
+- If creating a new SQL/MD file, include a clickable link to that new file in the same response.
+
+Do not provide plain-text-only path mentions for SQL/MD files when a clickable link can be provided.

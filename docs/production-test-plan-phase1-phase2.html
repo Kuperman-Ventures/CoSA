@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CoSA Production Test Plan (Phase 1 + 2)</title>
+    <style>
+      :root {
+        --text: #111827;
+        --muted: #4b5563;
+        --line: #d1d5db;
+        --bg: #f9fafb;
+        --card: #ffffff;
+        --accent: #0f172a;
+        --ok: #065f46;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        line-height: 1.45;
+      }
+
+      .page {
+        max-width: 920px;
+        margin: 28px auto;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 26px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 10px;
+        line-height: 1.2;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      h2 {
+        margin-top: 22px;
+        font-size: 20px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 6px;
+      }
+
+      h3 {
+        margin-top: 16px;
+        font-size: 16px;
+      }
+
+      p {
+        margin: 8px 0;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .callout {
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1e3a8a;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 12px 0;
+      }
+
+      .row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .field {
+        flex: 1 1 220px;
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        min-height: 58px;
+      }
+
+      .checklist {
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .checklist li {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        border-bottom: 1px solid #eef2f7;
+        padding: 8px 0;
+      }
+
+      .box {
+        width: 14px;
+        height: 14px;
+        border: 1.7px solid #111827;
+        border-radius: 2px;
+        margin-top: 3px;
+        flex: 0 0 auto;
+      }
+
+      .step {
+        margin: 10px 0;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .small {
+        font-size: 13px;
+      }
+
+      .footer {
+        margin-top: 22px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+
+      @media print {
+        body {
+          background: white;
+        }
+        .page {
+          margin: 0;
+          border: none;
+          border-radius: 0;
+          max-width: none;
+          padding: 0;
+        }
+        .no-print {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>CoSA Production Test Plan (Phase 1 + 2)</h1>
+      <p class="muted">
+        Use this after each production deploy. This plan is production-first (no local test dependency).
+      </p>
+
+      <div class="callout">
+        <strong>Working Rule:</strong> Build -> Push -> Deploy -> Test on production URL.
+      </div>
+
+      <section>
+        <h2>Run Info</h2>
+        <div class="row">
+          <div class="field"><strong>Date:</strong></div>
+          <div class="field"><strong>Tester:</strong></div>
+          <div class="field"><strong>Production URL:</strong></div>
+        </div>
+        <div class="row" style="margin-top: 10px">
+          <div class="field"><strong>Browser:</strong></div>
+          <div class="field"><strong>Device:</strong> Desktop / Laptop / Mobile</div>
+          <div class="field"><strong>Build/Commit:</strong></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Release Flow (Every Time)</h2>
+        <div class="step"><strong>1.</strong> Merge or push latest code to main branch.</div>
+        <div class="step"><strong>2.</strong> Confirm Vercel production deploy is complete and healthy.</div>
+        <div class="step"><strong>3.</strong> Open production URL in a fresh browser tab.</div>
+        <div class="step"><strong>4.</strong> Run all checks below, in order.</div>
+      </section>
+
+      <section>
+        <h2>A. Production Smoke Test</h2>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Production URL loads with no blank screen.</span></li>
+          <li><span class="box"></span><span>Bottom navigation is visible and clickable.</span></li>
+          <li><span class="box"></span><span>No obvious layout breaks on your main device.</span></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>B. Auth (Google SSO)</h2>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Signed-out state shows Google sign-in action.</span></li>
+          <li><span class="box"></span><span>Google login succeeds and returns to production app.</span></li>
+          <li><span class="box"></span><span>Signed-in email appears in header.</span></li>
+          <li><span class="box"></span><span>Sign out works and returns to signed-out state.</span></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>C. Phase 1 - Today + Timer</h2>
+
+        <h3>Timer States</h3>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Not Started is visible before start.</span></li>
+          <li><span class="box"></span><span>Running starts countdown correctly.</span></li>
+          <li><span class="box"></span><span>Pause works and Resume returns to Running.</span></li>
+          <li><span class="box"></span><span>Complete changes state to Completed.</span></li>
+          <li><span class="box"></span><span>Cancel changes state to Cancelled.</span></li>
+          <li><span class="box"></span><span>Overrun appears when timer hits zero and counts upward.</span></li>
+        </ul>
+
+        <h3>Prompt Rules</h3>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Complete is blocked without "What was actually completed?" text.</span></li>
+          <li><span class="box"></span><span>Done + Outcome task requires Yes/No outcome before completion.</span></li>
+          <li><span class="box"></span><span>Overrun message appears clearly in red state.</span></li>
+        </ul>
+
+        <h3>Ventures / Encore Rule</h3>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Start is blocked if definition of done has fewer than 10 words.</span></li>
+          <li><span class="box"></span><span>Start works once definition has 10+ words.</span></li>
+          <li><span class="box"></span><span>Completion recap shows definition vs actual completed.</span></li>
+        </ul>
+
+        <h3>Timer Metrics</h3>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Pause count increments correctly.</span></li>
+          <li><span class="box"></span><span>Pause duration accumulates correctly.</span></li>
+          <li><span class="box"></span><span>Cancelled time displays remaining time when cancelled.</span></li>
+          <li><span class="box"></span><span>Overrun and time saved values update correctly.</span></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>D. Phase 2 - Task Library</h2>
+
+        <h3>Fields + Editability</h3>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Can edit Name, Track, Subtasks, Default Time, Frequency, Completion Type, KPI Mapping, Time Block, Status.</span></li>
+          <li><span class="box"></span><span>Add Task creates a new editable library task.</span></li>
+          <li><span class="box"></span><span>Validation shows clear issues for required missing fields.</span></li>
+        </ul>
+
+        <h3>Status Behavior</h3>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Active tasks are marked deployable.</span></li>
+          <li><span class="box"></span><span>Paused tasks are excluded from deploy.</span></li>
+          <li><span class="box"></span><span>Archived tasks are excluded from deploy.</span></li>
+          <li><span class="box"></span><span>All/Active/Paused/Archived filter works.</span></li>
+        </ul>
+
+        <h3>Deploy Snapshot Rule (Most Important)</h3>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Deploy preview shows Ready vs Blocked Active tasks.</span></li>
+          <li><span class="box"></span><span>Deploy is blocked if any Active task has validation errors.</span></li>
+          <li><span class="box"></span><span>Deploy succeeds once Active tasks are valid.</span></li>
+          <li><span class="box"></span><span>Last deployment timestamp updates.</span></li>
+          <li><span class="box"></span><span>Today queue reflects the new snapshot after deploy.</span></li>
+        </ul>
+
+        <h3>Non-Retroactive Proof Test</h3>
+        <ol class="small">
+          <li>Deploy to Today.</li>
+          <li>Edit a library task (name or estimate).</li>
+          <li>Do <strong>not</strong> deploy again yet.</li>
+        </ol>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Today still shows old values (unchanged).</span></li>
+        </ul>
+        <ol class="small" start="4">
+          <li>Deploy again.</li>
+        </ol>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Today now shows updated values from library.</span></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>E. Cross-Device Production Check</h2>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Login on desktop/laptop browser works.</span></li>
+          <li><span class="box"></span><span>Open production URL on second device and login with same Google account.</span></li>
+          <li><span class="box"></span><span>UI is readable and usable on mobile browser.</span></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Defects / Notes</h2>
+        <p>1) _______________________________________________</p>
+        <p>2) _______________________________________________</p>
+        <p>3) _______________________________________________</p>
+        <p>4) _______________________________________________</p>
+      </section>
+
+      <section class="footer">
+        <h2>Sign-Off</h2>
+        <ul class="checklist">
+          <li><span class="box"></span><span>Phase 1 accepted in production.</span></li>
+          <li><span class="box"></span><span>Phase 2 accepted in production.</span></li>
+        </ul>
+        <p><strong>Tester Signature:</strong> _______________________ &nbsp;&nbsp; <strong>Date:</strong> ____________</p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -40,5 +40,6 @@ This creates initial Phase 1 tables, RLS policies, and ownership rules.
 See:
 
 - `docs/platform-setup-checklist.md`
+- `docs/phase1-phase2-test-plan.md`
 
 for step-by-step GitHub, Supabase, and Vercel setup.
