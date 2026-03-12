@@ -461,6 +461,98 @@ const NAV_ITEMS = [
   { id: 'analytics', label: 'Analytics' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v3'
+const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
+
+const KPI_DEFINITIONS = [
+  // ─── Kuperman Advisors ────────────────────────────────────────────────────
+  { id: 'outreach-messages',  label: 'Outreach messages sent',   target: 6, period: 'week',  kpiMapping: 'Outreach messages sent',  trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
+  { id: 'discovery-held',     label: 'Discovery calls held',      target: 1, period: 'week',  kpiMapping: 'Discovery calls held',    trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
+  { id: 'discovery-booked',   label: 'Discovery calls booked',    target: 2, period: 'week',  kpiMapping: 'Discovery calls booked',  trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
+  { id: 'connective',         label: 'Connective attendance',     target: 1, period: 'week',  kpiMapping: 'Connective attendance',   trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
+  { id: 'case-study',         label: 'Case study progress',       target: 1, period: 'month', kpiMapping: 'Case study progress',     trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
+  // ─── Shared (Networking) ─────────────────────────────────────────────────
+  { id: 'warm-reconnects',    label: 'Warm reconnects sent',      target: 3, period: 'week',  kpiMapping: 'Warm reconnects sent',    trackGroup: 'Shared (Networking)',  color: '#2E75B6' },
+  { id: 'coffee-chats',       label: 'Coffee chats held',         target: 1, period: 'week',  kpiMapping: 'Coffee chats held',       trackGroup: 'Shared (Networking)',  color: '#2E75B6' },
+  { id: 'linkedin-comments',  label: 'LinkedIn comments posted',  target: 5, period: 'week',  kpiMapping: 'LinkedIn comments posted',trackGroup: 'Shared (Networking)',  color: '#2E75B6' },
+  // ─── Job Search ──────────────────────────────────────────────────────────
+  { id: 'companies-researched',label:'Companies researched',      target: 2, period: 'week',  kpiMapping: 'Companies researched',    trackGroup: 'Job Search',           color: '#2E75B6' },
+  { id: 'applications',       label: 'Applications submitted',    target: 2, period: 'week',  kpiMapping: 'Applications submitted',  trackGroup: 'Job Search',           color: '#2E75B6' },
+  { id: 'recruiter-touchpoints',label:'Recruiter touchpoints',    target: 3, period: 'week',  kpiMapping: 'Recruiter touchpoints',   trackGroup: 'Job Search',           color: '#2E75B6' },
+  // ─── Kuperman Ventures ───────────────────────────────────────────────────
+  { id: 'tester-touchpoints', label: 'Tester touchpoints',        target: 2, period: 'week',  kpiMapping: 'Tester touchpoints',      trackGroup: 'Kuperman Ventures',    color: '#9B6BAE' },
+  { id: 'definition-used',    label: 'Definition of done used',   target: null,period:'week', kpiMapping: 'Definition of done used', trackGroup: 'Kuperman Ventures',    color: '#9B6BAE', isRate: true },
+  { id: 'things-shipped',     label: 'Things shipped',            target: 1, period: 'week',  kpiMapping: 'Things shipped',          trackGroup: 'Kuperman Ventures',    color: '#9B6BAE' },
+]
+
+const KPI_TRACK_GROUPS = ['Kuperman Advisors', 'Shared (Networking)', 'Job Search', 'Kuperman Ventures']
+
+function loadCompletionLog() {
+  if (typeof window === 'undefined') return []
+  const raw = window.localStorage.getItem(COMPLETION_LOG_KEY)
+  const parsed = safeParseJSON(raw)
+  return Array.isArray(parsed) ? parsed : []
+}
+
+function saveCompletionLog(log) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(COMPLETION_LOG_KEY, JSON.stringify(log))
+}
+
+function getWeekBounds(offsetWeeks = 0) {
+  const now = new Date()
+  const dayOfWeek = now.getDay()
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+  const monday = new Date(now)
+  monday.setDate(now.getDate() - daysToMonday + offsetWeeks * 7)
+  monday.setHours(0, 0, 0, 0)
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 6)
+  sunday.setHours(23, 59, 59, 999)
+  return { start: monday, end: sunday }
+}
+
+function getMonthBoundsForWeek(offsetWeeks = 0) {
+  const { start } = getWeekBounds(offsetWeeks)
+  const monthStart = new Date(start.getFullYear(), start.getMonth(), 1, 0, 0, 0, 0)
+  const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 0, 23, 59, 59, 999)
+  return { start: monthStart, end: monthEnd }
+}
+
+function countKpi(log, kpiDef, weekStart, weekEnd, monthStart, monthEnd) {
+  const rangeStart = kpiDef.period === 'month' ? monthStart : weekStart
+  const rangeEnd = kpiDef.period === 'month' ? monthEnd : weekEnd
+
+  if (kpiDef.isRate) {
+    const allVentures = log.filter((e) => {
+      const d = new Date(e.completedAt)
+      return d >= rangeStart && d <= rangeEnd && e.track === 'ventures' &&
+        (e.completionType === 'Done' || e.completionType === 'Done + Outcome')
+    })
+    const dodUsed = allVentures.filter((e) => e.definitionOfDoneUsed)
+    return { count: dodUsed.length, total: allVentures.length }
+  }
+
+  const count = log.filter((e) => {
+    const d = new Date(e.completedAt)
+    if (d < rangeStart || d > rangeEnd) return false
+    if (e.kpiMapping !== kpiDef.kpiMapping) return false
+    if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
+    return true
+  }).length
+
+  return { count, total: null }
+}
+
+function isKpiHit(count, total, kpiDef) {
+  if (kpiDef.isRate) return total > 0 && count === total
+  if (!kpiDef.target) return count > 0
+  return count >= kpiDef.target
+}
+
+function formatWeekLabel(weekStart, weekEnd) {
+  const opts = { month: 'short', day: 'numeric' }
+  return `${weekStart.toLocaleDateString('en-US', opts)} – ${weekEnd.toLocaleDateString('en-US', { ...opts, year: 'numeric' })}`
+}
 
 function getTomorrowDateString() {
   const d = new Date()
@@ -508,6 +600,7 @@ function mapLibraryTaskToTodayTask(task, deploymentId, index) {
     subtasks: task.subtasks
       ? task.subtasks.split('\n').map((s) => s.trim()).filter(Boolean)
       : [],
+    kpiMapping: task.kpiMapping ?? '',
   }
 }
 
@@ -675,6 +768,8 @@ function App() {
   const [deferredTasks, setDeferredTasks] = useState(bootstrap.deferredTasks)
   const [aiSuggestion, setAiSuggestion] = useState({ loading: false, text: '', error: '' })
   const overrunNotifiedRef = useRef(new Set())
+  const [completionLog, setCompletionLog] = useState(() => loadCompletionLog())
+  const [weekOffset, setWeekOffset] = useState(0)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -896,6 +991,10 @@ function App() {
     })
   }, [activeTaskId, deferredTasks, lastDeploymentAt, rescheduleQueue, sessions, taskLibrary, todayTasks])
 
+  useEffect(() => {
+    saveCompletionLog(completionLog)
+  }, [completionLog])
+
   function updateLibraryTask(taskId, field, value) {
     setTaskLibrary((prev) =>
       prev.map((task) => (task.id === taskId ? { ...task, [field]: value } : task)),
@@ -1052,6 +1151,29 @@ function App() {
         },
       }
     })
+    const cancelledPauseDelta =
+      activeSession.timerState === TIMER_STATES.paused && activeSession.currentPauseStartedAtMs
+        ? Math.floor((Date.now() - activeSession.currentPauseStartedAtMs) / 1000)
+        : 0
+    setCompletionLog((prev) => [
+      ...prev,
+      {
+        id: `log-${Date.now()}`,
+        taskId: activeTask.id,
+        taskName: activeTask.name,
+        track: activeTask.track,
+        kpiMapping: activeTask.kpiMapping ?? '',
+        completionType: 'Cancelled',
+        outcomeAchieved: null,
+        definitionOfDoneUsed: false,
+        completedAt: new Date().toISOString(),
+        estimateSeconds: activeSession.estimateSeconds,
+        elapsedSeconds: activeSession.elapsedSeconds,
+        pauseCount: activeSession.pauseCount,
+        pauseDurationSeconds: activeSession.pauseDurationSeconds + Math.max(0, cancelledPauseDelta),
+        cancelledSeconds: activeSession.remainingSeconds,
+      },
+    ])
     const remainingMins = Math.ceil(activeSession.remainingSeconds / 60)
     setRescheduleQueue((q) => {
       const alreadyQueued = q.some((item) => item.taskId === activeTask.id && item.reason === 'cancelled')
@@ -1112,6 +1234,24 @@ function App() {
         },
       }
     })
+
+    const logEntry = {
+      id: `log-${Date.now()}`,
+      taskId: activeTask.id,
+      taskName: activeTask.name,
+      track: activeTask.track,
+      kpiMapping: activeTask.kpiMapping ?? '',
+      completionType: isPartial ? 'Partial' : activeTask.completionType,
+      outcomeAchieved: isPartial ? null : outcomeSelection,
+      definitionOfDoneUsed: Boolean(activeSession.definitionOfDone?.trim()),
+      completedAt: new Date().toISOString(),
+      estimateSeconds: activeSession.estimateSeconds,
+      elapsedSeconds: activeSession.elapsedSeconds,
+      pauseCount: activeSession.pauseCount,
+      pauseDurationSeconds: activeSession.pauseDurationSeconds + Math.max(0, pauseDelta),
+      cancelledSeconds: 0,
+    }
+    setCompletionLog((prev) => [...prev, logEntry])
 
     if (isPartial) {
       const remainingMins = Math.ceil(activeSession.remainingSeconds / 60)
@@ -1536,6 +1676,148 @@ function App() {
             </p>
           ) : null}
         </article>
+      </section>
+    )
+  }
+
+  function renderKpiDashboard() {
+    const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
+    const { start: monthStart, end: monthEnd } = getMonthBoundsForWeek(weekOffset)
+    const isCurrentWeek = weekOffset === 0
+
+    const kpiResults = KPI_DEFINITIONS.map((kpiDef) => {
+      const { count, total } = countKpi(completionLog, kpiDef, weekStart, weekEnd, monthStart, monthEnd)
+      const hit = isKpiHit(count, total, kpiDef)
+      return { ...kpiDef, count, total, hit }
+    })
+
+    const weeklyKpis = kpiResults.filter((k) => !k.isRate && k.period === 'week' && k.target)
+    const kpisHit = weeklyKpis.filter((k) => k.hit).length
+    const weekScore = kpisHit >= 7 ? 'green' : kpisHit >= 4 ? 'yellow' : 'red'
+    const scoreConfig = {
+      green:  { label: 'Green',  desc: '7+ KPIs hit — strong week',     bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
+      yellow: { label: 'Yellow', desc: '4–6 KPIs hit — room to improve', bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300'   },
+      red:    { label: 'Red',    desc: '3 or fewer KPIs hit — regroup',  bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300'    },
+    }
+    const score = scoreConfig[weekScore]
+
+    const completionRateByTrack = Object.values(TRACKS).map((track) => {
+      const trackLog = completionLog.filter((e) => {
+        const d = new Date(e.completedAt)
+        return d >= weekStart && d <= weekEnd && e.track === track.key
+      })
+      const completed = trackLog.filter((e) => e.completionType === 'Done' || e.completionType === 'Done + Outcome').length
+      const total = trackLog.length
+      return { track, completed, total, rate: total > 0 ? Math.round((completed / total) * 100) : null }
+    })
+
+    return (
+      <section className="space-y-4 p-4">
+        {/* Week navigation */}
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setWeekOffset((o) => o - 1)}
+            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            ← Prev
+          </button>
+          <div className="text-center">
+            <p className="text-sm font-semibold text-slate-900">{formatWeekLabel(weekStart, weekEnd)}</p>
+            {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setWeekOffset((o) => Math.min(0, o + 1))}
+            disabled={isCurrentWeek}
+            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-30"
+          >
+            Next →
+          </button>
+        </div>
+
+        {/* Week score */}
+        <article className={`rounded-xl border ${score.border} ${score.bg} p-4`}>
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-70">Week Score</p>
+          <p className={`mt-1 text-2xl font-bold ${score.text}`}>{score.label}</p>
+          <p className={`text-sm ${score.text}`}>{score.desc}</p>
+          <p className={`mt-1 text-xs ${score.text} opacity-80`}>
+            {kpisHit} of {weeklyKpis.length} weekly KPIs hit
+          </p>
+        </article>
+
+        {/* KPI scorecard by track group */}
+        {KPI_TRACK_GROUPS.map((group) => {
+          const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
+          return (
+            <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${groupKpis[0]?.color}18` }}>
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: groupKpis[0]?.color }} />
+                <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
+                    <th className="px-4 py-2 font-medium">KPI</th>
+                    <th className="px-3 py-2 text-center font-medium">Target</th>
+                    <th className="px-3 py-2 text-center font-medium">This {groupKpis[0]?.period === 'month' ? 'Month' : 'Week'}</th>
+                    <th className="px-3 py-2 text-center font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupKpis.map((kpi) => (
+                    <tr key={kpi.id} className="border-b border-slate-50 last:border-0">
+                      <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
+                      <td className="px-3 py-2.5 text-center text-slate-500">
+                        {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-center font-medium text-slate-900">
+                        {kpi.isRate
+                          ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
+                          : kpi.count}
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        {kpi.isRate && kpi.total === 0 ? (
+                          <span className="text-slate-400 text-xs">No sessions</span>
+                        ) : kpi.hit ? (
+                          <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                        ) : (
+                          <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </article>
+          )
+        })}
+
+        {/* Completion rate by track */}
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold uppercase text-slate-500">Completion Rate by Track</h2>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {completionRateByTrack.map(({ track, completed, total, rate }) => (
+              <div key={track.key} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-center">
+                <p className="text-xs font-medium text-slate-500">{track.label}</p>
+                <p className="mt-1 text-2xl font-bold text-slate-900">{rate !== null ? `${rate}%` : '—'}</p>
+                <p className="text-xs text-slate-400">{completed} done / {total} total</p>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${rate ?? 0}%`, backgroundColor: track.color }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        {completionLog.length === 0 ? (
+          <p className="text-center text-sm text-slate-400">
+            Complete tasks to start building your KPI scorecard.
+          </p>
+        ) : null}
       </section>
     )
   }
@@ -2039,12 +2321,7 @@ function App() {
       ) : null}
       {activeScreen === 'taskLibrary' ? renderTaskLibrary() : null}
       {activeScreen === 'reschedule' ? renderRescheduleScreen() : null}
-      {activeScreen === 'kpi'
-        ? renderPlaceholderScreen(
-            'KPI Dashboard',
-            'Phase 4 will auto-calculate weekly KPIs from task completion and outcome events.',
-          )
-        : null}
+      {activeScreen === 'kpi' ? renderKpiDashboard() : null}
       {activeScreen === 'analytics'
         ? renderPlaceholderScreen(
             'Analytics',
