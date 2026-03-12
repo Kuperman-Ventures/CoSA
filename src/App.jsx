@@ -1,5 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Pause, Play, SquareCheck, StopCircle } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Pause, Play, SquareCheck, StopCircle, GripVertical, Sparkles, AlertTriangle, Clock } from 'lucide-react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
 
 const TRACKS = {
@@ -33,7 +49,7 @@ const TIMER_STATES = {
 }
 
 const FREQUENCIES = ['Daily', 'Weekly', 'Monthly', 'As scheduled']
-const COMPLETION_TYPES = ['Done', 'Done + Outcome']
+const COMPLETION_TYPES = ['Done', 'Done + Outcome', 'Partial']
 const LIBRARY_STATUSES = ['Active', 'Paused', 'Archived']
 const TIME_BLOCK_ORDER = ['BD', 'Networking', 'Job Search', 'Encore OS', 'Friday']
 
@@ -444,7 +460,24 @@ const NAV_ITEMS = [
   { id: 'kpi', label: 'KPI Dashboard' },
   { id: 'analytics', label: 'Analytics' },
 ]
-const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v2'
+const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v3'
+
+function getTomorrowDateString() {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+function getTodayDateString() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function formatDate(isoDate) {
+  if (!isoDate) return ''
+  const [year, month, day] = isoDate.split('-')
+  const d = new Date(Number(year), Number(month) - 1, Number(day))
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
 
 function wordsCount(text) {
   return text.trim().split(/\s+/).filter(Boolean).length
@@ -562,6 +595,39 @@ function getInitialSession(task) {
   }
 }
 
+function SortableTaskRow({ task, session, trackMeta }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: task.id,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+    >
+      <button
+        type="button"
+        className="cursor-grab text-slate-400 hover:text-slate-600 active:cursor-grabbing"
+        {...attributes}
+        {...listeners}
+        aria-label="Drag to reorder"
+      >
+        <GripVertical size={16} />
+      </button>
+      <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: trackMeta?.color }} />
+      <div className="flex-1 min-w-0">
+        <p className="truncate font-medium">{task.name}</p>
+        <p className="text-xs text-slate-500">{task.timeBlock} · {task.estimateMinutes}m · {session?.timerState}</p>
+      </div>
+    </li>
+  )
+}
+
 function App() {
   const supabaseConfigured = isSupabaseConfigured()
   const bootstrap = useMemo(() => {
@@ -583,6 +649,8 @@ function App() {
       sessions: sessionState,
       activeTaskId: persisted?.activeTaskId ?? today[0]?.id ?? null,
       lastDeploymentAt: persisted?.lastDeploymentAt ?? new Date().toISOString(),
+      rescheduleQueue: Array.isArray(persisted?.rescheduleQueue) ? persisted.rescheduleQueue : [],
+      deferredTasks: Array.isArray(persisted?.deferredTasks) ? persisted.deferredTasks : [],
     }
   }, [])
 
@@ -603,6 +671,14 @@ function App() {
   const [libraryMessage, setLibraryMessage] = useState('')
   const [lastDeploymentAt, setLastDeploymentAt] = useState(bootstrap.lastDeploymentAt)
   const [libraryFilter, setLibraryFilter] = useState('All')
+  const [rescheduleQueue, setRescheduleQueue] = useState(bootstrap.rescheduleQueue)
+  const [deferredTasks, setDeferredTasks] = useState(bootstrap.deferredTasks)
+  const [aiSuggestion, setAiSuggestion] = useState({ loading: false, text: '', error: '' })
+  const overrunNotifiedRef = useRef(new Set())
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
   const effectiveSelectedLibraryTaskId = taskLibrary.some((task) => task.id === selectedLibraryTaskId)
     ? selectedLibraryTaskId
     : taskLibrary[0]?.id ?? null
@@ -640,6 +716,34 @@ function App() {
         const nextElapsed = current.elapsedSeconds + 1
         const nextRemaining = current.remainingSeconds - 1
         const didOverrun = current.timerState === TIMER_STATES.running && nextRemaining <= 0
+
+        const overrunSeconds = nextElapsed - current.estimateSeconds
+        if (
+          current.timerState === TIMER_STATES.overrun &&
+          overrunSeconds === 5 * 60 &&
+          !overrunNotifiedRef.current.has(activeTask.id)
+        ) {
+          overrunNotifiedRef.current.add(activeTask.id)
+          setRescheduleQueue((q) => {
+            const alreadyQueued = q.some((item) => item.taskId === activeTask.id && item.reason === 'overrun')
+            if (alreadyQueued) return q
+            return [
+              ...q,
+              {
+                id: `rq-${Date.now()}`,
+                taskId: activeTask.id,
+                taskName: activeTask.name,
+                track: activeTask.track,
+                timeBlock: activeTask.timeBlock,
+                reason: 'overrun',
+                remainingMinutes: null,
+                status: 'pending',
+                suggestedDate: getTomorrowDateString(),
+                suggestedTimeBlock: activeTask.timeBlock,
+              },
+            ]
+          })
+        }
 
         return {
           ...prev,
@@ -787,8 +891,10 @@ function App() {
       sessions,
       activeTaskId,
       lastDeploymentAt,
+      rescheduleQueue,
+      deferredTasks,
     })
-  }, [activeTaskId, lastDeploymentAt, sessions, taskLibrary, todayTasks])
+  }, [activeTaskId, deferredTasks, lastDeploymentAt, rescheduleQueue, sessions, taskLibrary, todayTasks])
 
   function updateLibraryTask(taskId, field, value) {
     setTaskLibrary((prev) =>
@@ -946,13 +1052,35 @@ function App() {
         },
       }
     })
-    setStatusMessage('Task cancelled. Remaining time has been logged for rescheduling.')
+    const remainingMins = Math.ceil(activeSession.remainingSeconds / 60)
+    setRescheduleQueue((q) => {
+      const alreadyQueued = q.some((item) => item.taskId === activeTask.id && item.reason === 'cancelled')
+      if (alreadyQueued) return q
+      return [
+        ...q,
+        {
+          id: `rq-${Date.now()}`,
+          taskId: activeTask.id,
+          taskName: activeTask.name,
+          track: activeTask.track,
+          timeBlock: activeTask.timeBlock,
+          reason: 'cancelled',
+          remainingMinutes: remainingMins,
+          status: 'pending',
+          suggestedDate: getTomorrowDateString(),
+          suggestedTimeBlock: activeTask.timeBlock,
+        },
+      ]
+    })
+    setStatusMessage('Task cancelled. Remaining time logged — see Reschedule tab.')
   }
 
-  function handleComplete() {
+  function handleComplete(forcePartial = false) {
     if (!activeTask || !activeSession) return
 
-    if (activeTask.completionType === 'Done + Outcome' && outcomeSelection === null) {
+    const isPartial = forcePartial || activeTask.completionType === 'Partial'
+
+    if (!isPartial && activeTask.completionType === 'Done + Outcome' && outcomeSelection === null) {
       setStatusMessage('Select an outcome result before completing this task.')
       return
     }
@@ -967,6 +1095,8 @@ function App() {
         ? Math.floor((Date.now() - activeSession.currentPauseStartedAtMs) / 1000)
         : 0
 
+    const isPartial = forcePartial || activeTask.completionType === 'Partial'
+
     setSessions((prev) => {
       const current = prev[activeTask.id]
       if (!current) return prev
@@ -976,15 +1106,83 @@ function App() {
           ...current,
           timerState: TIMER_STATES.completed,
           actualCompleted: completionInput.trim(),
-          outcomeAchieved: outcomeSelection,
+          outcomeAchieved: isPartial ? null : outcomeSelection,
           pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
           currentPauseStartedAtMs: null,
           completionLoggedAtISO: new Date().toISOString(),
+          completionType: isPartial ? 'Partial' : activeTask.completionType,
         },
       }
     })
 
-    setStatusMessage('Task completed and KPI data captured.')
+    if (isPartial) {
+      const remainingMins = Math.ceil(activeSession.remainingSeconds / 60)
+      setRescheduleQueue((q) => {
+        const alreadyQueued = q.some((item) => item.taskId === activeTask.id && item.reason === 'partial')
+        if (alreadyQueued) return q
+        return [
+          ...q,
+          {
+            id: `rq-${Date.now()}`,
+            taskId: activeTask.id,
+            taskName: activeTask.name,
+            track: activeTask.track,
+            timeBlock: activeTask.timeBlock,
+            reason: 'partial',
+            remainingMinutes: remainingMins,
+            status: 'pending',
+            suggestedDate: getTomorrowDateString(),
+            suggestedTimeBlock: activeTask.timeBlock,
+          },
+        ]
+      })
+      setStatusMessage('Marked as partial. Remaining work added to Reschedule tab.')
+    } else {
+      setStatusMessage('Task completed and KPI data captured.')
+    }
+  }
+
+  function handleConfirmReschedule(queueId) {
+    const item = rescheduleQueue.find((q) => q.id === queueId)
+    if (!item) return
+    setDeferredTasks((prev) => [...prev, { ...item, status: 'confirmed', confirmedAt: new Date().toISOString() }])
+    setRescheduleQueue((prev) => prev.filter((q) => q.id !== queueId))
+  }
+
+  function handleDismissReschedule(queueId) {
+    setRescheduleQueue((prev) => prev.filter((q) => q.id !== queueId))
+  }
+
+  function handleClearDeferred() {
+    setDeferredTasks([])
+  }
+
+  async function handleFetchAiSuggestion() {
+    const pendingItems = rescheduleQueue.filter((q) => q.status === 'pending')
+    const remaining = todayTasks.filter((t) => {
+      const s = sessions[t.id]
+      return s && s.timerState === TIMER_STATES.notStarted
+    })
+
+    if (pendingItems.length === 0 && remaining.length === 0) return
+
+    setAiSuggestion({ loading: true, text: '', error: '' })
+    try {
+      const res = await fetch('/api/suggest-reschedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rescheduleQueue: pendingItems,
+          remainingTasks: remaining,
+          todayDate: getTodayDateString(),
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setAiSuggestion({ loading: false, text: data.suggestion, error: '' })
+    } catch (err) {
+      setAiSuggestion({ loading: false, text: '', error: err.message })
+    }
   }
 
   function handleToggleSubtask(index) {
@@ -1344,6 +1542,173 @@ function App() {
     )
   }
 
+  function renderRescheduleScreen() {
+    const pendingQueue = rescheduleQueue.filter((q) => q.status === 'pending')
+    const reorderableTasks = todayTasks.filter((t) => {
+      const s = sessions[t.id]
+      return s && s.timerState === TIMER_STATES.notStarted
+    })
+
+    function handleDragEnd(event) {
+      const { active, over } = event
+      if (!over || active.id === over.id) return
+      const oldIndex = reorderableTasks.findIndex((t) => t.id === active.id)
+      const newIndex = reorderableTasks.findIndex((t) => t.id === over.id)
+      const reordered = arrayMove(reorderableTasks, oldIndex, newIndex)
+      const reorderIds = reordered.map((t) => t.id)
+      setTodayTasks((prev) => {
+        const nonReorderable = prev.filter((t) => !reorderIds.includes(t.id))
+        return [...reordered, ...nonReorderable]
+      })
+    }
+
+    const reasonLabel = { overrun: 'Overrun', cancelled: 'Cancelled', partial: 'Partially done' }
+
+    return (
+      <section className="space-y-4 p-4">
+        {/* Needs Rescheduling */}
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <AlertTriangle size={16} className="text-rose-500" />
+            <h2 className="text-sm font-semibold uppercase text-slate-500">Needs Rescheduling</h2>
+          </div>
+          {pendingQueue.length === 0 ? (
+            <p className="text-sm text-slate-500">No tasks need rescheduling right now.</p>
+          ) : (
+            <ul className="space-y-3">
+              {pendingQueue.map((item) => {
+                const meta = getTrackMeta(item.track)
+                return (
+                  <li key={item.id} className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: meta?.color }} />
+                      <p className="font-medium text-sm text-slate-900">{item.taskName}</p>
+                      <span className="ml-auto rounded-full bg-rose-200 px-2 py-0.5 text-[10px] font-semibold text-rose-800">
+                        {reasonLabel[item.reason] ?? item.reason}
+                      </span>
+                    </div>
+                    <p className="mb-2 text-xs text-slate-600">
+                      {item.timeBlock} block
+                      {item.remainingMinutes ? ` · ${item.remainingMinutes} min remaining` : ''}
+                    </p>
+                    <div className="mb-2 rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs text-slate-700">
+                      <span className="font-medium">Suggested:</span> Move to {item.suggestedTimeBlock} block on{' '}
+                      <span className="font-medium">{formatDate(item.suggestedDate)}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmReschedule(item.id)}
+                        className="rounded-md bg-slate-900 px-3 py-1 text-xs font-medium text-white"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDismissReschedule(item.id)}
+                        className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </article>
+
+        {/* AI Suggestion */}
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-purple-500" />
+              <h2 className="text-sm font-semibold uppercase text-slate-500">AI Chief of Staff</h2>
+            </div>
+            <button
+              type="button"
+              onClick={handleFetchAiSuggestion}
+              disabled={aiSuggestion.loading}
+              className="rounded-md bg-purple-600 px-3 py-1 text-xs font-medium text-white disabled:bg-purple-300"
+            >
+              {aiSuggestion.loading ? 'Thinking...' : 'Get Suggestion'}
+            </button>
+          </div>
+          {aiSuggestion.error ? (
+            <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{aiSuggestion.error}</p>
+          ) : aiSuggestion.text ? (
+            <div className="rounded-lg border border-purple-200 bg-purple-50 p-3 text-sm text-purple-900">
+              {aiSuggestion.text}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">
+              {pendingQueue.length > 0
+                ? 'Click "Get Suggestion" and your AI Chief of Staff will recommend the best reorder.'
+                : 'No pending items to analyze. Cancel or partially complete a task to get AI guidance.'}
+            </p>
+          )}
+        </article>
+
+        {/* Drag to Reorder */}
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Clock size={16} className="text-slate-500" />
+            <h2 className="text-sm font-semibold uppercase text-slate-500">Reorder Today's Remaining Tasks</h2>
+          </div>
+          {reorderableTasks.length === 0 ? (
+            <p className="text-sm text-slate-500">No unstarted tasks left to reorder.</p>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-slate-500">Drag tasks into the order you want to work through them.</p>
+              <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={reorderableTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+                  <ul className="space-y-2">
+                    {reorderableTasks.map((task) => (
+                      <SortableTaskRow
+                        key={task.id}
+                        task={task}
+                        session={sessions[task.id]}
+                        trackMeta={getTrackMeta(task.track)}
+                      />
+                    ))}
+                  </ul>
+                </SortableContext>
+              </DndContext>
+            </>
+          )}
+        </article>
+
+        {/* Confirmed / Deferred */}
+        {deferredTasks.length > 0 ? (
+          <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold uppercase text-slate-500">Deferred to Future Days</h2>
+              <button
+                type="button"
+                onClick={handleClearDeferred}
+                className="text-xs text-slate-400 underline"
+              >
+                Clear all
+              </button>
+            </div>
+            <ul className="space-y-2">
+              {deferredTasks.map((item) => {
+                const meta = getTrackMeta(item.track)
+                return (
+                  <li key={item.id} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: meta?.color }} />
+                    <span className="flex-1 font-medium">{item.taskName}</span>
+                    <span className="text-xs text-slate-500">{formatDate(item.suggestedDate)}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </article>
+        ) : null}
+      </section>
+    )
+  }
+
   function renderPlaceholderScreen(title, message) {
     return (
       <section className="p-4">
@@ -1511,7 +1876,7 @@ function App() {
             <button
               type="button"
               className="flex items-center justify-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-blue-300"
-              onClick={handleComplete}
+              onClick={() => handleComplete(false)}
               disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
             >
               <SquareCheck size={16} /> Complete
@@ -1523,6 +1888,16 @@ function App() {
               disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
             >
               <StopCircle size={16} /> Cancel
+            </button>
+          </div>
+          <div className="mb-4">
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => handleComplete(true)}
+              disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
+            >
+              Mark Partial — done for now, reschedule remainder
             </button>
           </div>
 
@@ -1665,12 +2040,7 @@ function App() {
       </section>
       ) : null}
       {activeScreen === 'taskLibrary' ? renderTaskLibrary() : null}
-      {activeScreen === 'reschedule'
-        ? renderPlaceholderScreen(
-            'Reschedule',
-            'Phase 3 will add drag-and-drop rescheduling suggestions with explicit confirmation.',
-          )
-        : null}
+      {activeScreen === 'reschedule' ? renderRescheduleScreen() : null}
       {activeScreen === 'kpi'
         ? renderPlaceholderScreen(
             'KPI Dashboard',
@@ -1686,21 +2056,31 @@ function App() {
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
         <ul className="mx-auto grid max-w-5xl grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
-          {NAV_ITEMS.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                onClick={() => setActiveScreen(item.id)}
-                className={`block w-full rounded-md px-1 py-2 ${
-                  item.id === activeScreen
-                    ? 'bg-slate-900 font-semibold text-white'
-                    : 'text-slate-500 hover:bg-slate-100'
-                }`}
-              >
-                {item.label}
-              </button>
-            </li>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const pendingCount = item.id === 'reschedule'
+              ? rescheduleQueue.filter((q) => q.status === 'pending').length
+              : 0
+            return (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  onClick={() => setActiveScreen(item.id)}
+                  className={`relative block w-full rounded-md px-1 py-2 ${
+                    item.id === activeScreen
+                      ? 'bg-slate-900 font-semibold text-white'
+                      : 'text-slate-500 hover:bg-slate-100'
+                  }`}
+                >
+                  {item.label}
+                  {pendingCount > 0 ? (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
+                      {pendingCount}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            )
+          })}
         </ul>
       </nav>
     </main>
