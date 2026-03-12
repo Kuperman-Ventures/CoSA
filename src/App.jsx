@@ -2860,12 +2860,8 @@ function App() {
       ? getNextMondayStr()
       : getWeekStartDateStr()
 
-    // Friday Review gate: must have a review saved in the current week
-    const { start: weekStart, end: weekEnd } = getWeekBounds(0)
-    const hasFridayReviewThisWeek = fridayReviews.some((r) => {
-      const d = new Date(r.week_start ?? r.created_at ?? 0)
-      return d >= weekStart && d <= weekEnd
-    })
+    // Unlocked on Fridays only
+    const isFriday = today.getDay() === 5
 
     const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     const todayDayName = DAY_NAMES[today.getDay()]
@@ -2894,14 +2890,14 @@ function App() {
             <button
               type="button"
               onClick={handleGenerateWeekPlan}
-              disabled={!hasFridayReviewThisWeek}
+              disabled={!isFriday}
               className="mt-6 w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               Generate Week Plan
             </button>
-            {!hasFridayReviewThisWeek && (
+            {!isFriday && (
               <p className="mt-3 text-xs text-amber-700">
-                Complete this week&apos;s Friday Review first to unlock the planner.
+                Available on Fridays — come back then to plan next week.
               </p>
             )}
             {weekPlanMessage && (
