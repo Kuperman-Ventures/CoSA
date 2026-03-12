@@ -29,8 +29,16 @@ import {
   updateRescheduleItem,
   upsertFridayReview,
   loadFridayReviews,
+  upsertWeeklyPlan,
+  loadCurrentWeekPlan,
+  updatePlanAfterPublish,
 } from './lib/supabaseSync'
-import { createEventsForSnapshot, moveCalendarEvent } from './lib/googleCalendar'
+import {
+  createEventsForSnapshot,
+  moveCalendarEvent,
+  createWeekPlanEvents,
+  fetchCoSACalendarEvents,
+} from './lib/googleCalendar'
 
 const TRACKS = {
   advisors: {
@@ -508,6 +516,7 @@ const NAV_ITEMS = [
   { id: 'today', label: 'Today' },
   { id: 'taskLibrary', label: 'Task Library' },
   { id: 'reschedule', label: 'Reschedule' },
+  { id: 'weekAhead', label: 'Week Ahead' },
   { id: 'kpi', label: 'KPI Dashboard' },
   { id: 'analytics', label: 'Analytics' },
 ]
@@ -548,6 +557,35 @@ function saveCompletionLog(log) {
   if (typeof window === 'undefined') return
   window.localStorage.setItem(COMPLETION_LOG_KEY, JSON.stringify(log))
 }
+
+// ─── Weekly Planner helpers ───────────────────────────────────────────────────
+
+function getWeekStartDateStr(date = new Date()) {
+  const d = new Date(date)
+  const day = d.getDay()
+  const daysToMonday = day === 0 ? 6 : day - 1
+  d.setDate(d.getDate() - daysToMonday)
+  d.setHours(0, 0, 0, 0)
+  return d.toISOString().split('T')[0]
+}
+
+function getNextMondayStr(fromDate = new Date()) {
+  const d = new Date(fromDate)
+  const day = d.getDay()
+  const daysUntil = day === 0 ? 1 : day === 1 ? 7 : 8 - day
+  d.setDate(d.getDate() + daysUntil)
+  d.setHours(0, 0, 0, 0)
+  return d.toISOString().split('T')[0]
+}
+
+function getDayDate(weekStartDateStr, dayName) {
+  const offsets = { Monday: 0, Tuesday: 1, Wednesday: 2, Thursday: 3, Friday: 4 }
+  const d = new Date(weekStartDateStr + 'T12:00:00')
+  d.setDate(d.getDate() + (offsets[dayName] ?? 0))
+  return d.toISOString().split('T')[0]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function getWeekBounds(offsetWeeks = 0) {
   const now = new Date()
@@ -868,6 +906,11 @@ function App() {
   const [reviewSaving, setReviewSaving] = useState(false)
   const [showVenturesModal, setShowVenturesModal] = useState(false)
   const [venturesModalData, setVenturesModalData] = useState(null)
+  const [weekPlan, setWeekPlan] = useState(null)
+  const [weekPlanLoading, setWeekPlanLoading] = useState(false)
+  const [weekPlanMessage, setWeekPlanMessage] = useState('')
+  const [replanLoading, setReplanLoading] = useState(false)
+  const [showAiRationale, setShowAiRationale] = useState(false)
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1185,6 +1228,15 @@ function App() {
       // 5. Friday reviews
       const reviews = await loadFridayReviews(userId)
       setFridayReviews(reviews)
+
+      // 6. Weekly plan — load for current week or next week
+      const today = new Date()
+      const isWeekend = today.getDay() === 0 || today.getDay() === 6
+      const planWeekStart = isWeekend || today.getDay() === 5
+        ? getNextMondayStr()
+        : getWeekStartDateStr()
+      const existingPlan = await loadCurrentWeekPlan(planWeekStart, userId)
+      if (existingPlan) setWeekPlan(existingPlan)
     }
 
     doSync()
@@ -1654,6 +1706,231 @@ function App() {
       setAiSuggestion({ loading: false, text: '', error: err.message })
     }
   }
+
+  // ── Week Ahead handlers ───────────────────────────────────────────────────
+
+  async function handleGenerateWeekPlan() {
+    setWeekPlanLoading(true)
+    setWeekPlanMessage('')
+    setShowAiRationale(false)
+
+    const today = new Date()
+    const isWeekend = today.getDay() === 0 || today.getDay() === 6
+    const planWeekStartDate = isWeekend || today.getDay() === 5
+      ? getNextMondayStr()
+      : getWeekStartDateStr()
+
+    const deferredItems = rescheduleQueue
+      .filter((item) => item.status === 'pending')
+      .map((item) => `${item.taskName} (deferred)`)
+
+    const currentReview = fridayReviews[0] ?? null
+
+    try {
+      const res = await fetch('/api/generate-week-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weekStartDate: planWeekStartDate,
+          currentWeekKpis: [],
+          deferredItems,
+          taskLibrary,
+          fridayReviewAnswers: currentReview
+            ? { q2: currentReview.q2 ?? '' }
+            : null,
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+
+      const aiDays = data.plan?.days ?? {}
+      const aiRationale = data.plan?.aiRationale ?? ''
+
+      const hydratedDays = {}
+      for (const dayName of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']) {
+        const rawTasks = aiDays[dayName] ?? []
+        hydratedDays[dayName] = {
+          date: getDayDate(planWeekStartDate, dayName),
+          tasks: rawTasks.map((t) => ({
+            ...t,
+            gcalEventId: null,
+            status: 'planned',
+            isDeferred: deferredItems.some((d) => d.startsWith(t.name)),
+          })),
+        }
+      }
+
+      const newPlan = {
+        status: 'draft',
+        weekStartDate: planWeekStartDate,
+        generatedAt: new Date().toISOString(),
+        aiRationale,
+        deferredItems,
+        days: hydratedDays,
+      }
+
+      const planId = session?.user?.id
+        ? await upsertWeeklyPlan(newPlan, planWeekStartDate, session.user.id)
+        : null
+
+      setWeekPlan({ ...newPlan, id: planId })
+    } catch (err) {
+      setWeekPlanMessage(`Failed to generate plan: ${err.message}`)
+    } finally {
+      setWeekPlanLoading(false)
+    }
+  }
+
+  function handleRemoveTaskFromDraft(dayName, taskIndex) {
+    setWeekPlan((prev) => {
+      if (!prev) return prev
+      const updatedTasks = (prev.days[dayName]?.tasks ?? []).filter((_, i) => i !== taskIndex)
+      return {
+        ...prev,
+        days: {
+          ...prev.days,
+          [dayName]: { ...prev.days[dayName], tasks: updatedTasks },
+        },
+      }
+    })
+  }
+
+  async function handlePublishWeekPlan() {
+    if (!weekPlan) return
+    setWeekPlanLoading(true)
+    setWeekPlanMessage('')
+
+    let updatedDays = weekPlan.days
+    const providerToken = session?.provider_token
+
+    if (providerToken) {
+      updatedDays = await createWeekPlanEvents(weekPlan.days, providerToken, weekPlan.id)
+    }
+
+    const publishedPlan = { ...weekPlan, status: 'published', days: updatedDays }
+
+    if (session?.user?.id) {
+      if (weekPlan.id) {
+        await updatePlanAfterPublish(weekPlan.id, publishedPlan, session.user.id)
+      } else {
+        const newId = await upsertWeeklyPlan(publishedPlan, weekPlan.weekStartDate, session.user.id)
+        publishedPlan.id = newId
+      }
+    }
+
+    setWeekPlan(publishedPlan)
+    setWeekPlanMessage(
+      providerToken ? 'Plan published to Google Calendar.' : 'Plan saved. Enable calendar sync to publish events.',
+    )
+    setWeekPlanLoading(false)
+  }
+
+  async function handleReplan() {
+    if (!weekPlan) return
+    setReplanLoading(true)
+    setWeekPlanMessage('')
+
+    const providerToken = session?.provider_token
+    if (!providerToken) {
+      setWeekPlanMessage('Calendar sync is required for Replan.')
+      setReplanLoading(false)
+      return
+    }
+
+    const weekStart = weekPlan.weekStartDate
+    const weekEnd = getDayDate(weekStart, 'Friday')
+    const timeMin = `${weekStart}T00:00:00Z`
+    const timeMax = `${weekEnd}T23:59:59Z`
+
+    const calendarEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+    const todayName = DAY_NAMES[new Date().getDay()]
+
+    try {
+      const res = await fetch('/api/replan-week', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publishedPlan: weekPlan, calendarEvents, todayName }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+
+      const replanDays = data.replan?.days ?? {}
+      const hydratedDays = { ...weekPlan.days }
+
+      for (const dayName of Object.keys(replanDays)) {
+        const rawTasks = replanDays[dayName] ?? []
+        hydratedDays[dayName] = {
+          date: weekPlan.days[dayName]?.date ?? getDayDate(weekStart, dayName),
+          tasks: rawTasks.map((t) => ({ ...t, gcalEventId: null, status: 'planned' })),
+        }
+      }
+
+      const replanPlan = {
+        ...weekPlan,
+        status: 'replanning',
+        aiRationale: data.replan?.aiRationale ?? '',
+        days: hydratedDays,
+      }
+      setWeekPlan(replanPlan)
+      setShowAiRationale(true)
+    } catch (err) {
+      setWeekPlanMessage(`Replan failed: ${err.message}`)
+    } finally {
+      setReplanLoading(false)
+    }
+  }
+
+  async function handleApplyReplan() {
+    if (!weekPlan) return
+    setWeekPlanLoading(true)
+    setWeekPlanMessage('')
+
+    const providerToken = session?.provider_token
+    let updatedDays = weekPlan.days
+
+    if (providerToken) {
+      const today = new Date()
+      const todayIndex = today.getDay()
+      const remainingDayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        .filter((_, i) => i + 1 >= (todayIndex === 0 ? 7 : todayIndex))
+
+      // Delete displaced events for remaining days (those without a gcalEventId yet)
+      for (const dayName of remainingDayNames) {
+        for (const task of weekPlan.days[dayName]?.tasks ?? []) {
+          if (task.gcalEventId) {
+            await fetch(
+              `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+                'c_f733c89ebd8fa8294dfb9b29147e64acc78eae845b47ea1271ddb7844e191716@group.calendar.google.com',
+              )}/events/${task.gcalEventId}`,
+              {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${providerToken}` },
+              },
+            )
+          }
+        }
+      }
+
+      updatedDays = await createWeekPlanEvents(weekPlan.days, providerToken, weekPlan.id)
+    }
+
+    const appliedPlan = { ...weekPlan, status: 'replanned', days: updatedDays }
+
+    if (session?.user?.id) {
+      if (weekPlan.id) {
+        await updatePlanAfterPublish(weekPlan.id, appliedPlan, session.user.id)
+      } else {
+        const newId = await upsertWeeklyPlan(appliedPlan, weekPlan.weekStartDate, session.user.id)
+        appliedPlan.id = newId
+      }
+    }
+
+    setWeekPlan(appliedPlan)
+    setWeekPlanMessage('Replan applied to Google Calendar.')
+    setWeekPlanLoading(false)
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   function handleToggleSubtask(index) {
     if (!activeTask) return
@@ -2576,6 +2853,242 @@ function App() {
     )
   }
 
+  function renderWeekAhead() {
+    const today = new Date()
+    const isWeekend = today.getDay() === 0 || today.getDay() === 6
+    const planWeekStartDate = isWeekend || today.getDay() === 5
+      ? getNextMondayStr()
+      : getWeekStartDateStr()
+
+    // Friday Review gate: must have a review saved in the current week
+    const { start: weekStart, end: weekEnd } = getWeekBounds(0)
+    const hasFridayReviewThisWeek = fridayReviews.some((r) => {
+      const d = new Date(r.week_start ?? r.created_at ?? 0)
+      return d >= weekStart && d <= weekEnd
+    })
+
+    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    const todayDayName = DAY_NAMES[today.getDay()]
+    const todayIndex = dayNames.indexOf(todayDayName)
+
+    const trackColors = {
+      advisors:   '#1E6B3C',
+      networking: '#B8600B',
+      jobSearch:  '#2E75B6',
+      ventures:   '#9B6BAE',
+    }
+
+    // ── Empty state ──────────────────────────────────────────────────────────
+    if (!weekPlan && !weekPlanLoading) {
+      return (
+        <section className="p-4">
+          <div className="mx-auto max-w-xl rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">Week Ahead</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Generate a full Monday–Friday plan based on your task library, this week&apos;s
+              performance, and any deferred items.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Planning for: week of {planWeekStartDate}
+            </p>
+            <button
+              type="button"
+              onClick={handleGenerateWeekPlan}
+              disabled={!hasFridayReviewThisWeek}
+              className="mt-6 w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              Generate Week Plan
+            </button>
+            {!hasFridayReviewThisWeek && (
+              <p className="mt-3 text-xs text-amber-700">
+                Complete this week&apos;s Friday Review first to unlock the planner.
+              </p>
+            )}
+            {weekPlanMessage && (
+              <p className="mt-3 text-xs text-rose-600">{weekPlanMessage}</p>
+            )}
+          </div>
+        </section>
+      )
+    }
+
+    // ── Loading state ────────────────────────────────────────────────────────
+    if (weekPlanLoading || replanLoading) {
+      return (
+        <section className="p-4">
+          <p className="mb-4 text-center text-sm font-medium text-slate-600">
+            {replanLoading ? 'Replanning your week…' : 'Generating your week plan…'}
+          </p>
+          <div className="grid grid-cols-5 gap-3">
+            {dayNames.map((d) => (
+              <div key={d} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="mb-3 h-4 w-16 animate-pulse rounded bg-slate-200" />
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="mb-2 h-14 animate-pulse rounded bg-slate-100" />
+                ))}
+              </div>
+            ))}
+          </div>
+        </section>
+      )
+    }
+
+    const isPublished = weekPlan?.status === 'published' || weekPlan?.status === 'replanned'
+    const isReplanning = weekPlan?.status === 'replanning'
+
+    // ── Draft / Published / Replanning state ─────────────────────────────────
+    return (
+      <section className="p-4">
+        {/* Header bar */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Week Ahead</h2>
+            <p className="text-xs text-slate-500">Week of {weekPlan?.weekStartDate}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {!isPublished && !isReplanning && (
+              <button
+                type="button"
+                onClick={handleGenerateWeekPlan}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Regenerate
+              </button>
+            )}
+            {isPublished && !replanLoading && (
+              <button
+                type="button"
+                onClick={handleReplan}
+                className="rounded-md border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
+              >
+                Replan
+              </button>
+            )}
+            {isReplanning && (
+              <button
+                type="button"
+                onClick={handleApplyReplan}
+                disabled={weekPlanLoading}
+                className="rounded-md bg-blue-700 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                Apply Replan
+              </button>
+            )}
+            {!isPublished && !isReplanning && (
+              <button
+                type="button"
+                onClick={handlePublishWeekPlan}
+                disabled={
+                  weekPlanLoading ||
+                  !dayNames.some((d) => (weekPlan?.days?.[d]?.tasks ?? []).length > 0)
+                }
+                className="rounded-md bg-slate-900 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+              >
+                Publish to Calendar
+              </button>
+            )}
+          </div>
+        </div>
+
+        {weekPlanMessage && (
+          <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {weekPlanMessage}
+          </p>
+        )}
+
+        {/* 5-column day grid */}
+        <div className="grid grid-cols-5 gap-3">
+          {dayNames.map((dayName, dayIdx) => {
+            const dayData = weekPlan?.days?.[dayName] ?? { date: '', tasks: [] }
+            const isPast = todayIndex >= 0 && dayIdx < todayIndex
+            const isToday = dayIdx === todayIndex
+
+            return (
+              <div
+                key={dayName}
+                className={`rounded-xl border bg-white p-3 shadow-sm ${
+                  isPast && isReplanning ? 'opacity-40' : ''
+                } ${isToday ? 'border-blue-300' : 'border-slate-200'}`}
+              >
+                <p className={`mb-2 text-xs font-semibold ${isToday ? 'text-blue-700' : 'text-slate-700'}`}>
+                  {dayName.slice(0, 3)}
+                  {dayData.date && (
+                    <span className="ml-1 font-normal text-slate-400">
+                      {new Date(dayData.date + 'T12:00:00').getDate()}
+                    </span>
+                  )}
+                  {isToday && <span className="ml-1 text-blue-500">·</span>}
+                </p>
+
+                {(dayData.tasks ?? []).length === 0 ? (
+                  <p className="text-[10px] text-slate-400 italic">No tasks</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {(dayData.tasks ?? []).map((task, taskIdx) => (
+                      <div
+                        key={`${dayName}-${taskIdx}`}
+                        className="relative rounded-md border border-slate-100 bg-slate-50 p-2 text-xs"
+                      >
+                        {!isPublished && !isReplanning && !(isPast && isReplanning) && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTaskFromDraft(dayName, taskIdx)}
+                            className="absolute right-1 top-1 text-slate-300 hover:text-rose-500"
+                            aria-label="Remove task"
+                          >
+                            ×
+                          </button>
+                        )}
+                        <div className="flex items-start gap-1.5 pr-3">
+                          <span
+                            className="mt-0.5 h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                            style={{ backgroundColor: trackColors[task.track] ?? '#94a3b8' }}
+                          />
+                          <span className="font-medium leading-tight text-slate-800">{task.name}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1">
+                          <span className="rounded bg-slate-200 px-1 py-0.5 text-[9px] text-slate-600">
+                            {task.timeBlock}
+                          </span>
+                          <span className="text-[9px] text-slate-400">{task.estimateMinutes}m</span>
+                          {task.isDeferred && (
+                            <span className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium text-amber-700">
+                              Deferred
+                            </span>
+                          )}
+                          {task.gcalEventId && (
+                            <span className="text-[9px] text-emerald-600">📅</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* AI Rationale collapsible */}
+        {weekPlan?.aiRationale && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setShowAiRationale((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-medium text-slate-700"
+            >
+              <span>Why this plan?</span>
+              <span className="text-slate-400">{showAiRationale ? '▲' : '▼'}</span>
+            </button>
+            {showAiRationale && (
+              <p className="mt-2 text-xs leading-relaxed text-slate-600">{weekPlan.aiRationale}</p>
+            )}
+          </div>
+        )}
+      </section>
+    )
+  }
+
   function renderRescheduleScreen() {
     const pendingQueue = rescheduleQueue.filter((q) => q.status === 'pending')
     const reorderableTasks = todayTasks.filter((t) => {
@@ -3125,11 +3638,12 @@ function App() {
       ) : null}
       {activeScreen === 'taskLibrary' ? renderTaskLibrary() : null}
       {activeScreen === 'reschedule' ? renderRescheduleScreen() : null}
+      {activeScreen === 'weekAhead' ? renderWeekAhead() : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
       {activeScreen === 'analytics' ? renderAnalyticsScreen() : null}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-        <ul className="mx-auto grid max-w-5xl grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
+        <ul className="mx-auto grid max-w-5xl grid-cols-6 gap-1 p-2 text-center text-xs sm:text-sm">
           {NAV_ITEMS.map((item) => {
             const pendingCount = item.id === 'reschedule'
               ? rescheduleQueue.filter((q) => q.status === 'pending').length

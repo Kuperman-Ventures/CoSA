@@ -335,3 +335,80 @@ export async function loadFridayReviews(userId) {
     return []
   }
 }
+
+// ─── Weekly Plans ─────────────────────────────────────────────────────────────
+
+/**
+ * Save or update a weekly plan draft or published plan.
+ * Upserts on (user_id, week_start_date). Returns the Supabase row id.
+ */
+export async function upsertWeeklyPlan(plan, weekStartDate, userId) {
+  if (!supabase || !userId) return null
+  try {
+    const row = {
+      user_id:         userId,
+      week_start_date: weekStartDate,
+      plan_data:       plan,
+      status:          plan.status ?? 'draft',
+      updated_at:      new Date().toISOString(),
+      ...(plan.status === 'published' || plan.status === 'replanned'
+        ? { published_at: new Date().toISOString() }
+        : {}),
+    }
+    const { data, error } = await supabase
+      .from('weekly_plans')
+      .upsert(row, { onConflict: 'user_id,week_start_date' })
+      .select('id')
+      .single()
+    if (error) { console.error('[upsertWeeklyPlan]', error.message); return null }
+    return data?.id ?? null
+  } catch (err) {
+    console.error('[upsertWeeklyPlan]', err.message)
+    return null
+  }
+}
+
+/**
+ * Load the most recent weekly plan for a given week start date (YYYY-MM-DD).
+ * Returns the plan object with id and status merged in, or null if not found.
+ */
+export async function loadCurrentWeekPlan(weekStartDate, userId) {
+  if (!supabase || !userId || !weekStartDate) return null
+  try {
+    const { data, error } = await supabase
+      .from('weekly_plans')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('week_start_date', weekStartDate)
+      .maybeSingle()
+    if (error) { console.error('[loadCurrentWeekPlan]', error.message); return null }
+    if (!data) return null
+    return { ...data.plan_data, id: data.id, status: data.status }
+  } catch (err) {
+    console.error('[loadCurrentWeekPlan]', err.message)
+    return null
+  }
+}
+
+/**
+ * After publishing to Google Calendar, update the stored plan with gcalEventIds
+ * and set status to published or replanned.
+ */
+export async function updatePlanAfterPublish(planId, updatedPlanData, userId) {
+  if (!supabase || !userId || !planId) return
+  try {
+    const { error } = await supabase
+      .from('weekly_plans')
+      .update({
+        plan_data:    updatedPlanData,
+        status:       updatedPlanData.status,
+        published_at: new Date().toISOString(),
+        updated_at:   new Date().toISOString(),
+      })
+      .eq('id', planId)
+      .eq('user_id', userId)
+    if (error) console.error('[updatePlanAfterPublish]', error.message)
+  } catch (err) {
+    console.error('[updatePlanAfterPublish]', err.message)
+  }
+}

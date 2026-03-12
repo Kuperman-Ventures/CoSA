@@ -48,17 +48,29 @@ function buildEventTimes(task, allTasksInBlock, date) {
   }
 }
 
-function buildEventBody(task, allTasksInBlock, date) {
+function buildEventBody(task, allTasksInBlock, date, extras = {}) {
   const subtaskList = Array.isArray(task.subtasks) && task.subtasks.length > 0
     ? task.subtasks.map((s, i) => `${i + 1}. ${s}`).join('\n')
     : ''
 
-  return {
-    summary:  task.name,
+  const body = {
+    summary:     task.name,
     description: subtaskList,
-    colorId:  TRACK_COLOR_IDS[task.track] ?? '1',
+    colorId:     TRACK_COLOR_IDS[task.track] ?? '1',
     ...buildEventTimes(task, allTasksInBlock, date),
   }
+
+  // CoSA metadata — written on all events so Replan can identify and safely
+  // touch only events that this app created. templateId and planId are optional.
+  body.extendedProperties = {
+    private: {
+      cosaTag:        'cosa-event',
+      ...(extras.templateId ? { cosaTemplateId: extras.templateId } : {}),
+      ...(extras.planId     ? { cosaPlanId:     String(extras.planId) } : {}),
+    },
+  }
+
+  return body
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
@@ -91,9 +103,9 @@ async function gcalFetch(path, method, providerToken, body) {
  * so sequential start times can be calculated.
  * Returns the Google Calendar event ID string, or null on failure.
  */
-export async function createCalendarEvent(task, allTasksInBlock, providerToken, date) {
+export async function createCalendarEvent(task, allTasksInBlock, providerToken, date, extras = {}) {
   if (!providerToken) return null
-  const data = await gcalFetch('', 'POST', providerToken, buildEventBody(task, allTasksInBlock, date))
+  const data = await gcalFetch('', 'POST', providerToken, buildEventBody(task, allTasksInBlock, date, extras))
   return data?.id ?? null
 }
 
@@ -146,4 +158,62 @@ export async function createEventsForSnapshot(tasks, providerToken, date) {
   )
 
   return Object.fromEntries(results.filter(([, id]) => id !== null))
+}
+
+/**
+ * Create calendar events for an entire week plan.
+ * planDays: { Monday: { date, tasks: [...] }, ... }
+ * Returns a copy of planDays with gcalEventId filled in on each task.
+ */
+export async function createWeekPlanEvents(planDays, providerToken, planId) {
+  if (!providerToken) return planDays
+
+  const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+  const updatedDays = {}
+
+  for (const dayName of dayNames) {
+    const day = planDays[dayName]
+    if (!day) { updatedDays[dayName] = day; continue }
+
+    const blockGroups = day.tasks.reduce((acc, t) => {
+      if (!acc[t.timeBlock]) acc[t.timeBlock] = []
+      acc[t.timeBlock].push(t)
+      return acc
+    }, {})
+
+    const updatedTasks = await Promise.all(
+      day.tasks.map(async (task) => {
+        const blockTasks = blockGroups[task.timeBlock] ?? [task]
+        const gcalEventId = await createCalendarEvent(
+          { ...task, id: task.templateId, name: task.name, estimateMinutes: task.estimateMinutes },
+          blockTasks.map((t) => ({ ...t, id: t.templateId, estimateMinutes: t.estimateMinutes })),
+          providerToken,
+          day.date,
+          { templateId: task.templateId, planId },
+        )
+        return { ...task, gcalEventId: gcalEventId ?? null }
+      }),
+    )
+    updatedDays[dayName] = { ...day, tasks: updatedTasks }
+  }
+
+  return updatedDays
+}
+
+/**
+ * Fetch all CoSA-tagged events from the calendar within a date range.
+ * Used by Replan to compare published plan against current calendar state.
+ * timeMin / timeMax: ISO 8601 strings (e.g. "2026-03-16T00:00:00Z")
+ */
+export async function fetchCoSACalendarEvents(providerToken, timeMin, timeMax) {
+  if (!providerToken) return []
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    privateExtendedProperty: 'cosaTag=cosa-event',
+    singleEvents: 'true',
+    maxResults: '250',
+  })
+  const data = await gcalFetch(`?${params.toString()}`, 'GET', providerToken)
+  return data?.items ?? []
 }
