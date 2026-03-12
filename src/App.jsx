@@ -1095,8 +1095,6 @@ function App() {
         ? Math.floor((Date.now() - activeSession.currentPauseStartedAtMs) / 1000)
         : 0
 
-    const isPartial = forcePartial || activeTask.completionType === 'Partial'
-
     setSessions((prev) => {
       const current = prev[activeTask.id]
       if (!current) return prev
