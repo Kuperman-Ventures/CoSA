@@ -554,6 +554,38 @@ function formatWeekLabel(weekStart, weekEnd) {
   return `${weekStart.toLocaleDateString('en-US', opts)} – ${weekEnd.toLocaleDateString('en-US', { ...opts, year: 'numeric' })}`
 }
 
+function calcMetrics(log, weekStart, weekEnd, trackFilter = null) {
+  const entries = log.filter((e) => {
+    const d = new Date(e.completedAt)
+    if (d < weekStart || d > weekEnd) return false
+    if (trackFilter && e.track !== trackFilter) return false
+    return true
+  })
+
+  const completed = entries.filter(
+    (e) => e.completionType === 'Done' || e.completionType === 'Done + Outcome',
+  )
+
+  const timeSavedSeconds = completed.reduce(
+    (sum, e) => sum + Math.max(0, e.estimateSeconds - e.elapsedSeconds),
+    0,
+  )
+  const overrunSeconds = completed.reduce(
+    (sum, e) => sum + Math.max(0, e.elapsedSeconds - e.estimateSeconds),
+    0,
+  )
+  const pauseCount = entries.reduce((sum, e) => sum + (e.pauseCount ?? 0), 0)
+  const pauseDurationSeconds = entries.reduce((sum, e) => sum + (e.pauseDurationSeconds ?? 0), 0)
+  const cancelledSeconds = entries
+    .filter((e) => e.completionType === 'Cancelled')
+    .reduce((sum, e) => sum + (e.cancelledSeconds ?? 0), 0)
+  const total = entries.length
+  const completedCount = completed.length
+  const completionRate = total > 0 ? Math.round((completedCount / total) * 100) : null
+
+  return { timeSavedSeconds, overrunSeconds, pauseCount, pauseDurationSeconds, cancelledSeconds, completionRate, completedCount, total }
+}
+
 function getTomorrowDateString() {
   const d = new Date()
   d.setDate(d.getDate() + 1)
@@ -770,6 +802,7 @@ function App() {
   const overrunNotifiedRef = useRef(new Set())
   const [completionLog, setCompletionLog] = useState(() => loadCompletionLog())
   const [weekOffset, setWeekOffset] = useState(0)
+  const [analyticsWeekOffset, setAnalyticsWeekOffset] = useState(0)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -1680,6 +1713,249 @@ function App() {
     )
   }
 
+  function renderAnalyticsScreen() {
+    const { start: weekStart, end: weekEnd } = getWeekBounds(analyticsWeekOffset)
+    const { start: prevStart, end: prevEnd } = getWeekBounds(analyticsWeekOffset - 1)
+    const isCurrentWeek = analyticsWeekOffset === 0
+
+    const current = calcMetrics(completionLog, weekStart, weekEnd)
+    const previous = calcMetrics(completionLog, prevStart, prevEnd)
+
+    function trendArrow(curr, prev, lowerIsBetter = false) {
+      if (prev === null || curr === null) return { arrow: '—', color: 'text-slate-400', diff: null }
+      const diff = curr - prev
+      if (diff === 0) return { arrow: '→', color: 'text-slate-400', diff: 0 }
+      const isGood = lowerIsBetter ? diff < 0 : diff > 0
+      return {
+        arrow: diff > 0 ? '↑' : '↓',
+        color: isGood ? 'text-emerald-600' : 'text-rose-600',
+        diff,
+      }
+    }
+
+    const metrics = [
+      {
+        id: 'time-saved',
+        label: 'Time Saved',
+        value: formatDuration(current.timeSavedSeconds),
+        rawValue: current.timeSavedSeconds,
+        prevRaw: previous.timeSavedSeconds,
+        desc: 'Estimate minus actual on completed tasks',
+        lowerIsBetter: false,
+        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
+      },
+      {
+        id: 'overrun',
+        label: 'Overrun Time',
+        value: formatDuration(current.overrunSeconds),
+        rawValue: current.overrunSeconds,
+        prevRaw: previous.overrunSeconds,
+        desc: 'Time spent beyond estimate',
+        lowerIsBetter: true,
+        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
+      },
+      {
+        id: 'pause-count',
+        label: 'Pause Count',
+        value: String(current.pauseCount),
+        rawValue: current.pauseCount,
+        prevRaw: previous.pauseCount,
+        desc: 'Times you paused a running timer',
+        lowerIsBetter: true,
+        diffFn: (d) => `${Math.abs(d)} vs last week`,
+      },
+      {
+        id: 'pause-duration',
+        label: 'Pause Duration',
+        value: formatDuration(current.pauseDurationSeconds),
+        rawValue: current.pauseDurationSeconds,
+        prevRaw: previous.pauseDurationSeconds,
+        desc: 'Total time spent paused',
+        lowerIsBetter: true,
+        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
+      },
+      {
+        id: 'cancelled',
+        label: 'Cancelled Time',
+        value: formatDuration(current.cancelledSeconds),
+        rawValue: current.cancelledSeconds,
+        prevRaw: previous.cancelledSeconds,
+        desc: 'Time committed but not delivered',
+        lowerIsBetter: true,
+        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
+      },
+      {
+        id: 'completion-rate',
+        label: 'Completion Rate',
+        value: current.completionRate !== null ? `${current.completionRate}%` : '—',
+        rawValue: current.completionRate,
+        prevRaw: previous.completionRate,
+        desc: `${current.completedCount} done / ${current.total} total`,
+        lowerIsBetter: false,
+        diffFn: (d) => `${Math.abs(d)}% vs last week`,
+      },
+    ]
+
+    // 4-week trend (current week + 3 prior)
+    const trendWeeks = [0, -1, -2, -3].map((o) => {
+      const off = analyticsWeekOffset + o
+      const { start, end } = getWeekBounds(off)
+      const m = calcMetrics(completionLog, start, end)
+      return { label: formatWeekLabel(start, end), off, m, start, end }
+    })
+
+    // Track breakdown for current week
+    const trackBreakdown = Object.values(TRACKS).map((track) => ({
+      track,
+      metrics: calcMetrics(completionLog, weekStart, weekEnd, track.key),
+    }))
+
+    return (
+      <section className="space-y-4 p-4">
+        {/* Week navigation */}
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setAnalyticsWeekOffset((o) => o - 1)}
+            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            ← Prev
+          </button>
+          <div className="text-center">
+            <p className="text-sm font-semibold text-slate-900">{formatWeekLabel(weekStart, weekEnd)}</p>
+            {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setAnalyticsWeekOffset((o) => Math.min(0, o + 1))}
+            disabled={isCurrentWeek}
+            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-30"
+          >
+            Next →
+          </button>
+        </div>
+
+        {/* Six metric cards */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {metrics.map((m) => {
+            const trend = trendArrow(m.rawValue, m.prevRaw, m.lowerIsBetter)
+            return (
+              <article key={m.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase text-slate-500">{m.label}</p>
+                <p className="mt-1 text-3xl font-bold tabular-nums text-slate-900">{m.value}</p>
+                <p className="mt-0.5 text-xs text-slate-400">{m.desc}</p>
+                {trend.diff !== null ? (
+                  <p className={`mt-2 text-xs font-medium ${trend.color}`}>
+                    {trend.arrow} {m.diffFn(trend.diff)}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-300">No prior week data</p>
+                )}
+              </article>
+            )
+          })}
+        </div>
+
+        {/* 4-week trend table */}
+        <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold uppercase text-slate-500">4-Week Trend</h2>
+          </div>
+          <table className="w-full min-w-[620px] text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-left text-slate-500">
+                <th className="px-4 py-2 font-medium">Week</th>
+                <th className="px-3 py-2 text-center font-medium">Saved</th>
+                <th className="px-3 py-2 text-center font-medium">Overrun</th>
+                <th className="px-3 py-2 text-center font-medium">Pauses</th>
+                <th className="px-3 py-2 text-center font-medium">Pause Time</th>
+                <th className="px-3 py-2 text-center font-medium">Cancelled</th>
+                <th className="px-3 py-2 text-center font-medium">Done %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trendWeeks.map(({ label, off, m }) => {
+                const isCurrent = off === analyticsWeekOffset
+                return (
+                  <tr
+                    key={off}
+                    className={`border-b border-slate-50 last:border-0 ${isCurrent ? 'bg-slate-50 font-semibold' : ''}`}
+                  >
+                    <td className="px-4 py-2.5 text-slate-700 whitespace-nowrap">{label}</td>
+                    <td className="px-3 py-2.5 text-center text-emerald-700">{formatDuration(m.timeSavedSeconds)}</td>
+                    <td className="px-3 py-2.5 text-center text-rose-700">{formatDuration(m.overrunSeconds)}</td>
+                    <td className="px-3 py-2.5 text-center text-slate-700">{m.pauseCount}</td>
+                    <td className="px-3 py-2.5 text-center text-slate-700">{formatDuration(m.pauseDurationSeconds)}</td>
+                    <td className="px-3 py-2.5 text-center text-amber-700">{formatDuration(m.cancelledSeconds)}</td>
+                    <td className="px-3 py-2.5 text-center text-slate-700">
+                      {m.completionRate !== null ? `${m.completionRate}%` : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </article>
+
+        {/* Track breakdown */}
+        <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold uppercase text-slate-500">This Week by Track</h2>
+          </div>
+          <table className="w-full min-w-[580px] text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-left text-slate-500">
+                <th className="px-4 py-2 font-medium">Track</th>
+                <th className="px-3 py-2 text-center font-medium">Saved</th>
+                <th className="px-3 py-2 text-center font-medium">Overrun</th>
+                <th className="px-3 py-2 text-center font-medium">Pauses</th>
+                <th className="px-3 py-2 text-center font-medium">Cancelled</th>
+                <th className="px-3 py-2 text-center font-medium">Done %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trackBreakdown.map(({ track, metrics: m }) => (
+                <tr key={track.key} className="border-b border-slate-50 last:border-0">
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: track.color }} />
+                      <span className="font-medium text-slate-700">{track.label}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-center text-emerald-700">{formatDuration(m.timeSavedSeconds)}</td>
+                  <td className="px-3 py-2.5 text-center text-rose-700">{formatDuration(m.overrunSeconds)}</td>
+                  <td className="px-3 py-2.5 text-center text-slate-700">{m.pauseCount}</td>
+                  <td className="px-3 py-2.5 text-center text-amber-700">{formatDuration(m.cancelledSeconds)}</td>
+                  <td className="px-3 py-2.5 text-center">
+                    {m.completionRate !== null ? (
+                      <div className="flex items-center gap-1.5">
+                        <div className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full"
+                            style={{ width: `${m.completionRate}%`, backgroundColor: track.color }}
+                          />
+                        </div>
+                        <span className="text-slate-700">{m.completionRate}%</span>
+                      </div>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+
+        {completionLog.length === 0 ? (
+          <p className="text-center text-sm text-slate-400">
+            Complete or cancel tasks to start seeing analytics.
+          </p>
+        ) : null}
+      </section>
+    )
+  }
+
   function renderKpiDashboard() {
     const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
     const { start: monthStart, end: monthEnd } = getMonthBoundsForWeek(weekOffset)
@@ -2322,12 +2598,7 @@ function App() {
       {activeScreen === 'taskLibrary' ? renderTaskLibrary() : null}
       {activeScreen === 'reschedule' ? renderRescheduleScreen() : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
-      {activeScreen === 'analytics'
-        ? renderPlaceholderScreen(
-            'Analytics',
-            'Phase 5 will display weekly metrics by track (time saved, overrun, pauses, cancellations, completion rate).',
-          )
-        : null}
+      {activeScreen === 'analytics' ? renderAnalyticsScreen() : null}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
         <ul className="mx-auto grid max-w-5xl grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
