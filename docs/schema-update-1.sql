@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS public.timer_sessions (
   task_name               text        NOT NULL DEFAULT '',
   track                   text        NOT NULL DEFAULT 'advisors',
   kpi_mapping             text        NOT NULL DEFAULT '',
-  timer_state             text        NOT NULL DEFAULT 'notStarted',
+  timer_state             text        NOT NULL DEFAULT 'Not Started',
   completion_type         text        CHECK (completion_type IN ('Done','Done + Outcome','Partial','Cancelled')),
   estimate_seconds        integer     NOT NULL DEFAULT 0,
   elapsed_seconds         integer     NOT NULL DEFAULT 0,
