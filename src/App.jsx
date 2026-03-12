@@ -17,6 +17,14 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
+import {
+  syncLogEntries,
+  loadCompletionLog as loadCompletionLogFromSupabase,
+  saveTaskLibrary,
+  loadTaskLibrary,
+  saveFridayReview,
+  loadFridayReviews,
+} from './lib/supabaseSync'
 
 const TRACKS = {
   advisors: {
@@ -803,6 +811,11 @@ function App() {
   const [completionLog, setCompletionLog] = useState(() => loadCompletionLog())
   const [weekOffset, setWeekOffset] = useState(0)
   const [analyticsWeekOffset, setAnalyticsWeekOffset] = useState(0)
+  const [fridayReviews, setFridayReviews] = useState([])
+  const [reviewDraft, setReviewDraft] = useState({ q1: '', q2: '', q3: '', mondayIntention: '' })
+  const [reviewSaving, setReviewSaving] = useState(false)
+  const syncedLogIds = useRef(new Set())
+  const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -1002,6 +1015,19 @@ function App() {
     [taskLibrary],
   )
 
+  const kpiSummary = useMemo(() => {
+    const { start: ws, end: we } = getWeekBounds(weekOffset)
+    const { start: ms, end: me } = getMonthBoundsForWeek(weekOffset)
+    const results = KPI_DEFINITIONS.map((def) => {
+      const { count, total } = countKpi(completionLog, def, ws, we, ms, me)
+      return { ...def, count, total, hit: isKpiHit(count, total, def) }
+    })
+    const weekly = results.filter((k) => !k.isRate && k.period === 'week' && k.target)
+    const hit = weekly.filter((k) => k.hit).length
+    const score = hit >= 7 ? 'green' : hit >= 4 ? 'yellow' : 'red'
+    return { kpisHit: hit, kpisTotal: weekly.length, weekScore: score, kpiResults: results }
+  }, [completionLog, weekOffset])
+
   const hasLockedTodayTimers = useMemo(
     () =>
       Object.values(sessions).some((sessionItem) =>
@@ -1027,6 +1053,83 @@ function App() {
   useEffect(() => {
     saveCompletionLog(completionLog)
   }, [completionLog])
+
+  // ── Sign-in sync: load all remote data and merge ─────────────────────────
+  useEffect(() => {
+    if (!supabaseConfigured || !supabase || !session?.user?.id) return
+    const userId = session.user.id
+
+    const doSync = async () => {
+      // 1. Completion log
+      const remoteLog = await loadCompletionLogFromSupabase(userId)
+      if (remoteLog.length > 0) {
+        remoteLog.forEach((e) => syncedLogIds.current.add(e.id))
+        setCompletionLog((local) => {
+          const remoteIds = new Set(remoteLog.map((e) => e.id))
+          const localOnly = local.filter((e) => !remoteIds.has(e.id))
+          if (localOnly.length > 0) syncLogEntries(localOnly, userId)
+          localOnly.forEach((e) => syncedLogIds.current.add(e.id))
+          return [...remoteLog, ...localOnly]
+        })
+      } else {
+        setCompletionLog((local) => {
+          const unsynced = local.filter((e) => !syncedLogIds.current.has(e.id))
+          if (unsynced.length > 0) {
+            syncLogEntries(unsynced, userId)
+            unsynced.forEach((e) => syncedLogIds.current.add(e.id))
+          }
+          return local
+        })
+      }
+
+      // 2. Task library
+      const remoteLibrary = await loadTaskLibrary(userId)
+      if (remoteLibrary && remoteLibrary.length > 0) {
+        setTaskLibrary(remoteLibrary)
+      } else {
+        setTaskLibrary((lib) => { saveTaskLibrary(lib, userId); return lib })
+      }
+
+      // 3. Friday reviews
+      const reviews = await loadFridayReviews(userId)
+      setFridayReviews(reviews)
+    }
+
+    doSync()
+  }, [session?.user?.id, supabaseConfigured])
+
+  // ── Sync new completion log entries as they are added ────────────────────
+  useEffect(() => {
+    if (!supabaseConfigured || !supabase || !session?.user?.id) return
+    const userId = session.user.id
+    const unsynced = completionLog.filter((e) => !syncedLogIds.current.has(e.id))
+    if (unsynced.length === 0) return
+    syncLogEntries(unsynced, userId)
+    unsynced.forEach((e) => syncedLogIds.current.add(e.id))
+  }, [completionLog, session?.user?.id, supabaseConfigured])
+
+  // ── Sync task library changes (debounced 2 s) ────────────────────────────
+  useEffect(() => {
+    if (!supabaseConfigured || !supabase || !session?.user?.id) return
+    const userId = session.user.id
+    clearTimeout(taskLibrarySyncTimer.current)
+    taskLibrarySyncTimer.current = setTimeout(() => {
+      saveTaskLibrary(taskLibrary, userId)
+    }, 2000)
+    return () => clearTimeout(taskLibrarySyncTimer.current)
+  }, [taskLibrary, session?.user?.id, supabaseConfigured])
+
+  // ── Load current week's review into draft when week changes ─────────────
+  useEffect(() => {
+    const weekStartStr = getWeekBounds(weekOffset).start.toISOString().slice(0, 10)
+    const existing = fridayReviews.find((r) => r.week_start === weekStartStr)
+    setReviewDraft({
+      q1: existing?.q1 ?? '',
+      q2: existing?.q2 ?? '',
+      q3: existing?.q3 ?? '',
+      mondayIntention: existing?.monday_intention ?? '',
+    })
+  }, [weekOffset, fridayReviews])
 
   function updateLibraryTask(taskId, field, value) {
     setTaskLibrary((prev) =>
@@ -1311,6 +1414,73 @@ function App() {
     } else {
       setStatusMessage('Task completed and KPI data captured.')
     }
+  }
+
+  async function handleSaveFridayReview() {
+    const weekStartStr = getWeekBounds(weekOffset).start.toISOString().slice(0, 10)
+    const record = {
+      week_start: weekStartStr,
+      week_score: kpiSummary.weekScore,
+      kpis_hit: kpiSummary.kpisHit,
+      kpis_total: kpiSummary.kpisTotal,
+      q1: reviewDraft.q1,
+      q2: reviewDraft.q2,
+      q3: reviewDraft.q3,
+      monday_intention: reviewDraft.mondayIntention,
+    }
+    setReviewSaving(true)
+    if (supabaseConfigured && session?.user?.id) {
+      await saveFridayReview(record, session.user.id)
+      const updated = await loadFridayReviews(session.user.id)
+      setFridayReviews(updated)
+    } else {
+      setFridayReviews((prev) => {
+        const filtered = prev.filter((r) => r.week_start !== weekStartStr)
+        return [{ ...record, id: `local-${weekStartStr}` }, ...filtered]
+      })
+    }
+    setReviewSaving(false)
+  }
+
+  function handlePrintReview() {
+    const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
+    const scoreColors = { green: '#d1fae5', yellow: '#fef3c7', red: '#fee2e2' }
+    const scoreTextColors = { green: '#065f46', yellow: '#92400e', red: '#991b1b' }
+    const score = kpiSummary.weekScore
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Friday Review — ${formatWeekLabel(weekStart, weekEnd)}</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 760px; margin: 32px auto; color: #111827; line-height: 1.5; }
+    h1 { font-size: 26px; margin-bottom: 4px; }
+    .sub { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
+    .badge { display: inline-block; padding: 4px 14px; border-radius: 99px; font-weight: 700; font-size: 13px; background: ${scoreColors[score]}; color: ${scoreTextColors[score]}; margin-bottom: 20px; }
+    h2 { font-size: 15px; font-weight: 700; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; margin-top: 28px; }
+    p { font-size: 14px; white-space: pre-wrap; min-height: 40px; }
+    .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <h1>Friday Review</h1>
+  <p class="sub">${formatWeekLabel(weekStart, weekEnd)}</p>
+  <div class="badge">${score.toUpperCase()} — ${kpiSummary.kpisHit} of ${kpiSummary.kpisTotal} KPIs hit</div>
+  <h2>What actually got in the way?</h2>
+  <p>${reviewDraft.q1 || '(not answered)'}</p>
+  <h2>One thing to do differently next week?</h2>
+  <p>${reviewDraft.q2 || '(not answered)'}</p>
+  <h2>One thing done well this week?</h2>
+  <p>${reviewDraft.q3 || '(not answered)'}</p>
+  <h2>Monday intention</h2>
+  <p>${reviewDraft.mondayIntention || '(not set)'}</p>
+  <div class="footer">Chief of Staff — generated ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+</body>
+</html>`
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+    win.print()
   }
 
   function handleConfirmReschedule(queueId) {
@@ -1958,18 +2128,11 @@ function App() {
 
   function renderKpiDashboard() {
     const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
-    const { start: monthStart, end: monthEnd } = getMonthBoundsForWeek(weekOffset)
     const isCurrentWeek = weekOffset === 0
 
-    const kpiResults = KPI_DEFINITIONS.map((kpiDef) => {
-      const { count, total } = countKpi(completionLog, kpiDef, weekStart, weekEnd, monthStart, monthEnd)
-      const hit = isKpiHit(count, total, kpiDef)
-      return { ...kpiDef, count, total, hit }
-    })
-
+    const { kpisHit, kpisTotal, weekScore, kpiResults } = kpiSummary
     const weeklyKpis = kpiResults.filter((k) => !k.isRate && k.period === 'week' && k.target)
-    const kpisHit = weeklyKpis.filter((k) => k.hit).length
-    const weekScore = kpisHit >= 7 ? 'green' : kpisHit >= 4 ? 'yellow' : 'red'
+
     const scoreConfig = {
       green:  { label: 'Green',  desc: '7+ KPIs hit — strong week',     bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
       yellow: { label: 'Yellow', desc: '4–6 KPIs hit — room to improve', bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300'   },
@@ -1986,6 +2149,9 @@ function App() {
       const total = trackLog.length
       return { track, completed, total, rate: total > 0 ? Math.round((completed / total) * 100) : null }
     })
+
+    const weekStartStr = weekStart.toISOString().slice(0, 10)
+    const savedReview = fridayReviews.find((r) => r.week_start === weekStartStr)
 
     return (
       <section className="space-y-4 p-4">
@@ -2093,6 +2259,129 @@ function App() {
           <p className="text-center text-sm text-slate-400">
             Complete tasks to start building your KPI scorecard.
           </p>
+        ) : null}
+
+        {/* ── Friday Review ─────────────────────────────────────────────── */}
+        <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-800">Friday Review</h2>
+              <p className="text-xs text-slate-500">{formatWeekLabel(weekStart, weekEnd)}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {savedReview ? (
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Saved</span>
+              ) : null}
+              {(reviewDraft.q1 || reviewDraft.q2 || reviewDraft.q3 || reviewDraft.mondayIntention) && savedReview ? (
+                <button
+                  type="button"
+                  onClick={handlePrintReview}
+                  className="rounded-md border border-slate-200 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                >
+                  Export PDF
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="space-y-4 p-4">
+            {/* Score summary (read-only, auto-populated) */}
+            <div className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${scoreConfig[weekScore].bg} ${scoreConfig[weekScore].border}`}>
+              <span className={`text-sm font-bold ${scoreConfig[weekScore].text}`}>{scoreConfig[weekScore].label} week</span>
+              <span className={`text-xs ${scoreConfig[weekScore].text} opacity-80`}>{kpisHit} of {kpisTotal} KPIs hit — auto-filled from above</span>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block">
+                <p className="mb-1 text-xs font-semibold text-slate-700">What actually got in the way this week?</p>
+                <textarea
+                  rows={3}
+                  value={reviewDraft.q1}
+                  onChange={(e) => setReviewDraft((d) => ({ ...d, q1: e.target.value }))}
+                  placeholder="Be honest — what blocked you or slowed you down?"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-400 focus:outline-none resize-none"
+                />
+              </label>
+
+              <label className="block">
+                <p className="mb-1 text-xs font-semibold text-slate-700">One thing to do differently next week?</p>
+                <textarea
+                  rows={3}
+                  value={reviewDraft.q2}
+                  onChange={(e) => setReviewDraft((d) => ({ ...d, q2: e.target.value }))}
+                  placeholder="One concrete change — be specific."
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-400 focus:outline-none resize-none"
+                />
+              </label>
+
+              <label className="block">
+                <p className="mb-1 text-xs font-semibold text-slate-700">One thing you did well this week?</p>
+                <textarea
+                  rows={3}
+                  value={reviewDraft.q3}
+                  onChange={(e) => setReviewDraft((d) => ({ ...d, q3: e.target.value }))}
+                  placeholder="Don't skip this — it matters."
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-400 focus:outline-none resize-none"
+                />
+              </label>
+
+              <label className="block">
+                <p className="mb-1 text-xs font-semibold text-slate-700">Monday intention</p>
+                <textarea
+                  rows={2}
+                  value={reviewDraft.mondayIntention}
+                  onChange={(e) => setReviewDraft((d) => ({ ...d, mondayIntention: e.target.value }))}
+                  placeholder="What's the one thing Monday must deliver?"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-400 focus:outline-none resize-none"
+                />
+              </label>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleSaveFridayReview}
+                disabled={reviewSaving}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                {reviewSaving ? 'Saving…' : savedReview ? 'Update Review' : 'Save Review'}
+              </button>
+              {savedReview ? (
+                <button
+                  type="button"
+                  onClick={handlePrintReview}
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Export PDF
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </article>
+
+        {/* Past reviews (last 5, excluding current week) */}
+        {fridayReviews.filter((r) => r.week_start !== weekStartStr).length > 0 ? (
+          <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-sm font-semibold uppercase text-slate-500">Past Reviews</h2>
+            <ul className="space-y-2">
+              {fridayReviews
+                .filter((r) => r.week_start !== weekStartStr)
+                .slice(0, 5)
+                .map((r) => {
+                  const sc = scoreConfig[r.week_score] ?? scoreConfig.red
+                  return (
+                    <li key={r.week_start} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${sc.bg} ${sc.text}`}>{r.week_score?.toUpperCase()}</span>
+                      <span className="text-xs font-medium text-slate-700">{formatDate(r.week_start)}</span>
+                      <span className="text-xs text-slate-500">{r.kpis_hit}/{r.kpis_total} KPIs</span>
+                      {r.monday_intention ? (
+                        <span className="ml-auto max-w-[160px] truncate text-xs text-slate-400 italic">"{r.monday_intention}"</span>
+                      ) : null}
+                    </li>
+                  )
+                })}
+            </ul>
+          </article>
         ) : null}
       </section>
     )
