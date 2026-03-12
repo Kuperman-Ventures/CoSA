@@ -126,6 +126,9 @@ function mapLibraryTaskToTodayTask(task, deploymentId, index) {
     completionType: task.completionType,
     outcomePrompt: task.outcomePrompt,
     requiresDefinitionOfDone: Boolean(task.requiresDefinitionOfDone),
+    subtasks: task.subtasks
+      ? task.subtasks.split('\n').map((s) => s.trim()).filter(Boolean)
+      : [],
   }
 }
 
@@ -209,6 +212,7 @@ function getInitialSession(task) {
     actualCompleted: '',
     outcomeAchieved: null,
     completionLoggedAtISO: null,
+    subtaskChecks: Array.isArray(task.subtasks) ? task.subtasks.map(() => false) : [],
   }
 }
 
@@ -635,6 +639,20 @@ function App() {
     })
 
     setStatusMessage('Task completed and KPI data captured.')
+  }
+
+  function handleToggleSubtask(index) {
+    if (!activeTask) return
+    setSessions((prev) => {
+      const current = prev[activeTask.id]
+      if (!current) return prev
+      const updated = [...(current.subtaskChecks ?? [])]
+      updated[index] = !updated[index]
+      return {
+        ...prev,
+        [activeTask.id]: { ...current, subtaskChecks: updated },
+      }
+    })
   }
 
   if (supabaseConfigured && !session) {
@@ -1066,6 +1084,41 @@ function App() {
             <p className="text-xs uppercase tracking-wide">{timerLabel}</p>
             <p className="text-4xl font-semibold tabular-nums">{remainingOrOverrun}</p>
           </div>
+
+          {activeTask.subtasks?.length > 0 ? (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <p className="mb-2 text-sm font-medium text-slate-700">Steps</p>
+              <ul className="space-y-2">
+                {activeTask.subtasks.map((step, index) => {
+                  const checked = activeSession.subtaskChecks?.[index] ?? false
+                  const frozen = isCompleted || isCancelled
+                  return (
+                    <li key={index} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        id={`subtask-${activeTask.id}-${index}`}
+                        checked={checked}
+                        onChange={() => handleToggleSubtask(index)}
+                        disabled={frozen}
+                        className="mt-0.5 h-4 w-4 flex-shrink-0 accent-slate-900 disabled:cursor-not-allowed"
+                      />
+                      <label
+                        htmlFor={`subtask-${activeTask.id}-${index}`}
+                        className={`text-sm leading-snug ${
+                          checked ? 'text-slate-400 line-through' : 'text-slate-700'
+                        } ${frozen ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                      >
+                        {step}
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+              <p className="mt-2 text-[11px] text-slate-400">
+                {(activeSession.subtaskChecks ?? []).filter(Boolean).length} of {activeTask.subtasks.length} steps done
+              </p>
+            </div>
+          ) : null}
 
           {activeTask.requiresDefinitionOfDone ? (
             <div className="mb-4 rounded-lg border border-purple-200 bg-purple-50 p-3">
