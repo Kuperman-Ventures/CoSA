@@ -90,6 +90,7 @@ function todayTaskToRow(task, userId, date, index) {
     outcome_prompt_snapshot: task.outcomePrompt ?? '',
     template_id_snapshot: task.templateId ?? null,
     requires_definition_of_done: Boolean(task.requiresDefinitionOfDone),
+    calendar_event_id: task.calendarEventId ?? null,
   }
 }
 
@@ -109,6 +110,7 @@ function rowToTodayTask(row) {
       : [],
     outcomePrompt: row.outcome_prompt_snapshot ?? '',
     requiresDefinitionOfDone: Boolean(row.requires_definition_of_done),
+    calendarEventId: row.calendar_event_id ?? null,
   }
 }
 

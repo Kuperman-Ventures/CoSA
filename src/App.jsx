@@ -30,6 +30,7 @@ import {
   upsertFridayReview,
   loadFridayReviews,
 } from './lib/supabaseSync'
+import { createEventsForSnapshot, moveCalendarEvent } from './lib/googleCalendar'
 
 const TRACKS = {
   advisors: {
@@ -963,6 +964,7 @@ function App() {
       provider: 'google',
       options: {
         redirectTo: window.location.origin,
+        scopes: 'https://www.googleapis.com/auth/calendar.events',
       },
     })
 
@@ -1107,7 +1109,20 @@ function App() {
           const validDeployable = deployable.filter((t) => validateLibraryTask(t).length === 0)
           if (validDeployable.length > 0) {
             const deployId = Date.now()
-            const snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
+            let snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
+
+            // Create calendar events for auto-deployed tasks
+            const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
+            if (providerToken) {
+              const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
+              if (Object.keys(eventIdMap).length > 0) {
+                snapshot = snapshot.map((t) => ({
+                  ...t,
+                  calendarEventId: eventIdMap[t.id] ?? null,
+                }))
+              }
+            }
+
             setTodayTasks(snapshot)
             setSessions(buildSessionsFromTodayTasks(snapshot))
             setActiveTaskId(snapshot[0]?.id ?? null)
@@ -1190,7 +1205,7 @@ function App() {
     setLibraryMessage('New task created. Complete all fields before your next deployment.')
   }
 
-  function deployLibraryToToday() {
+  async function deployLibraryToToday() {
     if (hasLockedTodayTimers) {
       setLibraryMessage('Finish, cancel, or pause-proof active timers before deploying a new Today snapshot.')
       return
@@ -1213,19 +1228,34 @@ function App() {
       mapLibraryTaskToTodayTask(task, deploymentId, index),
     )
 
-    setTodayTasks(snapshot)
-    setSessions(buildSessionsFromTodayTasks(snapshot))
-    setActiveTaskId(snapshot[0]?.id ?? null)
+    const todayStr = getTodayDateString()
+
+    // Create Google Calendar events (if Calendar scope granted)
+    let finalSnapshot = snapshot
+    const providerToken = session?.provider_token
+    if (providerToken) {
+      const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
+      if (Object.keys(eventIdMap).length > 0) {
+        finalSnapshot = snapshot.map((t) => ({
+          ...t,
+          calendarEventId: eventIdMap[t.id] ?? null,
+        }))
+      }
+    }
+
+    setTodayTasks(finalSnapshot)
+    setSessions(buildSessionsFromTodayTasks(finalSnapshot))
+    setActiveTaskId(finalSnapshot[0]?.id ?? null)
     setDefinitionInput('')
     setCompletionInput('')
     setOutcomeSelection(null)
     setStatusMessage('')
     setLastDeploymentAt(new Date().toISOString())
     setLibraryMessage(
-      `Deployed ${snapshot.length} Active task template(s) to Today. Paused (${pausedCount}) and Archived (${archivedCount}) tasks were excluded.`,
+      `Deployed ${finalSnapshot.length} Active task template(s) to Today.${providerToken ? ' Calendar events created.' : ''} Paused (${pausedCount}) and Archived (${archivedCount}) tasks were excluded.`,
     )
     if (supabaseConfigured && session?.user?.id) {
-      upsertTodayTasks(snapshot, session.user.id, getTodayDateString())
+      upsertTodayTasks(finalSnapshot, session.user.id, todayStr)
     }
   }
 
@@ -1529,6 +1559,13 @@ function App() {
   function handleConfirmReschedule(queueId) {
     const item = rescheduleQueue.find((q) => q.id === queueId)
     if (!item) return
+
+    // Move the calendar event to the suggested date
+    const matchedTask = todayTasks.find((t) => t.name === item.taskName)
+    if (matchedTask?.calendarEventId && session?.provider_token && item.suggestedDate) {
+      moveCalendarEvent(matchedTask.calendarEventId, matchedTask, session.provider_token, item.suggestedDate)
+    }
+
     setDeferredTasks((prev) => [...prev, { ...item, status: 'confirmed', confirmedAt: new Date().toISOString() }])
     setRescheduleQueue((prev) => prev.filter((q) => q.id !== queueId))
     if (supabaseConfigured && session?.user?.id) {
@@ -2672,6 +2709,15 @@ function App() {
             <p className="text-sm text-slate-600">{activeScreenLabel}</p>
           </div>
           <div className="flex items-center gap-2 text-xs sm:text-sm">
+            {session?.provider_token ? (
+              <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 font-medium">
+                📅 Calendar sync on
+              </span>
+            ) : supabaseConfigured && session ? (
+              <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">
+                Calendar sync off
+              </span>
+            ) : null}
             {supabaseConfigured && session?.user?.email ? (
               <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">{session.user.email}</span>
             ) : (
