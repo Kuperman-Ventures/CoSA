@@ -18,11 +18,16 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient'
 import {
-  syncLogEntries,
-  loadCompletionLog as loadCompletionLogFromSupabase,
-  saveTaskLibrary,
-  loadTaskLibrary,
-  saveFridayReview,
+  upsertTaskTemplates,
+  loadTaskTemplates,
+  upsertTodayTasks,
+  loadTodayTasks,
+  upsertTimerSession,
+  loadTimerSessions,
+  syncRescheduleQueue,
+  loadRescheduleQueue,
+  updateRescheduleItem,
+  upsertFridayReview,
   loadFridayReviews,
 } from './lib/supabaseSync'
 
@@ -32,6 +37,12 @@ const TRACKS = {
     label: 'Kuperman Advisors',
     color: '#1E6B3C',
     priority: 1,
+  },
+  networking: {
+    key: 'networking',
+    label: 'Shared (Networking)',
+    color: '#B8600B',
+    priority: 1.5,
   },
   jobSearch: {
     key: 'jobSearch',
@@ -207,7 +218,7 @@ const INITIAL_TASK_LIBRARY = [
   {
     id: 'lib-networking-1',
     name: 'Warm Reconnect Outreach',
-    track: TRACKS.jobSearch.key,
+    track: TRACKS.networking.key,
     timeBlock: 'Networking',
     defaultTimeEstimate: 10,
     frequency: 'Daily',
@@ -221,7 +232,7 @@ const INITIAL_TASK_LIBRARY = [
   {
     id: 'lib-networking-2',
     name: 'Coffee Chat / Call',
-    track: TRACKS.jobSearch.key,
+    track: TRACKS.networking.key,
     timeBlock: 'Networking',
     defaultTimeEstimate: 45,
     frequency: 'As scheduled',
@@ -235,7 +246,7 @@ const INITIAL_TASK_LIBRARY = [
   {
     id: 'lib-networking-3',
     name: 'LinkedIn Engagement (Networking)',
-    track: TRACKS.jobSearch.key,
+    track: TRACKS.networking.key,
     timeBlock: 'Networking',
     defaultTimeEstimate: 15,
     frequency: 'Weekly',
@@ -468,7 +479,7 @@ const NAV_ITEMS = [
   { id: 'kpi', label: 'KPI Dashboard' },
   { id: 'analytics', label: 'Analytics' },
 ]
-const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v3'
+const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v4'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
 
 const KPI_DEFINITIONS = [
@@ -711,6 +722,7 @@ function getStatusBehavior(status) {
 function getInitialSession(task) {
   const estimateSeconds = task.estimateMinutes * 60
   return {
+    sessionId: crypto.randomUUID(),
     taskId: task.id,
     timerState: TIMER_STATES.notStarted,
     estimateSeconds,
@@ -720,6 +732,8 @@ function getInitialSession(task) {
     pauseDurationSeconds: 0,
     currentPauseStartedAtMs: null,
     cancelledSeconds: 0,
+    startedAtISO: null,
+    completionType: null,
     definitionOfDone: '',
     actualCompleted: '',
     outcomeAchieved: null,
@@ -814,7 +828,8 @@ function App() {
   const [fridayReviews, setFridayReviews] = useState([])
   const [reviewDraft, setReviewDraft] = useState({ q1: '', q2: '', q3: '', mondayIntention: '' })
   const [reviewSaving, setReviewSaving] = useState(false)
-  const syncedLogIds = useRef(new Set())
+  const [showVenturesModal, setShowVenturesModal] = useState(false)
+  const [venturesModalData, setVenturesModalData] = useState(null)
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -865,24 +880,23 @@ function App() {
           !overrunNotifiedRef.current.has(activeTask.id)
         ) {
           overrunNotifiedRef.current.add(activeTask.id)
+          const overrunItem = {
+            id: `rq-${Date.now()}`,
+            taskName: activeTask.name,
+            track: activeTask.track,
+            timeBlock: activeTask.timeBlock,
+            reason: 'overrun',
+            remainingMinutes: null,
+            status: 'pending',
+            suggestedDate: getTomorrowDateString(),
+            suggestedTimeBlock: activeTask.timeBlock,
+          }
           setRescheduleQueue((q) => {
-            const alreadyQueued = q.some((item) => item.taskId === activeTask.id && item.reason === 'overrun')
-            if (alreadyQueued) return q
-            return [
-              ...q,
-              {
-                id: `rq-${Date.now()}`,
-                taskId: activeTask.id,
-                taskName: activeTask.name,
-                track: activeTask.track,
-                timeBlock: activeTask.timeBlock,
-                reason: 'overrun',
-                remainingMinutes: null,
-                status: 'pending',
-                suggestedDate: getTomorrowDateString(),
-                suggestedTimeBlock: activeTask.timeBlock,
-              },
-            ]
+            if (q.some((item) => item.taskName === activeTask.name && item.reason === 'overrun')) return q
+            if (supabaseConfigured && session?.user?.id) {
+              syncRescheduleQueue([overrunItem], session.user.id)
+            }
+            return [...q, overrunItem]
           })
         }
 
@@ -1054,68 +1068,85 @@ function App() {
     saveCompletionLog(completionLog)
   }, [completionLog])
 
-  // ── Sign-in sync: load all remote data and merge ─────────────────────────
+  // ── Sign-in: load all state from Supabase (source of truth) ─────────────
   useEffect(() => {
     if (!supabaseConfigured || !supabase || !session?.user?.id) return
     const userId = session.user.id
+    const todayStr = getTodayDateString()
 
     const doSync = async () => {
-      // 1. Completion log
-      const remoteLog = await loadCompletionLogFromSupabase(userId)
-      if (remoteLog.length > 0) {
-        remoteLog.forEach((e) => syncedLogIds.current.add(e.id))
-        setCompletionLog((local) => {
-          const remoteIds = new Set(remoteLog.map((e) => e.id))
-          const localOnly = local.filter((e) => !remoteIds.has(e.id))
-          if (localOnly.length > 0) syncLogEntries(localOnly, userId)
-          localOnly.forEach((e) => syncedLogIds.current.add(e.id))
-          return [...remoteLog, ...localOnly]
-        })
-      } else {
-        setCompletionLog((local) => {
-          const unsynced = local.filter((e) => !syncedLogIds.current.has(e.id))
-          if (unsynced.length > 0) {
-            syncLogEntries(unsynced, userId)
-            unsynced.forEach((e) => syncedLogIds.current.add(e.id))
-          }
-          return local
-        })
-      }
-
-      // 2. Task library
-      const remoteLibrary = await loadTaskLibrary(userId)
+      // 1. Task library
+      let activeLibrary = taskLibrary
+      const remoteLibrary = await loadTaskTemplates(userId)
       if (remoteLibrary && remoteLibrary.length > 0) {
         setTaskLibrary(remoteLibrary)
+        activeLibrary = remoteLibrary
       } else {
-        setTaskLibrary((lib) => { saveTaskLibrary(lib, userId); return lib })
+        upsertTaskTemplates(taskLibrary, userId)
       }
 
-      // 3. Friday reviews
+      // 2. Today tasks
+      const remoteTodayTasks = await loadTodayTasks(userId, todayStr)
+      if (remoteTodayTasks && remoteTodayTasks.length > 0) {
+        setTodayTasks(remoteTodayTasks)
+        setSessions((prev) => {
+          const next = { ...prev }
+          remoteTodayTasks.forEach((task) => {
+            if (!next[task.id]) next[task.id] = getInitialSession(task)
+          })
+          return next
+        })
+      } else {
+        // Check for 9am auto-population
+        const hour = new Date().getHours()
+        const lastAutoDate = window.localStorage.getItem('cosa.lastAutoDeployDate')
+        if (hour >= 9 && lastAutoDate !== todayStr) {
+          const deployable = activeLibrary
+            .filter((t) => t.status === 'Active')
+            .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
+          const validDeployable = deployable.filter((t) => validateLibraryTask(t).length === 0)
+          if (validDeployable.length > 0) {
+            const deployId = Date.now()
+            const snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
+            setTodayTasks(snapshot)
+            setSessions(buildSessionsFromTodayTasks(snapshot))
+            setActiveTaskId(snapshot[0]?.id ?? null)
+            window.localStorage.setItem('cosa.lastAutoDeployDate', todayStr)
+            upsertTodayTasks(snapshot, userId, todayStr)
+            setStatusMessage("Today's tasks auto-deployed from your library.")
+          }
+        }
+      }
+
+      // 3. Timer sessions → completion log for KPI/analytics
+      const remoteSessions = await loadTimerSessions(userId)
+      if (remoteSessions && remoteSessions.length > 0) {
+        setCompletionLog(remoteSessions)
+      }
+
+      // 4. Reschedule queue
+      const remoteQueue = await loadRescheduleQueue(userId)
+      if (remoteQueue && remoteQueue.length > 0) {
+        setRescheduleQueue(remoteQueue)
+      }
+
+      // 5. Friday reviews
       const reviews = await loadFridayReviews(userId)
       setFridayReviews(reviews)
     }
 
     doSync()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id, supabaseConfigured])
 
-  // ── Sync new completion log entries as they are added ────────────────────
-  useEffect(() => {
-    if (!supabaseConfigured || !supabase || !session?.user?.id) return
-    const userId = session.user.id
-    const unsynced = completionLog.filter((e) => !syncedLogIds.current.has(e.id))
-    if (unsynced.length === 0) return
-    syncLogEntries(unsynced, userId)
-    unsynced.forEach((e) => syncedLogIds.current.add(e.id))
-  }, [completionLog, session?.user?.id, supabaseConfigured])
-
-  // ── Sync task library changes (debounced 2 s) ────────────────────────────
+  // ── Sync task library edits to Supabase (debounced 500ms) ────────────────
   useEffect(() => {
     if (!supabaseConfigured || !supabase || !session?.user?.id) return
     const userId = session.user.id
     clearTimeout(taskLibrarySyncTimer.current)
     taskLibrarySyncTimer.current = setTimeout(() => {
-      saveTaskLibrary(taskLibrary, userId)
-    }, 2000)
+      upsertTaskTemplates(taskLibrary, userId)
+    }, 500)
     return () => clearTimeout(taskLibrarySyncTimer.current)
   }, [taskLibrary, session?.user?.id, supabaseConfigured])
 
@@ -1193,6 +1224,9 @@ function App() {
     setLibraryMessage(
       `Deployed ${snapshot.length} Active task template(s) to Today. Paused (${pausedCount}) and Archived (${archivedCount}) tasks were excluded.`,
     )
+    if (supabaseConfigured && session?.user?.id) {
+      upsertTodayTasks(snapshot, session.user.id, getTodayDateString())
+    }
   }
 
   function setActiveTask(taskId) {
@@ -1217,28 +1251,29 @@ function App() {
     }
 
     setStatusMessage('')
-    setSessions((prev) => {
-      const current = prev[activeTask.id]
-      if (!current) return prev
+    const current = sessions[activeTask.id]
+    if (!current) return
 
-      const pauseDelta = current.currentPauseStartedAtMs
-        ? Math.floor((Date.now() - current.currentPauseStartedAtMs) / 1000)
-        : 0
+    const pauseDelta = current.currentPauseStartedAtMs
+      ? Math.floor((Date.now() - current.currentPauseStartedAtMs) / 1000)
+      : 0
 
-      return {
-        ...prev,
-        [activeTask.id]: {
-          ...current,
-          timerState:
-            current.remainingSeconds === 0 || current.timerState === TIMER_STATES.overrun
-              ? TIMER_STATES.overrun
-              : TIMER_STATES.running,
-          pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
-          currentPauseStartedAtMs: null,
-          definitionOfDone: isVenturesEncore ? definitionInput.trim() : current.definitionOfDone,
-        },
-      }
-    })
+    const nextSession = {
+      ...current,
+      timerState:
+        current.remainingSeconds === 0 || current.timerState === TIMER_STATES.overrun
+          ? TIMER_STATES.overrun
+          : TIMER_STATES.running,
+      pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
+      currentPauseStartedAtMs: null,
+      startedAtISO: current.startedAtISO ?? new Date().toISOString(),
+      definitionOfDone: isVenturesEncore ? definitionInput.trim() : current.definitionOfDone,
+    }
+
+    setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
+    if (supabaseConfigured && session?.user?.id) {
+      upsertTimerSession(nextSession, activeTask, session.user.id)
+    }
   }
 
   function handlePause() {
@@ -1250,85 +1285,84 @@ function App() {
       return
     }
 
-    setSessions((prev) => {
-      const current = prev[activeTask.id]
-      if (!current) return prev
-      return {
-        ...prev,
-        [activeTask.id]: {
-          ...current,
-          timerState: TIMER_STATES.paused,
-          pauseCount: current.pauseCount + 1,
-          currentPauseStartedAtMs: Date.now(),
-        },
-      }
-    })
+    const current = sessions[activeTask.id]
+    if (!current) return
+
+    const nextSession = {
+      ...current,
+      timerState: TIMER_STATES.paused,
+      pauseCount: current.pauseCount + 1,
+      currentPauseStartedAtMs: Date.now(),
+    }
+
+    setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
+    if (supabaseConfigured && session?.user?.id) {
+      upsertTimerSession(nextSession, activeTask, session.user.id)
+    }
   }
 
   function handleCancel() {
     if (!activeTask || !activeSession) return
+    const current = sessions[activeTask.id]
+    if (!current) return
+
     const pauseDelta =
-      activeSession.timerState === TIMER_STATES.paused && activeSession.currentPauseStartedAtMs
-        ? Math.floor((Date.now() - activeSession.currentPauseStartedAtMs) / 1000)
+      current.timerState === TIMER_STATES.paused && current.currentPauseStartedAtMs
+        ? Math.floor((Date.now() - current.currentPauseStartedAtMs) / 1000)
         : 0
 
-    setSessions((prev) => {
-      const current = prev[activeTask.id]
-      if (!current) return prev
-      return {
-        ...prev,
-        [activeTask.id]: {
-          ...current,
-          timerState: TIMER_STATES.cancelled,
-          cancelledSeconds: current.remainingSeconds,
-          pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
-          currentPauseStartedAtMs: null,
-          completionLoggedAtISO: new Date().toISOString(),
-        },
-      }
-    })
-    const cancelledPauseDelta =
-      activeSession.timerState === TIMER_STATES.paused && activeSession.currentPauseStartedAtMs
-        ? Math.floor((Date.now() - activeSession.currentPauseStartedAtMs) / 1000)
-        : 0
-    setCompletionLog((prev) => [
-      ...prev,
-      {
-        id: `log-${Date.now()}`,
-        taskId: activeTask.id,
-        taskName: activeTask.name,
-        track: activeTask.track,
-        kpiMapping: activeTask.kpiMapping ?? '',
-        completionType: 'Cancelled',
-        outcomeAchieved: null,
-        definitionOfDoneUsed: false,
-        completedAt: new Date().toISOString(),
-        estimateSeconds: activeSession.estimateSeconds,
-        elapsedSeconds: activeSession.elapsedSeconds,
-        pauseCount: activeSession.pauseCount,
-        pauseDurationSeconds: activeSession.pauseDurationSeconds + Math.max(0, cancelledPauseDelta),
-        cancelledSeconds: activeSession.remainingSeconds,
-      },
-    ])
-    const remainingMins = Math.ceil(activeSession.remainingSeconds / 60)
+    const now = new Date().toISOString()
+    const nextSession = {
+      ...current,
+      timerState: TIMER_STATES.cancelled,
+      cancelledSeconds: current.remainingSeconds,
+      pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
+      currentPauseStartedAtMs: null,
+      completionLoggedAtISO: now,
+      completionType: 'Cancelled',
+    }
+
+    setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
+
+    if (supabaseConfigured && session?.user?.id) {
+      upsertTimerSession(nextSession, activeTask, session.user.id)
+    }
+
+    const logEntry = {
+      id: current.sessionId ?? `log-${Date.now()}`,
+      taskName: activeTask.name,
+      track: activeTask.track,
+      kpiMapping: activeTask.kpiMapping ?? '',
+      completionType: 'Cancelled',
+      outcomeAchieved: null,
+      definitionOfDoneUsed: false,
+      completedAt: now,
+      estimateSeconds: current.estimateSeconds,
+      elapsedSeconds: current.elapsedSeconds,
+      pauseCount: current.pauseCount,
+      pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
+      cancelledSeconds: current.remainingSeconds,
+    }
+    setCompletionLog((prev) => [...prev, logEntry])
+
+    const remainingMins = Math.ceil(current.remainingSeconds / 60)
+    const newQueueItem = {
+      id: `rq-${Date.now()}`,
+      taskName: activeTask.name,
+      track: activeTask.track,
+      timeBlock: activeTask.timeBlock,
+      reason: 'cancelled',
+      remainingMinutes: remainingMins,
+      status: 'pending',
+      suggestedDate: getTomorrowDateString(),
+      suggestedTimeBlock: activeTask.timeBlock,
+    }
     setRescheduleQueue((q) => {
-      const alreadyQueued = q.some((item) => item.taskId === activeTask.id && item.reason === 'cancelled')
-      if (alreadyQueued) return q
-      return [
-        ...q,
-        {
-          id: `rq-${Date.now()}`,
-          taskId: activeTask.id,
-          taskName: activeTask.name,
-          track: activeTask.track,
-          timeBlock: activeTask.timeBlock,
-          reason: 'cancelled',
-          remainingMinutes: remainingMins,
-          status: 'pending',
-          suggestedDate: getTomorrowDateString(),
-          suggestedTimeBlock: activeTask.timeBlock,
-        },
-      ]
+      if (q.some((item) => item.taskName === activeTask.name && item.reason === 'cancelled')) return q
+      if (supabaseConfigured && session?.user?.id) {
+        syncRescheduleQueue([newQueueItem], session.user.id)
+      }
+      return [...q, newQueueItem]
     })
     setStatusMessage('Task cancelled. Remaining time logged — see Reschedule tab.')
   }
@@ -1348,67 +1382,76 @@ function App() {
       return
     }
 
+    const current = sessions[activeTask.id]
+    if (!current) return
+
     const pauseDelta =
-      activeSession.timerState === TIMER_STATES.paused && activeSession.currentPauseStartedAtMs
-        ? Math.floor((Date.now() - activeSession.currentPauseStartedAtMs) / 1000)
+      current.timerState === TIMER_STATES.paused && current.currentPauseStartedAtMs
+        ? Math.floor((Date.now() - current.currentPauseStartedAtMs) / 1000)
         : 0
 
-    setSessions((prev) => {
-      const current = prev[activeTask.id]
-      if (!current) return prev
-      return {
-        ...prev,
-        [activeTask.id]: {
-          ...current,
-          timerState: TIMER_STATES.completed,
-          actualCompleted: completionInput.trim(),
-          outcomeAchieved: isPartial ? null : outcomeSelection,
-          pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
-          currentPauseStartedAtMs: null,
-          completionLoggedAtISO: new Date().toISOString(),
-          completionType: isPartial ? 'Partial' : activeTask.completionType,
-        },
-      }
-    })
+    const now = new Date().toISOString()
+    const finalCompletionType = isPartial ? 'Partial' : activeTask.completionType
+
+    const nextSession = {
+      ...current,
+      timerState: TIMER_STATES.completed,
+      actualCompleted: completionInput.trim(),
+      outcomeAchieved: isPartial ? null : outcomeSelection,
+      pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
+      currentPauseStartedAtMs: null,
+      completionLoggedAtISO: now,
+      completionType: finalCompletionType,
+    }
+
+    setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
+
+    if (supabaseConfigured && session?.user?.id) {
+      upsertTimerSession(nextSession, activeTask, session.user.id)
+    }
+
+    // Show ventures blocking modal
+    if (activeTask.track === TRACKS.ventures.key && current.definitionOfDone?.trim()) {
+      setVenturesModalData({ session: nextSession, task: activeTask })
+      setShowVenturesModal(true)
+    }
 
     const logEntry = {
-      id: `log-${Date.now()}`,
-      taskId: activeTask.id,
+      id: current.sessionId ?? `log-${Date.now()}`,
       taskName: activeTask.name,
       track: activeTask.track,
       kpiMapping: activeTask.kpiMapping ?? '',
-      completionType: isPartial ? 'Partial' : activeTask.completionType,
+      completionType: finalCompletionType,
       outcomeAchieved: isPartial ? null : outcomeSelection,
-      definitionOfDoneUsed: Boolean(activeSession.definitionOfDone?.trim()),
-      completedAt: new Date().toISOString(),
-      estimateSeconds: activeSession.estimateSeconds,
-      elapsedSeconds: activeSession.elapsedSeconds,
-      pauseCount: activeSession.pauseCount,
-      pauseDurationSeconds: activeSession.pauseDurationSeconds + Math.max(0, pauseDelta),
+      definitionOfDoneUsed: Boolean(current.definitionOfDone?.trim()),
+      completedAt: now,
+      estimateSeconds: current.estimateSeconds,
+      elapsedSeconds: current.elapsedSeconds,
+      pauseCount: current.pauseCount,
+      pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
       cancelledSeconds: 0,
     }
     setCompletionLog((prev) => [...prev, logEntry])
 
     if (isPartial) {
-      const remainingMins = Math.ceil(activeSession.remainingSeconds / 60)
+      const remainingMins = Math.ceil(current.remainingSeconds / 60)
+      const newQueueItem = {
+        id: `rq-${Date.now()}`,
+        taskName: activeTask.name,
+        track: activeTask.track,
+        timeBlock: activeTask.timeBlock,
+        reason: 'partial',
+        remainingMinutes: remainingMins,
+        status: 'pending',
+        suggestedDate: getTomorrowDateString(),
+        suggestedTimeBlock: activeTask.timeBlock,
+      }
       setRescheduleQueue((q) => {
-        const alreadyQueued = q.some((item) => item.taskId === activeTask.id && item.reason === 'partial')
-        if (alreadyQueued) return q
-        return [
-          ...q,
-          {
-            id: `rq-${Date.now()}`,
-            taskId: activeTask.id,
-            taskName: activeTask.name,
-            track: activeTask.track,
-            timeBlock: activeTask.timeBlock,
-            reason: 'partial',
-            remainingMinutes: remainingMins,
-            status: 'pending',
-            suggestedDate: getTomorrowDateString(),
-            suggestedTimeBlock: activeTask.timeBlock,
-          },
-        ]
+        if (q.some((item) => item.taskName === activeTask.name && item.reason === 'partial')) return q
+        if (supabaseConfigured && session?.user?.id) {
+          syncRescheduleQueue([newQueueItem], session.user.id)
+        }
+        return [...q, newQueueItem]
       })
       setStatusMessage('Marked as partial. Remaining work added to Reschedule tab.')
     } else {
@@ -1430,7 +1473,7 @@ function App() {
     }
     setReviewSaving(true)
     if (supabaseConfigured && session?.user?.id) {
-      await saveFridayReview(record, session.user.id)
+      await upsertFridayReview(record, session.user.id)
       const updated = await loadFridayReviews(session.user.id)
       setFridayReviews(updated)
     } else {
@@ -1488,10 +1531,16 @@ function App() {
     if (!item) return
     setDeferredTasks((prev) => [...prev, { ...item, status: 'confirmed', confirmedAt: new Date().toISOString() }])
     setRescheduleQueue((prev) => prev.filter((q) => q.id !== queueId))
+    if (supabaseConfigured && session?.user?.id) {
+      updateRescheduleItem(queueId, 'confirmed', session.user.id)
+    }
   }
 
   function handleDismissReschedule(queueId) {
     setRescheduleQueue((prev) => prev.filter((q) => q.id !== queueId))
+    if (supabaseConfigured && session?.user?.id) {
+      updateRescheduleItem(queueId, 'dismissed', session.user.id)
+    }
   }
 
   function handleClearDeferred() {
@@ -2567,6 +2616,55 @@ function App() {
 
   return (
     <main className="mx-auto min-h-screen max-w-5xl bg-slate-50 pb-24 text-slate-900">
+
+      {/* ── Ventures Session Accountability Modal ──────────────────────── */}
+      {showVenturesModal && venturesModalData ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="bg-[#6B3FA0] px-6 py-5">
+              <p className="text-xs font-semibold uppercase tracking-widest text-purple-200">
+                Kuperman Ventures
+              </p>
+              <h2 className="mt-1 text-xl font-bold text-white">Session Accountability</h2>
+            </div>
+            <div className="space-y-5 p-6">
+              <div>
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-purple-700">
+                  You said you would:
+                </p>
+                <blockquote className="border-l-4 border-purple-400 pl-4 text-sm text-slate-700 leading-relaxed">
+                  {venturesModalData.session.definitionOfDone}
+                </blockquote>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                  What actually happened:
+                </p>
+                <blockquote className="border-l-4 border-slate-300 pl-4 text-sm text-slate-700 leading-relaxed">
+                  {venturesModalData.session.actualCompleted || '(no note recorded)'}
+                </blockquote>
+              </div>
+              {venturesModalData.session.definitionOfDone.trim().toLowerCase() !==
+                venturesModalData.session.actualCompleted.trim().toLowerCase() ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                  <p className="text-sm font-semibold text-amber-800">
+                    These don't match — note the gap for your Friday Review.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+            <div className="px-6 pb-6">
+              <button
+                type="button"
+                onClick={() => setShowVenturesModal(false)}
+                className="w-full rounded-lg bg-[#6B3FA0] py-3 text-sm font-bold text-white hover:bg-purple-800"
+              >
+                Acknowledged
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <section className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -2814,17 +2912,9 @@ function App() {
             </p>
           ) : null}
 
-          {isCompleted && activeTask.requiresDefinitionOfDone ? (
-            <div className="mt-4 rounded-lg border border-purple-300 bg-purple-50 p-3 text-sm">
-              <p className="font-semibold text-purple-900">Encore OS session recap</p>
-              <p className="mt-1 text-purple-800">
-                <span className="font-medium">Definition of done:</span>{' '}
-                {activeSession.definitionOfDone || 'N/A'}
-              </p>
-              <p className="mt-1 text-purple-800">
-                <span className="font-medium">Actually completed:</span>{' '}
-                {activeSession.actualCompleted || 'N/A'}
-              </p>
+          {isCompleted && activeTask.requiresDefinitionOfDone && !showVenturesModal ? (
+            <div className="mt-4 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-700">
+              Session recap recorded — open a new Ventures session to review in the modal.
             </div>
           ) : null}
         </article>
