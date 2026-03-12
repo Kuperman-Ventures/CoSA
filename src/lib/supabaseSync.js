@@ -19,6 +19,7 @@ function taskToRow(task, userId) {
       ? task.subtasks.join('\n')
       : (task.subtasks ?? ''),
     outcome_prompt: task.outcomePrompt ?? '',
+    days_of_week: task.daysOfWeek ?? ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
     updated_at: new Date().toISOString(),
   }
 }
@@ -37,6 +38,7 @@ function rowToTask(row) {
     kpiMapping: row.kpi_mapping,
     subtasks: row.subtasks ?? '',
     outcomePrompt: row.outcome_prompt ?? '',
+    daysOfWeek: row.days_of_week ?? ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
   }
 }
 

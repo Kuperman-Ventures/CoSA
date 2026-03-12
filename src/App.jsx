@@ -72,6 +72,9 @@ const FREQUENCIES = ['Daily', 'Weekly', 'Monthly', 'As scheduled']
 const COMPLETION_TYPES = ['Done', 'Done + Outcome', 'Partial']
 const LIBRARY_STATUSES = ['Active', 'Paused', 'Archived']
 const TIME_BLOCK_ORDER = ['BD', 'Networking', 'Job Search', 'Encore OS', 'Friday']
+const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const ALL_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
 const INITIAL_TASK_LIBRARY = [
   // ─── TRACK 1: KUPERMAN ADVISORS — BD Block ────────────────────────────────
@@ -88,6 +91,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-advisors-2',
@@ -102,6 +106,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-advisors-3',
@@ -116,6 +121,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-advisors-4',
@@ -130,6 +136,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-advisors-5',
@@ -144,6 +151,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-advisors-6',
@@ -158,6 +166,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: 'Did any of these outreach messages generate a reply or booked call?',
+    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   {
     id: 'lib-advisors-7',
@@ -172,6 +181,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   {
     id: 'lib-advisors-8',
@@ -186,6 +196,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Wednesday'],
   },
   {
     id: 'lib-advisors-9',
@@ -200,6 +211,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Paused',
     requiresDefinitionOfDone: false,
     outcomePrompt: 'Did this discovery call result in a next step or booked follow-up?',
+    daysOfWeek: ['Tuesday', 'Wednesday', 'Thursday'],
   },
   {
     id: 'lib-advisors-10',
@@ -214,6 +226,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Wednesday'],
   },
   // ─── SHARED: NETWORKING Block ─────────────────────────────────────────────
   {
@@ -229,6 +242,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: 'Did this reconnect lead to a scheduled call or meaningful reply?',
+    daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
   },
   {
     id: 'lib-networking-2',
@@ -243,6 +257,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Paused',
     requiresDefinitionOfDone: false,
     outcomePrompt: 'Did this coffee chat generate a lead, referral, or meaningful next step?',
+    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   {
     id: 'lib-networking-3',
@@ -257,6 +272,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   // ─── TRACK 2: JOB SEARCH — Job Search Block ──────────────────────────────
   {
@@ -272,6 +288,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-jobsearch-2',
@@ -286,6 +303,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-jobsearch-3',
@@ -300,6 +318,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Tuesday'],
   },
   {
     id: 'lib-jobsearch-4',
@@ -314,6 +333,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Tuesday'],
   },
   {
     id: 'lib-jobsearch-5',
@@ -328,6 +348,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: 'Did you secure a warm introduction alongside this application?',
+    daysOfWeek: ['Wednesday'],
   },
   {
     id: 'lib-jobsearch-6',
@@ -342,6 +363,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Thursday'],
   },
   {
     id: 'lib-jobsearch-7',
@@ -356,6 +378,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: 'Did this outreach to a new search firm result in a reply or call?',
+    daysOfWeek: ['Thursday'],
   },
   // ─── TRACK 3: KUPERMAN VENTURES — Encore OS Block ─────────────────────────
   {
@@ -371,6 +394,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-ventures-2',
@@ -385,6 +409,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Tuesday'],
   },
   {
     id: 'lib-ventures-3',
@@ -399,6 +424,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: true,
     outcomePrompt: 'Did this session ship a meaningful improvement?',
+    daysOfWeek: ['Wednesday', 'Thursday'],
   },
   {
     id: 'lib-ventures-4',
@@ -413,6 +439,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   // ─── FRIDAY REVIEW Block ──────────────────────────────────────────────────
   {
@@ -428,6 +455,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Friday'],
   },
   {
     id: 'lib-friday-2',
@@ -442,6 +470,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Friday'],
   },
   {
     id: 'lib-friday-3',
@@ -456,6 +485,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Friday'],
   },
   {
     id: 'lib-friday-4',
@@ -470,6 +500,7 @@ const INITIAL_TASK_LIBRARY = [
     status: 'Active',
     requiresDefinitionOfDone: false,
     outcomePrompt: '',
+    daysOfWeek: ['Friday'],
   },
 ]
 
@@ -480,7 +511,7 @@ const NAV_ITEMS = [
   { id: 'kpi', label: 'KPI Dashboard' },
   { id: 'analytics', label: 'Analytics' },
 ]
-const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v4'
+const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
 
 const KPI_DEFINITIONS = [
@@ -685,10 +716,15 @@ function persistState(state) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 }
 
-function getDefaultTodaySnapshot(libraryTasks) {
+function getDefaultTodaySnapshot(libraryTasks, targetDate = new Date()) {
   const deploymentId = Date.now()
+  const todayName = DAY_NAMES[targetDate.getDay()]
   return libraryTasks
     .filter((task) => task.status === 'Active')
+    .filter((task) => {
+      if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
+      return task.daysOfWeek.includes(todayName)
+    })
     .sort(
       (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock),
     )
@@ -700,6 +736,7 @@ function validateLibraryTask(task) {
   if (!task.name?.trim()) errors.push('Name is required.')
   if (!Object.values(TRACKS).some((track) => track.key === task.track)) errors.push('Track is required.')
   if (!TIME_BLOCK_ORDER.includes(task.timeBlock)) errors.push('Time block is required.')
+  if (task.daysOfWeek !== undefined && task.daysOfWeek.length === 0) errors.push('Select at least one day.')
   if (!Number.isFinite(Number(task.defaultTimeEstimate)) || Number(task.defaultTimeEstimate) < 5) {
     errors.push('Default time estimate must be at least 5 minutes.')
   }
@@ -1218,13 +1255,19 @@ function App() {
       return
     }
 
-    if (deployableCandidates.length === 0) {
-      setLibraryMessage('No Active library tasks are available to deploy.')
+    const todayName = DAY_NAMES[new Date().getDay()]
+    const dayFilteredCandidates = deployableCandidates.filter((task) => {
+      if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
+      return task.daysOfWeek.includes(todayName)
+    })
+
+    if (dayFilteredCandidates.length === 0) {
+      setLibraryMessage(`No Active tasks are scheduled for ${todayName}.`)
       return
     }
 
     const deploymentId = Date.now()
-    const snapshot = deployableCandidates.map((task, index) =>
+    const snapshot = dayFilteredCandidates.map((task, index) =>
       mapLibraryTaskToTodayTask(task, deploymentId, index),
     )
 
@@ -1735,6 +1778,24 @@ function App() {
                       <span>{task.status}</span>
                       <span>{task.defaultTimeEstimate}m</span>
                     </div>
+                    <div className="mt-1 flex gap-0.5">
+                      {['M', 'T', 'W', 'T', 'F'].map((abbr, i) => {
+                        const fullDay = DAYS_OF_WEEK[i]
+                        const active = (task.daysOfWeek ?? ALL_WEEKDAYS).includes(fullDay)
+                        return (
+                          <span
+                            key={fullDay}
+                            className={`rounded px-0.5 text-[9px] font-medium ${
+                              active
+                                ? selected ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700'
+                                : selected ? 'text-white/30' : 'text-slate-300'
+                            }`}
+                          >
+                            {abbr}
+                          </span>
+                        )
+                      })}
+                    </div>
                   </button>
                 </li>
               )
@@ -1746,26 +1807,36 @@ function App() {
             ) : null}
           </ul>
           <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2">
-            <p className="text-[11px] font-semibold uppercase text-slate-500">Next Deploy Snapshot</p>
+            <p className="text-[11px] font-semibold uppercase text-slate-500">
+              Today&apos;s Deploy Preview · {DAY_NAMES[new Date().getDay()]}
+            </p>
             <ul className="mt-1 space-y-1 text-xs text-slate-700">
-              {activeDeployCandidates.map((task) => (
-                <li key={`preview-${task.id}`} className="flex items-center justify-between gap-2">
-                  <span className="truncate">
-                    {task.timeBlock}: {task.name}
-                  </span>
-                  <span
-                    className={
-                      task.errors.length === 0
-                        ? 'rounded bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700'
-                        : 'rounded bg-rose-100 px-1 py-0.5 text-[10px] text-rose-700'
-                    }
-                  >
-                    {task.errors.length === 0 ? 'Ready' : 'Blocked'}
-                  </span>
-                </li>
-              ))}
-              {activeDeployCandidates.length === 0 ? (
-                <li className="text-slate-500">No Active tasks selected for deployment.</li>
+              {activeDeployCandidates
+                .filter((task) => {
+                  if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
+                  return task.daysOfWeek.includes(DAY_NAMES[new Date().getDay()])
+                })
+                .map((task) => (
+                  <li key={`preview-${task.id}`} className="flex items-center justify-between gap-2">
+                    <span className="truncate">
+                      {task.timeBlock}: {task.name}
+                    </span>
+                    <span
+                      className={
+                        task.errors.length === 0
+                          ? 'rounded bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700'
+                          : 'rounded bg-rose-100 px-1 py-0.5 text-[10px] text-rose-700'
+                      }
+                    >
+                      {task.errors.length === 0 ? 'Ready' : 'Blocked'}
+                    </span>
+                  </li>
+                ))}
+              {activeDeployCandidates.filter((task) => {
+                if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
+                return task.daysOfWeek.includes(DAY_NAMES[new Date().getDay()])
+              }).length === 0 ? (
+                <li className="text-slate-500">No Active tasks scheduled for today.</li>
               ) : null}
             </ul>
           </div>
@@ -1847,6 +1918,38 @@ function App() {
                   ))}
                 </select>
               </label>
+              <div className="text-sm">
+                <span className="mb-1 block text-slate-600">Days of Week</span>
+                <div className="flex gap-1">
+                  {DAYS_OF_WEEK.map((day) => {
+                    const abbrev = day.slice(0, 3)
+                    const selected = (selectedLibraryTask.daysOfWeek ?? ALL_WEEKDAYS).includes(day)
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => {
+                          const current = selectedLibraryTask.daysOfWeek ?? ALL_WEEKDAYS
+                          const next = selected
+                            ? current.filter((d) => d !== day)
+                            : [...current, day]
+                          updateLibraryTask(selectedLibraryTask.id, 'daysOfWeek', next)
+                        }}
+                        className={`flex-1 rounded py-1.5 text-xs font-medium transition-colors ${
+                          selected
+                            ? 'bg-blue-600 text-white'
+                            : 'border border-slate-300 bg-white text-slate-500 hover:border-blue-400 hover:text-blue-600'
+                        }`}
+                      >
+                        {abbrev}
+                      </button>
+                    )
+                  })}
+                </div>
+                {(selectedLibraryTask.daysOfWeek ?? ALL_WEEKDAYS).length === 0 && (
+                  <p className="mt-1 text-xs text-red-500">Select at least one day.</p>
+                )}
+              </div>
               <label className="text-sm">
                 <span className="mb-1 block text-slate-600">Completion Type</span>
                 <select
