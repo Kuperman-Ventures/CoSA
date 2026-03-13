@@ -1774,69 +1774,76 @@ function App() {
       ? getNextMondayStr()
       : getWeekStartDateStr()
 
-    const deferredItems = rescheduleQueue
-      .filter((item) => item.status === 'pending')
-      .map((item) => `${item.taskName} (deferred)`)
-
-    const currentReview = fridayReviews[0] ?? null
+    const pendingDeferred = rescheduleQueue.filter((item) => item.status === 'pending')
 
     try {
-      const controller = new AbortController()
-      const clientTimeout = setTimeout(() => controller.abort(), 25000)
-
-      let res
-      try {
-        res = await fetch('/api/generate-week-plan', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            weekStartDate: planWeekStartDate,
-            currentWeekKpis: [],
-            deferredItems,
-            taskLibrary,
-            fridayReviewAnswers: currentReview
-              ? { q2: currentReview.q2 ?? '' }
-              : null,
-          }),
-        })
-      } catch (fetchErr) {
-        clearTimeout(clientTimeout)
-        throw new Error(fetchErr.name === 'AbortError' ? 'Request timed out — try again' : fetchErr.message)
-      }
-      clearTimeout(clientTimeout)
-
-      const text = await res.text()
-      let data
-      try { data = JSON.parse(text) } catch {
-        throw new Error(`Server error (${res.status}): ${text.slice(0, 120)}`)
-      }
-      if (data.error) throw new Error(data.error)
-
-      const aiDays = data.plan?.days ?? {}
-      const aiRationale = data.plan?.aiRationale ?? ''
-
+      // Generate plan deterministically from daysOfWeek routing — instant, no API call needed.
+      // The daysOfWeek field already encodes the full POS schedule.
+      const planDayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
       const hydratedDays = {}
-      for (const dayName of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']) {
-        const rawTasks = aiDays[dayName] ?? []
+
+      for (const dayName of planDayNames) {
+        // Tasks assigned to this day, sorted by time block order
+        const dayTasks = taskLibrary
+          .filter((t) => t.status === 'Active')
+          .filter((t) => (t.daysOfWeek ?? ALL_WEEKDAYS).includes(dayName))
+          .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
+          .map((t) => ({
+            templateId: t.id,
+            name:            t.name,
+            track:           t.track,
+            timeBlock:       t.timeBlock,
+            estimateMinutes: t.defaultTimeEstimate ?? 25,
+            gcalEventId:     null,
+            status:          'planned',
+            isDeferred:      false,
+          }))
+
+        // Prepend any deferred items that match this day's time blocks
+        const deferredForDay = pendingDeferred
+          .filter((item) => {
+            const lib = taskLibrary.find((t) => t.name === item.taskName)
+            return lib && (lib.daysOfWeek ?? ALL_WEEKDAYS).includes(dayName)
+          })
+          .map((item) => {
+            const lib = taskLibrary.find((t) => t.name === item.taskName)
+            return {
+              templateId:      lib?.id ?? '',
+              name:            item.taskName,
+              track:           lib?.track ?? 'advisors',
+              timeBlock:       lib?.timeBlock ?? 'BD',
+              estimateMinutes: lib?.defaultTimeEstimate ?? 25,
+              gcalEventId:     null,
+              status:          'planned',
+              isDeferred:      true,
+            }
+          })
+
         hydratedDays[dayName] = {
-          date: getDayDate(planWeekStartDate, dayName),
-          tasks: rawTasks.map((t) => ({
-            ...t,
-            gcalEventId: null,
-            status: 'planned',
-            isDeferred: deferredItems.some((d) => d.startsWith(t.name)),
-          })),
+          date:  getDayDate(planWeekStartDate, dayName),
+          tasks: [...deferredForDay, ...dayTasks],
         }
       }
 
+      // Build a plain-English rationale from the plan data
+      const totalTasks = Object.values(hydratedDays).reduce((n, d) => n + d.tasks.length, 0)
+      const deferredCount = pendingDeferred.length
+      const aiRationale = [
+        `Plan generated for the week of ${planWeekStartDate} using your Personal Operating System day-of-week routing.`,
+        `${totalTasks} task instances scheduled across Monday–Friday based on each task's assigned days.`,
+        deferredCount > 0
+          ? `${deferredCount} deferred item${deferredCount > 1 ? 's' : ''} from your reschedule queue have been prepended to their assigned days.`
+          : 'No deferred items from the reschedule queue.',
+        'Review the plan, remove any tasks if needed, then click Publish to Calendar.',
+      ].join(' ')
+
       const newPlan = {
-        status: 'draft',
-        weekStartDate: planWeekStartDate,
-        generatedAt: new Date().toISOString(),
+        status:          'draft',
+        weekStartDate:   planWeekStartDate,
+        generatedAt:     new Date().toISOString(),
         aiRationale,
-        deferredItems,
-        days: hydratedDays,
+        deferredItems:   pendingDeferred.map((i) => i.taskName),
+        days:            hydratedDays,
       }
 
       const planId = session?.user?.id
