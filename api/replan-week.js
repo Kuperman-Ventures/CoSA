@@ -1,5 +1,3 @@
-export const runtime = 'edge'
-
 const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
 export default async function handler(req) {
@@ -7,7 +5,13 @@ export default async function handler(req) {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 })
   }
 
-  const { publishedPlan, calendarEvents, todayName } = await req.json()
+  let body
+  try {
+    body = await req.json()
+  } catch (err) {
+    return new Response(JSON.stringify({ error: `Bad request body: ${err.message}` }), { status: 400 })
+  }
+  const { publishedPlan, calendarEvents, todayName } = body
 
   // Build set of event IDs currently in the calendar
   const currentEventIds = new Set((calendarEvents ?? []).map((e) => e.id))
@@ -82,8 +86,8 @@ Generate a revised plan for only the remaining days.`
     const raw = (data.content?.[0]?.text ?? '').trim()
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
     const replan = JSON.parse(cleaned)
-    return Response.json({ replan })
+    return new Response(JSON.stringify({ replan }), { headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 })
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 })
   }
 }
