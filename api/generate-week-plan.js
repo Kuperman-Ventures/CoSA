@@ -80,8 +80,10 @@ ${JSON.stringify((taskLibrary ?? []).filter((t) => t.status === 'Active'))}`
       return Response.json({ error: data.error?.message ?? 'AI error' }, { status: 500 })
     }
 
-    const raw = data.content?.[0]?.text ?? ''
-    const plan = JSON.parse(raw)
+    const raw = (data.content?.[0]?.text ?? '').trim()
+    // Strip markdown fences if Claude wraps the response despite being told not to
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+    const plan = JSON.parse(cleaned)
     return Response.json({ plan })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })

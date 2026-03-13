@@ -79,8 +79,9 @@ Generate a revised plan for only the remaining days.`
       return Response.json({ error: data.error?.message ?? 'AI error' }, { status: 500 })
     }
 
-    const raw = data.content?.[0]?.text ?? ''
-    const replan = JSON.parse(raw)
+    const raw = (data.content?.[0]?.text ?? '').trim()
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+    const replan = JSON.parse(cleaned)
     return Response.json({ replan })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })

@@ -1740,7 +1740,11 @@ function App() {
             : null,
         }),
       })
-      const data = await res.json()
+      const text = await res.text()
+      let data
+      try { data = JSON.parse(text) } catch {
+        throw new Error(`Server error (${res.status}): ${text.slice(0, 120)}`)
+      }
       if (data.error) throw new Error(data.error)
 
       const aiDays = data.plan?.days ?? {}
