@@ -32,6 +32,8 @@ import {
   upsertWeeklyPlan,
   loadCurrentWeekPlan,
   updatePlanAfterPublish,
+  loadUserPreferences,
+  upsertUserPreferences,
 } from './lib/supabaseSync'
 import {
   createEventsForSnapshot,
@@ -911,6 +913,12 @@ function App() {
   const [weekPlanMessage, setWeekPlanMessage] = useState('')
   const [replanLoading, setReplanLoading] = useState(false)
   const [showAiRationale, setShowAiRationale] = useState(false)
+  const [clearedDates, setClearedDates] = useState(() => {
+    try { return JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]') } catch { return [] }
+  })
+  const [showClearDayModal, setShowClearDayModal] = useState(false)
+  const [clearFrom, setClearFrom] = useState(getTodayDateString())
+  const [clearTo, setClearTo] = useState(getTodayDateString())
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1178,11 +1186,19 @@ function App() {
           })
           return next
         })
+      // Load user preferences (cleared dates)
+      const prefs = await loadUserPreferences(userId)
+      if (prefs?.cleared_dates) {
+        setClearedDates(prefs.cleared_dates)
+        window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
+      }
+
       } else {
         // Check for 9am auto-population
         const hour = new Date().getHours()
         const lastAutoDate = window.localStorage.getItem('cosa.lastAutoDeployDate')
-        if (hour >= 9 && lastAutoDate !== todayStr) {
+        const localCleared = JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]')
+        if (hour >= 9 && lastAutoDate !== todayStr && !localCleared.includes(todayStr)) {
           const deployable = activeLibrary
             .filter((t) => t.status === 'Active')
             .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
@@ -1351,6 +1367,14 @@ function App() {
     )
     if (supabaseConfigured && session?.user?.id) {
       upsertTodayTasks(finalSnapshot, session.user.id, todayStr)
+    }
+
+    // If this date was manually cleared, un-clear it — intent has changed
+    if (clearedDates.includes(todayStr)) {
+      const next = clearedDates.filter((d) => d !== todayStr)
+      setClearedDates(next)
+      window.localStorage.setItem('cosa.clearedDates', JSON.stringify(next))
+      if (session?.user?.id) upsertUserPreferences({ cleared_dates: next }, session.user.id)
     }
   }
 
@@ -1705,6 +1729,36 @@ function App() {
     } catch (err) {
       setAiSuggestion({ loading: false, text: '', error: err.message })
     }
+  }
+
+  // ── Clear Day handlers ────────────────────────────────────────────────────
+
+  async function handleConfirmClearDay() {
+    const from = new Date(clearFrom + 'T12:00:00')
+    const to = new Date(clearTo + 'T12:00:00')
+    const dates = []
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      dates.push(d.toISOString().split('T')[0])
+    }
+
+    const next = [...new Set([...clearedDates, ...dates])]
+    setClearedDates(next)
+    window.localStorage.setItem('cosa.clearedDates', JSON.stringify(next))
+
+    // Clear today's tasks if today is in the range
+    if (dates.includes(getTodayDateString())) {
+      setTodayTasks([])
+      setSessions({})
+      setActiveTaskId(null)
+    }
+
+    if (session?.user?.id) {
+      await upsertUserPreferences({ cleared_dates: next }, session.user.id)
+    }
+
+    setShowClearDayModal(false)
+    setClearFrom(getTodayDateString())
+    setClearTo(getTodayDateString())
   }
 
   // ── Week Ahead handlers ───────────────────────────────────────────────────
@@ -3330,6 +3384,56 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {/* Clear Day Modal */}
+      {showClearDayModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-slate-900">Clear Day</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              No tasks will be deployed for these dates. Auto-population will be suppressed.
+            </p>
+            <div className="mt-4 space-y-3">
+              <label className="block text-xs text-slate-600">
+                From
+                <input
+                  type="date"
+                  value={clearFrom}
+                  onChange={(e) => setClearFrom(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none ring-blue-300 focus:ring-2"
+                />
+              </label>
+              <label className="block text-xs text-slate-600">
+                To
+                <input
+                  type="date"
+                  value={clearTo}
+                  min={clearFrom}
+                  onChange={(e) => setClearTo(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none ring-blue-300 focus:ring-2"
+                />
+              </label>
+            </div>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowClearDayModal(false)}
+                className="flex-1 rounded-md border border-slate-300 py-2 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearDay}
+                className="flex-1 rounded-md bg-slate-900 py-2 text-sm font-medium text-white hover:bg-slate-700"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <section className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -3594,16 +3698,40 @@ function App() {
         </article>
         ) : (
         <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold">No Today tasks deployed yet</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Go to Task Library and click "Deploy Active Tasks to Today" to create today's task instances.
-          </p>
+          {clearedDates.includes(getTodayDateString()) ? (
+            <>
+              <h2 className="text-lg font-semibold text-slate-500">No tasks scheduled</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                This day was manually cleared. Click Deploy in the Task Library if your plans changed.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold">No Today tasks deployed yet</h2>
+              <p className="mt-2 text-sm text-slate-600">
+                Go to Task Library and click &quot;Deploy Active Tasks to Today&quot; to create today&apos;s task instances.
+              </p>
+            </>
+          )}
         </article>
         )}
 
         <aside className="space-y-4">
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h3 className="mb-3 text-sm font-semibold uppercase text-slate-500">Today Queue</h3>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold uppercase text-slate-500">Today Queue</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setClearFrom(getTodayDateString())
+                  setClearTo(getTodayDateString())
+                  setShowClearDayModal(true)
+                }}
+                className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-400 hover:border-slate-300 hover:text-slate-600"
+              >
+                Clear Day
+              </button>
+            </div>
             <p className="mb-2 text-xs text-slate-500">
               Snapshot deployed: {new Date(lastDeploymentAt).toLocaleString()}
             </p>

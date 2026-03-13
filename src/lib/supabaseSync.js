@@ -412,3 +412,36 @@ export async function updatePlanAfterPublish(planId, updatedPlanData, userId) {
     console.error('[updatePlanAfterPublish]', err.message)
   }
 }
+
+// ─── User Preferences ─────────────────────────────────────────────────────────
+
+export async function loadUserPreferences(userId) {
+  if (!supabase || !userId) return null
+  try {
+    const { data, error } = await supabase
+      .from('user_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (error) { console.error('[loadUserPreferences]', error.message); return null }
+    return data ?? null
+  } catch (err) {
+    console.error('[loadUserPreferences]', err.message)
+    return null
+  }
+}
+
+export async function upsertUserPreferences(prefs, userId) {
+  if (!supabase || !userId) return
+  try {
+    const { error } = await supabase
+      .from('user_preferences')
+      .upsert(
+        { user_id: userId, ...prefs, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' },
+      )
+    if (error) console.error('[upsertUserPreferences]', error.message)
+  } catch (err) {
+    console.error('[upsertUserPreferences]', err.message)
+  }
+}
