@@ -1924,12 +1924,22 @@ function App() {
     const todayName = DAY_NAMES[new Date().getDay()]
 
     try {
-      const res = await fetch('/api/replan-week', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publishedPlan: weekPlan, calendarEvents, todayName }),
-      })
-      const data = await res.json()
+      const clientAbort = new AbortController()
+      const clientTimeout = setTimeout(() => clientAbort.abort(), 30000)
+      let res
+      try {
+        res = await fetch('/api/replan-week', {
+          method: 'POST',
+          signal: clientAbort.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ publishedPlan: weekPlan, calendarEvents, todayName }),
+        })
+      } finally {
+        clearTimeout(clientTimeout)
+      }
+      let data
+      const text = await res.text()
+      try { data = JSON.parse(text) } catch { throw new Error(`Server returned non-JSON: ${text.slice(0, 120)}`) }
       if (data.error) throw new Error(data.error)
 
       const replanDays = data.replan?.days ?? {}

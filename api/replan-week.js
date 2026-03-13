@@ -63,24 +63,33 @@ Remaining days to replan: ${remainingDays.join(', ')}
 Generate a revised plan for only the remaining days.`
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 2000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 22000)
+
+    let response
+    try {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-haiku-20241022',
+          max_tokens: 2000,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
 
     const data = await response.json()
     if (!response.ok) {
-      return Response.json({ error: data.error?.message ?? 'AI error' }, { status: 500 })
+      return new Response(JSON.stringify({ error: data.error?.message ?? 'AI error' }), { status: 500 })
     }
 
     const raw = (data.content?.[0]?.text ?? '').trim()
@@ -88,6 +97,7 @@ Generate a revised plan for only the remaining days.`
     const replan = JSON.parse(cleaned)
     return new Response(JSON.stringify({ replan }), { headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 })
+    const msg = err.name === 'AbortError' ? 'Replan timed out — try again' : err.message
+    return new Response(JSON.stringify({ error: msg }), { status: 500 })
   }
 }
