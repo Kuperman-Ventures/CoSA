@@ -2356,7 +2356,7 @@ function App() {
     return (
       <main className="mx-auto flex min-h-screen max-w-5xl items-center justify-center bg-slate-50 p-4 text-slate-900">
         <section className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-semibold">Chief of Staff</h1>
+          <img src="/logo.png" alt="CoSA" className="mb-3 h-16 w-auto" />
           <p className="mt-1 text-sm text-slate-600">Sign in with Google to sync data across devices.</p>
           <button
             type="button"
@@ -4011,8 +4011,8 @@ function App() {
 
       <section className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h1 className="text-xl font-semibold">Chief of Staff</h1>
+          <div className="flex items-center gap-3">
+            <img src="/logo.png" alt="CoSA" className="h-10 w-auto" />
             <p className="text-sm text-slate-600">{activeScreenLabel}</p>
           </div>
           <div className="flex items-center gap-2 text-xs sm:text-sm">
