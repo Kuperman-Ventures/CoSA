@@ -1915,79 +1915,92 @@ function App() {
       return
     }
 
-    const weekStart = weekPlan.weekStartDate
-    const weekEnd = getDayDate(weekStart, 'Friday')
-    const timeMin = `${weekStart}T00:00:00Z`
-    const timeMax = `${weekEnd}T23:59:59Z`
-
-    const calendarEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
-    const todayName = DAY_NAMES[new Date().getDay()]
-
-    // Slim payload before sending: calendarEvents → just IDs, tasks → only fields the server needs
-    const slimCalendarEventIds = (calendarEvents ?? []).map((e) => e.id)
-    const slimPlan = {
-      weekStartDate: weekPlan.weekStartDate,
-      days: Object.fromEntries(
-        Object.entries(weekPlan.days ?? {}).map(([day, dayData]) => [
-          day,
-          {
-            date: dayData.date,
-            tasks: (dayData.tasks ?? []).map((t) => ({
-              templateId: t.templateId,
-              name: t.name,
-              track: t.track,
-              timeBlock: t.timeBlock,
-              estimateMinutes: t.estimateMinutes,
-              gcalEventId: t.gcalEventId ?? null,
-            })),
-          },
-        ]),
-      ),
-    }
-
     try {
-      const clientAbort = new AbortController()
-      const clientTimeout = setTimeout(() => clientAbort.abort(new Error('Replan timed out — try again')), 45000)
-      let res
-      try {
-        res = await fetch('/api/replan-week', {
-          method: 'POST',
-          signal: clientAbort.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ publishedPlan: slimPlan, calendarEventIds: slimCalendarEventIds, todayName }),
-        })
-      } finally {
-        clearTimeout(clientTimeout)
-      }
-      let data
-      const text = await res.text()
-      try { data = JSON.parse(text) } catch { throw new Error(`Server returned non-JSON: ${text.slice(0, 120)}`) }
-      if (data.error) throw new Error(data.error)
+      const weekStart = weekPlan.weekStartDate
+      const weekEnd = getDayDate(weekStart, 'Friday')
+      const timeMin = `${weekStart}T00:00:00Z`
+      const timeMax = `${weekEnd}T23:59:59Z`
 
-      const replanDays = data.replan?.days ?? {}
-      const hydratedDays = { ...weekPlan.days }
+      const calendarEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+      const currentEventIds = new Set((calendarEvents ?? []).map((e) => e.id))
+      const todayName = DAY_NAMES[new Date().getDay()]
+      const todayIndex = DAY_NAMES.indexOf(todayName) // 0=Sun,1=Mon... use DAY_ORDER below
+      const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+      const todayDayIndex = DAY_ORDER.indexOf(todayName)
+      const remainingDays = todayDayIndex >= 0 ? DAY_ORDER.slice(todayDayIndex) : DAY_ORDER
 
-      for (const dayName of Object.keys(replanDays)) {
-        const rawTasks = replanDays[dayName] ?? []
-        hydratedDays[dayName] = {
-          date: weekPlan.days[dayName]?.date ?? getDayDate(weekStart, dayName),
-          tasks: rawTasks.map((t) => ({ ...t, gcalEventId: null, status: 'planned' })),
+      // Build templateId → daysOfWeek lookup from the task library
+      const daysOfWeekMap = Object.fromEntries(
+        taskLibrary.map((t) => [t.id, t.daysOfWeek ?? ALL_WEEKDAYS])
+      )
+
+      // Find published tasks deleted from Google Calendar
+      const deletedTasks = []
+      for (const dayData of Object.values(weekPlan.days ?? {})) {
+        for (const task of dayData?.tasks ?? []) {
+          if (task.gcalEventId && !currentEventIds.has(task.gcalEventId)) {
+            deletedTasks.push(task)
+          }
         }
+      }
+
+      // Start from the current published plan for remaining days
+      const hydratedDays = {}
+      for (const day of remainingDays) {
+        const existing = weekPlan.days?.[day] ?? { date: getDayDate(weekStart, day), tasks: [] }
+        // Keep tasks that still exist in calendar (or have no gcalEventId yet)
+        const survivingTasks = (existing.tasks ?? []).filter(
+          (t) => !t.gcalEventId || currentEventIds.has(t.gcalEventId)
+        )
+        hydratedDays[day] = { ...existing, tasks: survivingTasks }
+      }
+
+      // Try to reschedule deleted tasks into remaining days
+      const rescheduledNames = []
+      const droppedNames = []
+      for (const task of deletedTasks) {
+        const allowed = daysOfWeekMap[task.templateId] ?? ALL_WEEKDAYS
+        // Prefer a remaining day that matches the task's daysOfWeek; fall back to any remaining day
+        const targetDay =
+          remainingDays.find((d) => allowed.includes(d)) ??
+          remainingDays.find(() => true)
+        if (targetDay) {
+          hydratedDays[targetDay].tasks = [
+            ...hydratedDays[targetDay].tasks,
+            { ...task, gcalEventId: null, status: 'planned' },
+          ]
+          rescheduledNames.push(`${task.name} → ${targetDay}`)
+        } else {
+          droppedNames.push(task.name)
+        }
+      }
+
+      // Re-sort each day's tasks by time block order
+      for (const day of remainingDays) {
+        hydratedDays[day].tasks = hydratedDays[day].tasks.sort(
+          (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock)
+        )
+      }
+
+      // Build plain-English rationale
+      let rationale = `Replan for ${remainingDays.join(', ')}.`
+      if (deletedTasks.length === 0) {
+        rationale += ' No tasks were removed from your calendar — plan is unchanged.'
+      } else {
+        if (rescheduledNames.length > 0) rationale += ` Rescheduled: ${rescheduledNames.join(', ')}.`
+        if (droppedNames.length > 0) rationale += ` Could not find a slot for: ${droppedNames.join(', ')}.`
       }
 
       const replanPlan = {
         ...weekPlan,
         status: 'replanning',
-        aiRationale: data.replan?.aiRationale ?? '',
-        days: hydratedDays,
+        aiRationale: rationale,
+        days: { ...weekPlan.days, ...hydratedDays },
       }
       setWeekPlan(replanPlan)
       setShowAiRationale(true)
     } catch (err) {
-      const msg = err.message?.includes('aborted') || err.name === 'AbortError'
-        ? 'Replan timed out — try again'
-        : (err.message ?? 'Unknown error')
-      setWeekPlanMessage(`Replan failed: ${msg}`)
+      setWeekPlanMessage(`Replan failed: ${err.message ?? 'Unknown error'}`)
     } finally {
       setReplanLoading(false)
     }
