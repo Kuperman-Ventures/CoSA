@@ -10,6 +10,15 @@ const BLOCK_START_MINUTES = {
   'Friday':     14 * 60,      // 2:00pm
 }
 
+// Capacity (minutes) for each block
+export const BLOCK_CAPACITY_MINUTES = {
+  'BD':         90,   // 9:30–11:00am
+  'Networking': 60,   // 11:00am–12:00pm
+  'Job Search': 60,   // 1:00–2:00pm
+  'Encore OS':  120,  // 2:00–4:00pm
+  'Friday':     120,  // 2:00–4:00pm
+}
+
 // Google Calendar colorId values that best match track colors
 const TRACK_COLOR_IDS = {
   advisors:   '10', // Basil (dark green)
@@ -164,6 +173,7 @@ export async function createEventsForSnapshot(tasks, providerToken, date) {
  * Create calendar events for an entire week plan.
  * planDays: { Monday: { date, tasks: [...] }, ... }
  * Returns a copy of planDays with gcalEventId filled in on each task.
+ * Sequential (not concurrent) to avoid Google Calendar API rate limits.
  */
 export async function createWeekPlanEvents(planDays, providerToken, planId) {
   if (!providerToken) return planDays
@@ -175,25 +185,37 @@ export async function createWeekPlanEvents(planDays, providerToken, planId) {
     const day = planDays[dayName]
     if (!day) { updatedDays[dayName] = day; continue }
 
-    const blockGroups = day.tasks.reduce((acc, t) => {
+    // Group tasks by block for sequential offset calculation.
+    // Use a stable unique key per task: templateId, falling back to name.
+    const normalisedTasks = day.tasks.map((t, i) => ({
+      ...t,
+      _uid: t.templateId || `task-${dayName}-${i}`,
+    }))
+
+    const blockGroups = normalisedTasks.reduce((acc, t) => {
       if (!acc[t.timeBlock]) acc[t.timeBlock] = []
       acc[t.timeBlock].push(t)
       return acc
     }, {})
 
-    const updatedTasks = await Promise.all(
-      day.tasks.map(async (task) => {
-        const blockTasks = blockGroups[task.timeBlock] ?? [task]
-        const gcalEventId = await createCalendarEvent(
-          { ...task, id: task.templateId, name: task.name, estimateMinutes: task.estimateMinutes },
-          blockTasks.map((t) => ({ ...t, id: t.templateId, estimateMinutes: t.estimateMinutes })),
-          providerToken,
-          day.date,
-          { templateId: task.templateId, planId },
-        )
-        return { ...task, gcalEventId: gcalEventId ?? null }
-      }),
-    )
+    const updatedTasks = []
+    for (const task of normalisedTasks) {
+      const blockTasks = blockGroups[task.timeBlock] ?? [task]
+
+      // Build a sanitised version where id is always a non-empty string
+      const taskForApi   = { ...task, id: task._uid, estimateMinutes: task.estimateMinutes ?? 25 }
+      const blockForApi  = blockTasks.map((t) => ({ ...t, id: t._uid, estimateMinutes: t.estimateMinutes ?? 25 }))
+
+      const gcalEventId = await createCalendarEvent(
+        taskForApi,
+        blockForApi,
+        providerToken,
+        day.date,
+        { templateId: task.templateId, planId },
+      )
+      updatedTasks.push({ ...task, gcalEventId: gcalEventId ?? null })
+    }
+
     updatedDays[dayName] = { ...day, tasks: updatedTasks }
   }
 

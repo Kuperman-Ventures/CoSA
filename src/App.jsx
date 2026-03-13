@@ -40,6 +40,7 @@ import {
   moveCalendarEvent,
   createWeekPlanEvents,
   fetchCoSACalendarEvents,
+  BLOCK_CAPACITY_MINUTES,
 } from './lib/googleCalendar'
 
 const TRACKS = {
@@ -3076,6 +3077,16 @@ function App() {
             const isPast = todayIndex >= 0 && dayIdx < todayIndex
             const isToday = dayIdx === todayIndex
 
+            // Detect over-scheduled blocks
+            const blockTotals = (dayData.tasks ?? []).reduce((acc, t) => {
+              const blk = t.timeBlock ?? 'BD'
+              acc[blk] = (acc[blk] ?? 0) + (t.estimateMinutes ?? 25)
+              return acc
+            }, {})
+            const overScheduledBlocks = Object.entries(blockTotals)
+              .filter(([blk, mins]) => mins > (BLOCK_CAPACITY_MINUTES[blk] ?? 999))
+              .map(([blk, mins]) => `${blk} (${mins}m / ${BLOCK_CAPACITY_MINUTES[blk]}m cap)`)
+
             return (
               <div
                 key={dayName}
@@ -3092,6 +3103,15 @@ function App() {
                   )}
                   {isToday && <span className="ml-1 text-blue-500">·</span>}
                 </p>
+                {overScheduledBlocks.length > 0 && (
+                  <div
+                    className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[9px] text-amber-700"
+                    title={`Over-scheduled: ${overScheduledBlocks.join(', ')}`}
+                  >
+                    ⚠ Over-scheduled — remove tasks before publishing:{' '}
+                    {overScheduledBlocks.join(', ')}
+                  </div>
+                )}
 
                 {(dayData.tasks ?? []).length === 0 ? (
                   <p className="text-[10px] text-slate-400 italic">No tasks</p>
