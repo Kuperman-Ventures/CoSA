@@ -1826,17 +1826,16 @@ function App() {
         }
       }
 
-      // Build a plain-English rationale from the plan data
+      // Build structured rationale for the initial draft plan
       const totalTasks = Object.values(hydratedDays).reduce((n, d) => n + d.tasks.length, 0)
       const deferredCount = pendingDeferred.length
-      const aiRationale = [
-        `Plan generated for the week of ${planWeekStartDate} using your Personal Operating System day-of-week routing.`,
-        `${totalTasks} task instances scheduled across Monday–Friday based on each task's assigned days.`,
-        deferredCount > 0
-          ? `${deferredCount} deferred item${deferredCount > 1 ? 's' : ''} from your reschedule queue have been prepended to their assigned days.`
-          : 'No deferred items from the reschedule queue.',
-        'Review the plan, remove any tasks if needed, then click Publish to Calendar.',
-      ].join(' ')
+      const aiRationale = JSON.stringify({
+        summary: `${totalTasks} tasks scheduled for the week of ${planWeekStartDate} using your day-of-week routing.`,
+        deferred: deferredCount > 0
+          ? pendingDeferred.map((i) => i.taskName)
+          : [],
+        note: 'Review the plan, remove tasks if needed, then click Publish to Calendar.',
+      })
 
       const newPlan = {
         status:          'draft',
@@ -1957,7 +1956,8 @@ function App() {
             const actualMins = Math.round(
               (new Date(event.end.dateTime) - new Date(event.start.dateTime)) / 60000
             )
-            if (actualMins > 0) calendarDurations[key] = actualMins
+            // Cap at 8 hours to guard against corrupted duplicate events
+            if (actualMins > 0 && actualMins <= 480) calendarDurations[key] = actualMins
           }
         }
       }
@@ -2037,35 +2037,39 @@ function App() {
         )
       }
 
-      // Detect resized tasks for the rationale
-      const resizedNames = []
+      // Build a library-estimate lookup for resize baseline (use original, not week-plan estimate)
+      const libraryEstimates = Object.fromEntries(taskLibrary.map((t) => [t.id, t.defaultTimeEstimate ?? 25]))
+
+      // Detect resized tasks — compare actual calendar duration against library baseline
+      const resizedItems = []
       for (const day of remainingDays) {
         const dayDate = weekPlan.days?.[day]?.date
         if (!dayDate) continue
         for (const task of weekPlan.days[day]?.tasks ?? []) {
           const key = `${dayDate}::${task.templateId}`
           const actual = calendarDurations[key]
-          if (actual && actual !== task.estimateMinutes) {
-            resizedNames.push(`${task.name} (${task.estimateMinutes}m → ${actual}m)`)
+          const baseline = libraryEstimates[task.templateId] ?? task.estimateMinutes
+          // Cap at 8 hours to ignore corrupted events from previous bad publishes
+          if (actual && actual <= 480 && actual !== baseline) {
+            resizedItems.push({ name: task.name, from: baseline, to: actual })
           }
         }
       }
 
-      // Build plain-English rationale
-      let rationale = `Replan for ${remainingDays.join(', ')}.`
-      const hasChanges = deletedTasks.length > 0 || resizedNames.length > 0
-      if (!hasChanges) {
-        rationale += ' No changes detected in your calendar — plan is unchanged.'
-      } else {
-        if (rescheduledNames.length > 0) rationale += ` Rescheduled: ${rescheduledNames.join(', ')}.`
-        if (droppedNames.length > 0) rationale += ` Could not find a slot for: ${droppedNames.join(', ')}.`
-        if (resizedNames.length > 0) rationale += ` Duration updated: ${resizedNames.join(', ')}.`
+      // Store rationale as structured sections for rich rendering
+      const hasChanges = deletedTasks.length > 0 || resizedItems.length > 0
+      const rationaleObj = {
+        weeks: remainingDays,
+        noChanges: !hasChanges,
+        rescheduled: rescheduledNames,
+        dropped: droppedNames,
+        resized: resizedItems,
       }
 
       const replanPlan = {
         ...weekPlan,
         status: 'replanning',
-        aiRationale: rationale,
+        aiRationale: JSON.stringify(rationaleObj),
         days: { ...weekPlan.days, ...hydratedDays },
       }
       setWeekPlan(replanPlan)
@@ -3287,22 +3291,99 @@ function App() {
           })}
         </div>
 
-        {/* AI Rationale collapsible */}
-        {weekPlan?.aiRationale && (
-          <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <button
-              type="button"
-              onClick={() => setShowAiRationale((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-medium text-slate-700"
-            >
-              <span>Why this plan?</span>
-              <span className="text-slate-400">{showAiRationale ? '▲' : '▼'}</span>
-            </button>
-            {showAiRationale && (
-              <p className="mt-2 text-xs leading-relaxed text-slate-600">{weekPlan.aiRationale}</p>
-            )}
-          </div>
-        )}
+        {/* Rationale collapsible */}
+        {weekPlan?.aiRationale && (() => {
+          let r = null
+          try { r = JSON.parse(weekPlan.aiRationale) } catch { /* plain string fallback */ }
+          return (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setShowAiRationale((v) => !v)}
+                className="flex w-full items-center justify-between text-xs font-medium text-slate-700"
+              >
+                <span>Why this plan?</span>
+                <span className="text-slate-400">{showAiRationale ? '▲' : '▼'}</span>
+              </button>
+              {showAiRationale && (
+                <div className="mt-3 space-y-3 text-xs text-slate-600">
+                  {r ? (
+                    <>
+                      {/* Initial draft plan rationale */}
+                      {r.summary && (
+                        <>
+                          <p>{r.summary}</p>
+                          {r.deferred?.length > 0 && (
+                            <div>
+                              <p className="mb-1 font-semibold text-slate-700">Carried over from reschedule queue</p>
+                              <ul className="space-y-0.5 pl-3">
+                                {r.deferred.map((name, i) => (
+                                  <li key={i} className="flex items-start gap-1.5">
+                                    <span className="mt-0.5 text-amber-400">⟳</span>
+                                    <span>{name}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {r.note && <p className="text-slate-400 italic">{r.note}</p>}
+                        </>
+                      )}
+                      {/* Replan rationale */}
+                      {r.noChanges && (
+                        <p className="text-slate-500 italic">No changes detected in your calendar — plan is unchanged.</p>
+                      )}
+                      {r.rescheduled?.length > 0 && (
+                        <div>
+                          <p className="mb-1 font-semibold text-slate-700">Rescheduled</p>
+                          <ul className="space-y-0.5 pl-3">
+                            {r.rescheduled.map((item, i) => (
+                              <li key={i} className="flex items-start gap-1.5">
+                                <span className="mt-0.5 text-blue-400">↪</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {r.dropped?.length > 0 && (
+                        <div>
+                          <p className="mb-1 font-semibold text-slate-700">Could not reschedule</p>
+                          <ul className="space-y-0.5 pl-3">
+                            {r.dropped.map((item, i) => (
+                              <li key={i} className="flex items-start gap-1.5">
+                                <span className="mt-0.5 text-rose-400">✕</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {r.resized?.length > 0 && (
+                        <div>
+                          <p className="mb-1 font-semibold text-slate-700">Duration adjusted</p>
+                          <ul className="space-y-0.5 pl-3">
+                            {r.resized.map((item, i) => (
+                              <li key={i} className="flex items-start gap-1.5">
+                                <span className="mt-0.5 text-amber-400">⏱</span>
+                                <span>
+                                  {item.name}
+                                  <span className="ml-1 text-slate-400">{item.from}m → {item.to}m</span>
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="leading-relaxed">{weekPlan.aiRationale}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </section>
     )
   }
