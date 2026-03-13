@@ -63,8 +63,9 @@ Remaining days to replan: ${remainingDays.join(', ')}
 Generate a revised plan for only the remaining days.`
 
   try {
+    const timeoutError = new Error('Replan timed out — try again')
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 22000)
+    const timeout = setTimeout(() => controller.abort(timeoutError), 15000)
 
     let response
     try {
@@ -97,7 +98,8 @@ Generate a revised plan for only the remaining days.`
     const replan = JSON.parse(cleaned)
     return new Response(JSON.stringify({ replan }), { headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
-    const msg = err.name === 'AbortError' ? 'Replan timed out — try again' : err.message
+    const isTimeout = err.message?.includes('timed out') || err.name === 'AbortError' || err.message?.includes('aborted')
+    const msg = isTimeout ? 'Replan timed out — try again' : err.message
     return new Response(JSON.stringify({ error: msg }), { status: 500 })
   }
 }
