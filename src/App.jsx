@@ -1922,10 +1922,19 @@ function App() {
       const timeMax = `${weekEnd}T23:59:59Z`
 
       const calendarEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
-      const todayName = DAY_NAMES[new Date().getDay()]
+      const todayStr = new Date().toISOString().split('T')[0]
       const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-      const todayDayIndex = DAY_ORDER.indexOf(todayName)
-      const remainingDays = todayDayIndex >= 0 ? DAY_ORDER.slice(todayDayIndex) : DAY_ORDER
+
+      // If the plan week hasn't started yet, ALL days are remaining.
+      // Only slice by today's day-of-week when we're inside the plan week.
+      let remainingDays
+      if (weekStart > todayStr) {
+        remainingDays = DAY_ORDER
+      } else {
+        const todayName = DAY_NAMES[new Date().getDay()]
+        const todayDayIndex = DAY_ORDER.indexOf(todayName)
+        remainingDays = todayDayIndex >= 0 ? DAY_ORDER.slice(todayDayIndex) : DAY_ORDER
+      }
 
       // Build templateId → daysOfWeek lookup from the task library
       const daysOfWeekMap = Object.fromEntries(
@@ -1942,7 +1951,8 @@ function App() {
         if (templateId && dateStr) calendarPresent.add(`${dateStr}::${templateId}`)
       }
 
-      // Find tasks whose (date + templateId) key is missing from the live calendar
+      // Find tasks whose (planned date + templateId) is missing from the live calendar.
+      // A task moved to a different day in GCal is treated as "deleted" from its planned day.
       const deletedTasks = []
       for (const [dayName, dayData] of Object.entries(weekPlan.days ?? {})) {
         if (!remainingDays.includes(dayName)) continue
@@ -1955,7 +1965,7 @@ function App() {
       }
 
       // Start from the current published plan for remaining days, keeping only
-      // tasks that are still present in the calendar
+      // tasks still present in the calendar on their planned day.
       const hydratedDays = {}
       for (const day of remainingDays) {
         const existing = weekPlan.days?.[day] ?? { date: getDayDate(weekStart, day), tasks: [] }
@@ -1966,21 +1976,38 @@ function App() {
         hydratedDays[day] = { ...existing, tasks: survivingTasks }
       }
 
-      // Try to reschedule deleted tasks into remaining days
+      // Try to reschedule deleted tasks.
+      // First check if the task was MOVED to another remaining day in the calendar;
+      // if so, honour that placement. Otherwise find the first allowed remaining day.
       const rescheduledNames = []
       const droppedNames = []
       for (const task of deletedTasks) {
         const allowed = daysOfWeekMap[task.templateId] ?? ALL_WEEKDAYS
-        // Prefer a remaining day that matches the task's daysOfWeek; fall back to any remaining day
+
+        // Detect a move: task's templateId appears in calendarPresent on a different remaining day
+        const movedToDay = remainingDays.find((d) => {
+          const dayDate = weekPlan.days?.[d]?.date
+          return d !== task.day && dayDate && calendarPresent.has(`${dayDate}::${task.templateId}`)
+        })
+
         const targetDay =
-          remainingDays.find((d) => allowed.includes(d)) ??
-          remainingDays.find(() => true)
+          movedToDay ??
+          remainingDays.find((d) => d !== task.day && allowed.includes(d)) ??
+          remainingDays.find((d) => d !== task.day)
+
         if (targetDay) {
-          hydratedDays[targetDay].tasks = [
-            ...hydratedDays[targetDay].tasks,
-            { ...task, gcalEventId: null, status: 'planned' },
-          ]
-          rescheduledNames.push(`${task.name} → ${targetDay}`)
+          // Avoid adding a duplicate if the task is already in hydratedDays[targetDay]
+          const alreadyThere = hydratedDays[targetDay].tasks.some(
+            (t) => t.templateId === task.templateId
+          )
+          if (!alreadyThere) {
+            hydratedDays[targetDay].tasks = [
+              ...hydratedDays[targetDay].tasks,
+              { ...task, gcalEventId: null, status: 'planned' },
+            ]
+            const label = movedToDay ? `${task.name} moved to ${targetDay}` : `${task.name} → ${targetDay}`
+            rescheduledNames.push(label)
+          }
         } else {
           droppedNames.push(task.name)
         }
