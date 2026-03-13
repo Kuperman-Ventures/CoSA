@@ -1944,11 +1944,22 @@ function App() {
       // Use cosaTemplateId + date from extended properties to identify what's
       // still in the calendar — works even when stored gcalEventIds are null.
       // Key format: "YYYY-MM-DD::templateId"
+      // Also capture actual event duration so resizes are preserved this week.
       const calendarPresent = new Set()
+      const calendarDurations = {} // key → actual minutes from GCal
       for (const event of calendarEvents ?? []) {
         const templateId = event.extendedProperties?.private?.cosaTemplateId
         const dateStr = (event.start?.dateTime ?? event.start?.date ?? '').split('T')[0]
-        if (templateId && dateStr) calendarPresent.add(`${dateStr}::${templateId}`)
+        if (templateId && dateStr) {
+          const key = `${dateStr}::${templateId}`
+          calendarPresent.add(key)
+          if (event.start?.dateTime && event.end?.dateTime) {
+            const actualMins = Math.round(
+              (new Date(event.end.dateTime) - new Date(event.start.dateTime)) / 60000
+            )
+            if (actualMins > 0) calendarDurations[key] = actualMins
+          }
+        }
       }
 
       // Find tasks whose (planned date + templateId) is missing from the live calendar.
@@ -1969,10 +1980,16 @@ function App() {
       const hydratedDays = {}
       for (const day of remainingDays) {
         const existing = weekPlan.days?.[day] ?? { date: getDayDate(weekStart, day), tasks: [] }
-        const survivingTasks = (existing.tasks ?? []).filter((t) => {
-          const key = `${existing.date}::${t.templateId}`
-          return calendarPresent.has(key)
-        })
+        const survivingTasks = (existing.tasks ?? [])
+          .filter((t) => calendarPresent.has(`${existing.date}::${t.templateId}`))
+          .map((t) => {
+            const key = `${existing.date}::${t.templateId}`
+            const actual = calendarDurations[key]
+            // Honour user's resize for this week; Task Library is unchanged
+            return actual && actual !== t.estimateMinutes
+              ? { ...t, estimateMinutes: actual }
+              : t
+          })
         hydratedDays[day] = { ...existing, tasks: survivingTasks }
       }
 
@@ -2020,13 +2037,29 @@ function App() {
         )
       }
 
+      // Detect resized tasks for the rationale
+      const resizedNames = []
+      for (const day of remainingDays) {
+        const dayDate = weekPlan.days?.[day]?.date
+        if (!dayDate) continue
+        for (const task of weekPlan.days[day]?.tasks ?? []) {
+          const key = `${dayDate}::${task.templateId}`
+          const actual = calendarDurations[key]
+          if (actual && actual !== task.estimateMinutes) {
+            resizedNames.push(`${task.name} (${task.estimateMinutes}m → ${actual}m)`)
+          }
+        }
+      }
+
       // Build plain-English rationale
       let rationale = `Replan for ${remainingDays.join(', ')}.`
-      if (deletedTasks.length === 0) {
-        rationale += ' No tasks were removed from your calendar — plan is unchanged.'
+      const hasChanges = deletedTasks.length > 0 || resizedNames.length > 0
+      if (!hasChanges) {
+        rationale += ' No changes detected in your calendar — plan is unchanged.'
       } else {
         if (rescheduledNames.length > 0) rationale += ` Rescheduled: ${rescheduledNames.join(', ')}.`
         if (droppedNames.length > 0) rationale += ` Could not find a slot for: ${droppedNames.join(', ')}.`
+        if (resizedNames.length > 0) rationale += ` Duration updated: ${resizedNames.join(', ')}.`
       }
 
       const replanPlan = {
