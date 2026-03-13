@@ -1893,6 +1893,8 @@ function App() {
       } else {
         const newId = await upsertWeeklyPlan(publishedPlan, weekPlan.weekStartDate, session.user.id)
         publishedPlan.id = newId
+        // Also persist the new ID back so future saves use it
+        setWeekPlan((prev) => ({ ...prev, id: newId }))
       }
     }
 
@@ -3179,6 +3181,10 @@ function App() {
     const isPublished = weekPlan?.status === 'published' || weekPlan?.status === 'replanned'
     const isReplanning = weekPlan?.status === 'replanning'
     const isReviewing = weekPlan?.status === 'reviewing'
+    const isDraft = !isPublished && !isReplanning && !isReviewing
+    // Replan is available whenever calendar sync is on and a plan exists —
+    // even if the plan status got reset to draft after a reload.
+    const canReplan = !!session?.provider_token && !!weekPlan && !replanLoading && !isReplanning && !isReviewing
 
     // ── Draft / Published / Replanning state ─────────────────────────────────
     return (
@@ -3190,7 +3196,7 @@ function App() {
             <p className="text-xs text-slate-500">Week of {weekPlan?.weekStartDate}</p>
           </div>
           <div className="flex items-center gap-2">
-            {!isPublished && !isReplanning && (
+            {isDraft && (
               <button
                 type="button"
                 onClick={handleGenerateWeekPlan}
@@ -3199,7 +3205,7 @@ function App() {
                 Regenerate
               </button>
             )}
-            {isPublished && !replanLoading && (
+            {canReplan && (
               <button
                 type="button"
                 onClick={handleReplan}
@@ -3208,7 +3214,7 @@ function App() {
                 Replan
               </button>
             )}
-            {isReplanning && (
+            {(isReplanning || isReviewing) && (
               <button
                 type="button"
                 onClick={handleApplyReplan}
@@ -3218,17 +3224,7 @@ function App() {
                 Apply Replan
               </button>
             )}
-            {isReviewing && (
-              <button
-                type="button"
-                onClick={handleApplyReplan}
-                disabled={weekPlanLoading}
-                className="rounded-md bg-blue-700 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-              >
-                Apply Replan
-              </button>
-            )}
-            {!isPublished && !isReplanning && (
+            {isDraft && (
               <button
                 type="button"
                 onClick={handlePublishWeekPlan}
