@@ -34,6 +34,8 @@ import {
   updatePlanAfterPublish,
   loadUserPreferences,
   upsertUserPreferences,
+  upsertQuickLogEntry,
+  loadQuickLogEntries,
 } from './lib/supabaseSync'
 import {
   createEventsForSnapshot,
@@ -549,6 +551,64 @@ const KPI_DEFINITIONS = [
 
 const KPI_TRACK_GROUPS = ['Kuperman Advisors', 'Shared (Networking)', 'Job Search', 'Kuperman Ventures']
 
+// Quick Log: KPI options grouped by track, with the track key used for timer_sessions
+const QUICK_LOG_KPI_GROUPS = [
+  {
+    group: 'Kuperman Advisors',
+    track: 'advisors',
+    color: '#1E6B3C',
+    dot: 'bg-emerald-700',
+    kpis: [
+      'Outreach messages sent',
+      'Discovery calls booked',
+      'Discovery calls held',
+      'Connective attendance',
+      'Case study progress',
+    ],
+  },
+  {
+    group: 'Shared Networking',
+    track: 'networking',
+    color: '#C2762A',
+    dot: 'bg-orange-500',
+    kpis: [
+      'Warm reconnects sent',
+      'Coffee chats held',
+      'LinkedIn comments posted',
+    ],
+  },
+  {
+    group: 'Job Search',
+    track: 'jobsearch',
+    color: '#2E75B6',
+    dot: 'bg-blue-600',
+    kpis: [
+      'Companies researched',
+      'Applications submitted',
+      'Recruiter touchpoints',
+    ],
+  },
+  {
+    group: 'Kuperman Ventures',
+    track: 'ventures',
+    color: '#9B6BAE',
+    dot: 'bg-purple-500',
+    kpis: [
+      'Tester touchpoints',
+      'Things shipped',
+      'Definition of done used',
+    ],
+  },
+]
+
+// Map a KPI label → its track key (for creating timer_sessions)
+const KPI_LABEL_TO_TRACK = {}
+for (const g of QUICK_LOG_KPI_GROUPS) {
+  for (const kpi of g.kpis) KPI_LABEL_TO_TRACK[kpi] = g.track
+}
+
+const QUICK_LOG_LOCAL_KEY = 'cosa_quick_logs_v1'
+
 function loadCompletionLog() {
   if (typeof window === 'undefined') return []
   const raw = window.localStorage.getItem(COMPLETION_LOG_KEY)
@@ -918,6 +978,14 @@ function App() {
   const [clearedDates, setClearedDates] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]') } catch { return [] }
   })
+  const [showQuickLog, setShowQuickLog] = useState(false)
+  const [quickLogForm, setQuickLogForm] = useState({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], note: '' })
+  const [quickLogErrors, setQuickLogErrors] = useState({})
+  const [quickLogSubmitting, setQuickLogSubmitting] = useState(false)
+  const [quickLogToast, setQuickLogToast] = useState(false)
+  const [quickLogEntries, setQuickLogEntries] = useState(() => {
+    try { return JSON.parse(window.localStorage.getItem(QUICK_LOG_LOCAL_KEY) ?? '[]') } catch { return [] }
+  })
   const [showClearDayModal, setShowClearDayModal] = useState(false)
   const [clearFrom, setClearFrom] = useState(getTodayDateString())
   const [clearTo, setClearTo] = useState(getTodayDateString())
@@ -1255,6 +1323,11 @@ function App() {
         : getWeekStartDateStr()
       const existingPlan = await loadCurrentWeekPlan(planWeekStart, userId)
       if (existingPlan) setWeekPlan(existingPlan)
+
+      // 7. Quick log entries for this week (for Analytics display)
+      const { start: qlStart, end: qlEnd } = getWeekBounds(0)
+      const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
+      if (qlEntries.length > 0) setQuickLogEntries(qlEntries)
     }
 
     doSync()
@@ -2144,6 +2217,123 @@ function App() {
     setWeekPlan(appliedPlan)
     setWeekPlanMessage('Plan updated — Today will reflect your changes as the week unfolds.')
     setWeekPlanLoading(false)
+  }
+
+  // ─── Quick Log ────────────────────────────────────────────────────────────
+
+  function openQuickLog() {
+    setQuickLogForm({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], note: '' })
+    setQuickLogErrors({})
+    setShowQuickLog(true)
+  }
+
+  async function handleQuickLogSubmit() {
+    const errors = {}
+    if (!quickLogForm.who.trim()) errors.who = 'Required'
+    if (!quickLogForm.activityType) errors.activityType = 'Required'
+    if (!quickLogForm.durationMinutes) errors.durationMinutes = 'Required'
+    if (quickLogForm.kpiCredits.length === 0) errors.kpiCredits = 'Select at least one KPI'
+    if (Object.keys(errors).length > 0) { setQuickLogErrors(errors); return }
+
+    setQuickLogSubmitting(true)
+    const now = new Date().toISOString()
+    const elapsedSeconds = quickLogForm.durationMinutes * 60
+    const note = quickLogForm.note.trim() || `Quick log: ${quickLogForm.activityType} with ${quickLogForm.who}`
+
+    // Determine unique tracks from selected KPIs
+    const tracks = [...new Set(quickLogForm.kpiCredits.map((k) => KPI_LABEL_TO_TRACK[k]).filter(Boolean))]
+
+    // Build one completion log entry per track (for KPI counting)
+    const newLogEntries = tracks.map((track) => {
+      const trackKpis = quickLogForm.kpiCredits.filter((k) => KPI_LABEL_TO_TRACK[k] === track)
+      return {
+        id: `ql-${Date.now()}-${track}`,
+        taskName: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
+        track,
+        kpiMapping: trackKpis[0] ?? '',
+        completionType: 'Done',
+        outcomeAchieved: true,
+        definitionOfDoneUsed: false,
+        completedAt: now,
+        estimateSeconds: elapsedSeconds,
+        elapsedSeconds,
+        pauseCount: 0,
+        pauseDurationSeconds: 0,
+        cancelledSeconds: 0,
+        isQuickLog: true,
+      }
+    })
+
+    // Update completion log immediately (KPI dashboard reacts instantly)
+    setCompletionLog((prev) => [...prev, ...newLogEntries])
+
+    // Save to Supabase if signed in
+    if (supabaseConfigured && supabase && session?.user?.id) {
+      const userId = session.user.id
+
+      // 1. Save quick_log_entries record
+      await upsertQuickLogEntry(
+        {
+          who: quickLogForm.who.trim(),
+          activityType: quickLogForm.activityType,
+          durationMinutes: quickLogForm.durationMinutes,
+          kpiCredits: quickLogForm.kpiCredits,
+          note: quickLogForm.note.trim() || null,
+        },
+        userId,
+      )
+
+      // 2. One timer_sessions record per unique track
+      for (const track of tracks) {
+        const trackKpis = quickLogForm.kpiCredits.filter((k) => KPI_LABEL_TO_TRACK[k] === track)
+        const row = {
+          id: crypto.randomUUID(),
+          user_id: userId,
+          task_instance_id: null,
+          task_name: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
+          track,
+          kpi_mapping: trackKpis[0] ?? '',
+          timer_state: 'Completed',
+          completion_type: 'Done',
+          estimate_seconds: elapsedSeconds,
+          elapsed_seconds: elapsedSeconds,
+          pause_count: 0,
+          pause_duration_seconds: 0,
+          overrun_seconds: 0,
+          cancelled_seconds: 0,
+          outcome_achieved: true,
+          definition_of_done: '',
+          actual_completed: '',
+          started_at: null,
+          completed_at: now,
+          updated_at: now,
+          is_quick_log: true,
+          notes: note,
+        }
+        const { error } = await supabase.from('timer_sessions').insert(row)
+        if (error) console.error('[QuickLog timer_session]', error.message)
+      }
+    } else {
+      // Offline: persist to localStorage for later sync
+      const stored = (() => {
+        try { return JSON.parse(window.localStorage.getItem(QUICK_LOG_LOCAL_KEY) ?? '[]') } catch { return [] }
+      })()
+      stored.push({
+        who: quickLogForm.who.trim(),
+        activityType: quickLogForm.activityType,
+        durationMinutes: quickLogForm.durationMinutes,
+        kpiCredits: quickLogForm.kpiCredits,
+        note: quickLogForm.note.trim() || null,
+        loggedAt: now,
+      })
+      window.localStorage.setItem(QUICK_LOG_LOCAL_KEY, JSON.stringify(stored))
+      setQuickLogEntries(stored)
+    }
+
+    setQuickLogSubmitting(false)
+    setShowQuickLog(false)
+    setQuickLogToast(true)
+    setTimeout(() => setQuickLogToast(false), 2000)
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -3065,6 +3255,47 @@ function App() {
             </ul>
           </article>
         ) : null}
+
+        {/* Quick Logs — this week's impromptu activity */}
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold uppercase text-slate-500">Quick Logs — This Week</h2>
+          {quickLogEntries.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">No quick logs this week. Use the ⚡ button to log an impromptu call, coffee chat, or message.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {quickLogEntries.map((entry, i) => {
+                const loggedAt = entry.logged_at ?? entry.loggedAt
+                const timeStr = loggedAt
+                  ? new Date(loggedAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                  : ''
+                const kpis = Array.isArray(entry.kpi_credits ?? entry.kpiCredits)
+                  ? (entry.kpi_credits ?? entry.kpiCredits)
+                  : []
+                return (
+                  <li key={entry.id ?? i} className="py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-slate-800">
+                          {entry.activity_type ?? entry.activityType}
+                          <span className="ml-1 font-normal text-slate-500">with {entry.who}</span>
+                          <span className="ml-1 text-slate-400">· {entry.duration_minutes ?? entry.durationMinutes}m</span>
+                        </p>
+                        {kpis.length > 0 && (
+                          <p className="mt-0.5 text-[11px] text-slate-500">{kpis.join(' · ')}</p>
+                        )}
+                        {(entry.note) && (
+                          <p className="mt-0.5 text-[11px] italic text-slate-400">"{entry.note}"</p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-[11px] text-slate-400">{timeStr}</span>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </article>
+
       </section>
     )
   }
@@ -4125,6 +4356,173 @@ function App() {
       {activeScreen === 'weekAhead' ? renderWeekAhead() : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
       {activeScreen === 'analytics' ? renderAnalyticsScreen() : null}
+
+      {/* ── Floating Quick Log button ─────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={openQuickLog}
+        title="Quick Log"
+        className="fixed bottom-20 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white shadow-lg transition hover:bg-slate-700 active:scale-95"
+        aria-label="Open Quick Log"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+        </svg>
+      </button>
+
+      {/* ── Success toast ─────────────────────────────────────────────── */}
+      {quickLogToast && (
+        <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-lg">
+          Logged ✓
+        </div>
+      )}
+
+      {/* ── Quick Log Modal ───────────────────────────────────────────── */}
+      {showQuickLog && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center" onClick={() => setShowQuickLog(false)}>
+          <div
+            className="w-full max-w-lg rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900">Quick Log</h2>
+              <button type="button" onClick={() => setShowQuickLog(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div className="max-h-[75vh] overflow-y-auto space-y-4 pr-1">
+
+              {/* Who */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">Who was this with?</label>
+                <input
+                  type="text"
+                  value={quickLogForm.who}
+                  onChange={(e) => setQuickLogForm((f) => ({ ...f, who: e.target.value }))}
+                  placeholder="Name or company"
+                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-900 ${quickLogErrors.who ? 'border-rose-400' : 'border-slate-200'}`}
+                />
+                {quickLogErrors.who && <p className="mt-1 text-[11px] text-rose-600">{quickLogErrors.who}</p>}
+              </div>
+
+              {/* Type */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">Type</label>
+                <div className="flex flex-wrap gap-2">
+                  {['Call', 'Coffee Chat', 'Message', 'Meeting', 'Event'].map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setQuickLogForm((f) => ({ ...f, activityType: t }))}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        quickLogForm.activityType === t
+                          ? 'bg-slate-900 text-white'
+                          : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                {quickLogErrors.activityType && <p className="mt-1 text-[11px] text-rose-600">{quickLogErrors.activityType}</p>}
+              </div>
+
+              {/* Duration */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">Duration</label>
+                <div className="flex flex-wrap gap-2">
+                  {[15, 30, 45, 60, 90].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setQuickLogForm((f) => ({ ...f, durationMinutes: m }))}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        quickLogForm.durationMinutes === m
+                          ? 'bg-slate-900 text-white'
+                          : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {m}m
+                    </button>
+                  ))}
+                </div>
+                {quickLogErrors.durationMinutes && <p className="mt-1 text-[11px] text-rose-600">{quickLogErrors.durationMinutes}</p>}
+              </div>
+
+              {/* KPI Credits */}
+              <div>
+                <label className="mb-2 block text-xs font-semibold text-slate-700">KPI Credits</label>
+                {quickLogErrors.kpiCredits && <p className="mb-1 text-[11px] text-rose-600">{quickLogErrors.kpiCredits}</p>}
+                <div className="space-y-3">
+                  {QUICK_LOG_KPI_GROUPS.map((grp) => (
+                    <div key={grp.group}>
+                      <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: grp.color }} />
+                        {grp.group}
+                      </p>
+                      <div className="space-y-1">
+                        {grp.kpis.map((kpi) => {
+                          const checked = quickLogForm.kpiCredits.includes(kpi)
+                          return (
+                            <label key={kpi} className="flex cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setQuickLogForm((f) => ({
+                                    ...f,
+                                    kpiCredits: checked
+                                      ? f.kpiCredits.filter((k) => k !== kpi)
+                                      : [...f.kpiCredits, kpi],
+                                  }))
+                                }
+                                className="h-3.5 w-3.5 rounded accent-slate-900"
+                              />
+                              <span className="text-xs text-slate-700">{kpi}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Note */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  One-line note <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={quickLogForm.note}
+                  onChange={(e) => setQuickLogForm((f) => ({ ...f, note: e.target.value }))}
+                  placeholder="e.g. Former OUTFRONT colleague, also alpha tester"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                />
+              </div>
+
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowQuickLog(false)}
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleQuickLogSubmit}
+                disabled={quickLogSubmitting}
+                className="flex-1 rounded-lg bg-slate-900 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {quickLogSubmitting ? 'Logging…' : 'Log Activity'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
         <ul className="mx-auto grid max-w-5xl grid-cols-6 gap-1 p-2 text-center text-xs sm:text-sm">

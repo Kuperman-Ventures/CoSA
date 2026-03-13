@@ -431,6 +431,50 @@ export async function loadUserPreferences(userId) {
   }
 }
 
+// ─── Quick Log Entries ────────────────────────────────────────────────────────
+
+export async function upsertQuickLogEntry(entry, userId) {
+  if (!supabase || !userId) return null
+  try {
+    const { data, error } = await supabase
+      .from('quick_log_entries')
+      .insert({
+        user_id:          userId,
+        who:              entry.who,
+        activity_type:    entry.activityType,
+        duration_minutes: entry.durationMinutes,
+        kpi_credits:      entry.kpiCredits,
+        note:             entry.note ?? null,
+        logged_at:        new Date().toISOString(),
+      })
+      .select('id')
+      .single()
+    if (error) { console.error('[upsertQuickLogEntry]', error.message); return null }
+    return data?.id ?? null
+  } catch (err) {
+    console.error('[upsertQuickLogEntry]', err.message)
+    return null
+  }
+}
+
+export async function loadQuickLogEntries(weekStart, weekEnd, userId) {
+  if (!supabase || !userId) return []
+  try {
+    const { data, error } = await supabase
+      .from('quick_log_entries')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('logged_at', weekStart)
+      .lte('logged_at', weekEnd)
+      .order('logged_at', { ascending: false })
+    if (error) { console.error('[loadQuickLogEntries]', error.message); return [] }
+    return data ?? []
+  } catch (err) {
+    console.error('[loadQuickLogEntries]', err.message)
+    return []
+  }
+}
+
 export async function upsertUserPreferences(prefs, userId) {
   if (!supabase || !userId) return
   try {
