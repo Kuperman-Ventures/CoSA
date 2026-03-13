@@ -1925,7 +1925,7 @@ function App() {
 
     try {
       const clientAbort = new AbortController()
-      const clientTimeout = setTimeout(() => clientAbort.abort(), 30000)
+      const clientTimeout = setTimeout(() => clientAbort.abort(new Error('Replan timed out — try again')), 30000)
       let res
       try {
         res = await fetch('/api/replan-week', {
@@ -1962,7 +1962,10 @@ function App() {
       setWeekPlan(replanPlan)
       setShowAiRationale(true)
     } catch (err) {
-      setWeekPlanMessage(`Replan failed: ${err.message}`)
+      const msg = err.message?.includes('aborted') || err.name === 'AbortError'
+        ? 'Replan timed out — try again'
+        : (err.message ?? 'Unknown error')
+      setWeekPlanMessage(`Replan failed: ${msg}`)
     } finally {
       setReplanLoading(false)
     }

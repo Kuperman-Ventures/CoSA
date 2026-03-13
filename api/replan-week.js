@@ -1,4 +1,17 @@
+export const runtime = 'edge'
+
 const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+
+// Slim a task down to only the fields the AI needs (drops gcalEventId, _uid, etc.)
+function slimTask(t) {
+  return {
+    templateId: t.templateId,
+    name: t.name,
+    track: t.track,
+    timeBlock: t.timeBlock,
+    estimateMinutes: t.estimateMinutes,
+  }
+}
 
 export default async function handler(req) {
   if (req.method !== 'POST') {
@@ -16,77 +29,59 @@ export default async function handler(req) {
   // Build set of event IDs currently in the calendar
   const currentEventIds = new Set((calendarEvents ?? []).map((e) => e.id))
 
-  // Find all tasks across all days
+  // Find tasks that have been deleted from Google Calendar
   const allPublishedTasks = Object.entries(publishedPlan.days ?? {}).flatMap(([day, dayData]) =>
     (dayData?.tasks ?? []).map((t) => ({ ...t, day })),
   )
+  const deletedTasks = allPublishedTasks
+    .filter((t) => t.gcalEventId && !currentEventIds.has(t.gcalEventId))
+    .map((t) => ({ name: t.name, templateId: t.templateId, day: t.day, timeBlock: t.timeBlock }))
 
-  // Diff: which CoSA tasks have been deleted from the calendar?
-  const deletedTasks = allPublishedTasks.filter(
-    (t) => t.gcalEventId && !currentEventIds.has(t.gcalEventId),
-  )
-
-  // Which days are still remaining (today and after)?
+  // Only replan remaining days
   const todayIndex = DAY_ORDER.indexOf(todayName)
   const remainingDays = todayIndex >= 0 ? DAY_ORDER.slice(todayIndex) : DAY_ORDER
 
-  const systemPrompt = `You are the Chief of Staff for a senior marketing executive.
-It is currently ${todayName}. You are replanning the remaining days of this week.
+  // Slim the published plan — only remaining days, only essential task fields
+  const slimPlan = {}
+  for (const day of remainingDays) {
+    const tasks = (publishedPlan.days?.[day]?.tasks ?? []).map(slimTask)
+    slimPlan[day] = tasks
+  }
+
+  const systemPrompt = `You are a Chief of Staff AI. It is ${todayName}. Replan the remaining days of this week.
 
 Rules:
-- Only generate tasks for remaining days: ${remainingDays.join(', ')}
-- Do not schedule a task on a day its daysOfWeek field does not include
-- Deleted tasks represent freed capacity — you may reschedule them to remaining days if appropriate
-- Keep tasks already completed (in past days) as-is — only return remaining days
-- Preserve the same time block structure: BD (9:30–11am), Networking (11am–12pm), Job Search (1–2pm), Encore OS (2–4pm)
+- Only return days: ${remainingDays.join(', ')}
+- Deleted tasks = freed capacity; reschedule them to remaining days if appropriate
+- Time blocks: BD (9:30–11am), Networking (11am–12pm), Job Search (1–2pm), Encore OS (2–4pm)
+- Return ONLY valid JSON, no preamble, no markdown
 
-Return a JSON object with exactly this shape:
-{
-  "days": {
-    ${remainingDays.map((d) => `"${d}": [tasks]`).join(',\n    ')}
-  },
-  "aiRationale": "one paragraph explaining what changed and why"
-}
+Response shape:
+{"days":{"${remainingDays[0]}":[...],...},"aiRationale":"one sentence"}`
 
-Each task object: { "templateId": string, "name": string, "track": string, "timeBlock": string, "estimateMinutes": number }
+  const userPrompt = `Plan for remaining days:
+${JSON.stringify(slimPlan)}
 
-Return only valid JSON. No preamble. No markdown fences.`
+Deleted from calendar (reschedule if possible):
+${JSON.stringify(deletedTasks)}
 
-  const userPrompt = `Original published plan:
-${JSON.stringify(publishedPlan.days, null, 2)}
-
-Tasks deleted from Google Calendar (freed capacity):
-${JSON.stringify(deletedTasks.map((t) => ({ name: t.name, templateId: t.templateId, day: t.day, timeBlock: t.timeBlock })))}
-
-Remaining days to replan: ${remainingDays.join(', ')}
-
-Generate a revised plan for only the remaining days.`
+Each task must have: templateId, name, track, timeBlock, estimateMinutes`
 
   try {
-    const timeoutError = new Error('Replan timed out — try again')
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(timeoutError), 15000)
-
-    let response
-    try {
-      response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-3-5-haiku-20241022',
-          max_tokens: 2000,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-      })
-    } finally {
-      clearTimeout(timeout)
-    }
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 1200,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    })
 
     const data = await response.json()
     if (!response.ok) {
@@ -98,8 +93,6 @@ Generate a revised plan for only the remaining days.`
     const replan = JSON.parse(cleaned)
     return new Response(JSON.stringify({ replan }), { headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
-    const isTimeout = err.message?.includes('timed out') || err.name === 'AbortError' || err.message?.includes('aborted')
-    const msg = isTimeout ? 'Replan timed out — try again' : err.message
-    return new Response(JSON.stringify({ error: msg }), { status: 500 })
+    return new Response(JSON.stringify({ error: err.message ?? 'Replan failed' }), { status: 500 })
   }
 }
