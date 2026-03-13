@@ -1940,36 +1940,58 @@ function App() {
         taskLibrary.map((t) => [t.id, t.daysOfWeek ?? ALL_WEEKDAYS])
       )
 
-      // Use cosaTemplateId + date from extended properties to identify what's
-      // still in the calendar — works even when stored gcalEventIds are null.
-      // Key format: "YYYY-MM-DD::templateId"
-      // Also capture actual event duration so resizes are preserved this week.
-      const calendarPresent = new Set()
-      const calendarDurations = {} // key → actual minutes from GCal
+      // Build two parallel lookups from live calendar events:
+      //  1. by date::cosaTemplateId  (preferred — set on events published with fixed code)
+      //  2. by date::normalizedTitle (fallback — for old events missing the metadata tag)
+      const calendarPresent = new Set()       // date::templateId keys
+      const calendarPresentByTitle = new Set() // date::title keys
+      const calendarDurations = {}            // date::templateId → actual minutes
+      const calendarDurationsByTitle = {}     // date::title → actual minutes
+
       for (const event of calendarEvents ?? []) {
         const templateId = event.extendedProperties?.private?.cosaTemplateId
         const dateStr = (event.start?.dateTime ?? event.start?.date ?? '').split('T')[0]
-        if (templateId && dateStr) {
+        const title = (event.summary ?? '').toLowerCase().trim()
+
+        if (!dateStr) continue
+
+        const actualMins = (event.start?.dateTime && event.end?.dateTime)
+          ? Math.round((new Date(event.end.dateTime) - new Date(event.start.dateTime)) / 60000)
+          : null
+        const validMins = actualMins && actualMins > 0 && actualMins <= 480 ? actualMins : null
+
+        if (templateId) {
           const key = `${dateStr}::${templateId}`
           calendarPresent.add(key)
-          if (event.start?.dateTime && event.end?.dateTime) {
-            const actualMins = Math.round(
-              (new Date(event.end.dateTime) - new Date(event.start.dateTime)) / 60000
-            )
-            // Cap at 8 hours to guard against corrupted duplicate events
-            if (actualMins > 0 && actualMins <= 480) calendarDurations[key] = actualMins
-          }
+          if (validMins) calendarDurations[key] = validMins
+        }
+        if (title) {
+          const titleKey = `${dateStr}::${title}`
+          calendarPresentByTitle.add(titleKey)
+          if (validMins) calendarDurationsByTitle[titleKey] = validMins
         }
       }
 
-      // Find tasks whose (planned date + templateId) is missing from the live calendar.
+      // Helper: check if a task is in the calendar on a given date,
+      // using templateId first and event title as a fallback.
+      const taskInCalendar = (date, task) => {
+        const idKey = `${date}::${task.templateId}`
+        const titleKey = `${date}::${(task.name ?? '').toLowerCase().trim()}`
+        return calendarPresent.has(idKey) || calendarPresentByTitle.has(titleKey)
+      }
+      const getDuration = (date, task) => {
+        const idKey = `${date}::${task.templateId}`
+        const titleKey = `${date}::${(task.name ?? '').toLowerCase().trim()}`
+        return calendarDurations[idKey] ?? calendarDurationsByTitle[titleKey] ?? null
+      }
+
+      // Find tasks whose (planned date + identity) is missing from the live calendar.
       // A task moved to a different day in GCal is treated as "deleted" from its planned day.
       const deletedTasks = []
       for (const [dayName, dayData] of Object.entries(weekPlan.days ?? {})) {
         if (!remainingDays.includes(dayName)) continue
         for (const task of dayData?.tasks ?? []) {
-          const key = `${dayData.date}::${task.templateId}`
-          if (!calendarPresent.has(key)) {
+          if (!taskInCalendar(dayData.date, task)) {
             deletedTasks.push({ ...task, day: dayName })
           }
         }
@@ -1981,11 +2003,9 @@ function App() {
       for (const day of remainingDays) {
         const existing = weekPlan.days?.[day] ?? { date: getDayDate(weekStart, day), tasks: [] }
         const survivingTasks = (existing.tasks ?? [])
-          .filter((t) => calendarPresent.has(`${existing.date}::${t.templateId}`))
+          .filter((t) => taskInCalendar(existing.date, t))
           .map((t) => {
-            const key = `${existing.date}::${t.templateId}`
-            const actual = calendarDurations[key]
-            // Honour user's resize for this week; Task Library is unchanged
+            const actual = getDuration(existing.date, t)
             return actual && actual !== t.estimateMinutes
               ? { ...t, estimateMinutes: actual }
               : t
@@ -2001,10 +2021,10 @@ function App() {
       for (const task of deletedTasks) {
         const allowed = daysOfWeekMap[task.templateId] ?? ALL_WEEKDAYS
 
-        // Detect a move: task's templateId appears in calendarPresent on a different remaining day
+        // Detect a move: task appears in the calendar on a different remaining day
         const movedToDay = remainingDays.find((d) => {
           const dayDate = weekPlan.days?.[d]?.date
-          return d !== task.day && dayDate && calendarPresent.has(`${dayDate}::${task.templateId}`)
+          return d !== task.day && dayDate && taskInCalendar(dayDate, task)
         })
 
         const targetDay =
@@ -2046,11 +2066,9 @@ function App() {
         const dayDate = weekPlan.days?.[day]?.date
         if (!dayDate) continue
         for (const task of weekPlan.days[day]?.tasks ?? []) {
-          const key = `${dayDate}::${task.templateId}`
-          const actual = calendarDurations[key]
+          const actual = getDuration(dayDate, task)
           const baseline = libraryEstimates[task.templateId] ?? task.estimateMinutes
-          // Cap at 8 hours to ignore corrupted events from previous bad publishes
-          if (actual && actual <= 480 && actual !== baseline) {
+          if (actual && actual !== baseline) {
             resizedItems.push({ name: task.name, from: baseline, to: actual })
           }
         }
