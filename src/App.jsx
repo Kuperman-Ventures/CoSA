@@ -914,6 +914,7 @@ function App() {
   const [weekPlanMessage, setWeekPlanMessage] = useState('')
   const [replanLoading, setReplanLoading] = useState(false)
   const [showAiRationale, setShowAiRationale] = useState(false)
+  const [replanChoices, setReplanChoices] = useState({}) // taskKey → dayName | 'drop'
   const [clearedDates, setClearedDates] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]') } catch { return [] }
   })
@@ -2013,54 +2014,47 @@ function App() {
         hydratedDays[day] = { ...existing, tasks: survivingTasks }
       }
 
-      // Try to reschedule deleted tasks.
-      // First check if the task was MOVED to another remaining day in the calendar;
-      // if so, honour that placement. Otherwise find the first allowed remaining day.
-      const rescheduledNames = []
-      const droppedNames = []
-      for (const task of deletedTasks) {
-        const allowed = daysOfWeekMap[task.templateId] ?? ALL_WEEKDAYS
+      // Separate deleted tasks into:
+      // - MOVES: task disappeared from its day but appears on another remaining day → auto-confirm
+      // - PENDING: genuinely removed → ask the user what to do
+      const confirmedMoves = []
+      const pendingDecisions = []
 
-        // Detect a move: task appears in the calendar on a different remaining day
+      for (const task of deletedTasks) {
         const movedToDay = remainingDays.find((d) => {
           const dayDate = weekPlan.days?.[d]?.date
           return d !== task.day && dayDate && taskInCalendar(dayDate, task)
         })
-
-        const targetDay =
-          movedToDay ??
-          remainingDays.find((d) => allowed.includes(d)) ??
-          remainingDays.find(() => true)
-
-        if (targetDay) {
-          // Avoid adding a duplicate if the task is already in hydratedDays[targetDay]
-          const alreadyThere = hydratedDays[targetDay].tasks.some(
+        if (movedToDay) {
+          // Auto-confirm the move — add to surviving days
+          const alreadyThere = hydratedDays[movedToDay].tasks.some(
             (t) => t.templateId === task.templateId
           )
           if (!alreadyThere) {
-            hydratedDays[targetDay].tasks = [
-              ...hydratedDays[targetDay].tasks,
-              { ...task, gcalEventId: null, status: 'planned' },
+            const actual = getDuration(weekPlan.days?.[movedToDay]?.date, task)
+            hydratedDays[movedToDay].tasks = [
+              ...hydratedDays[movedToDay].tasks,
+              { ...task, gcalEventId: null, status: 'planned', estimateMinutes: actual ?? task.estimateMinutes },
             ]
-            const label = movedToDay ? `${task.name} moved to ${targetDay}` : `${task.name} → ${targetDay}`
-            rescheduledNames.push(label)
           }
+          confirmedMoves.push({ task, fromDay: task.day, toDay: movedToDay })
         } else {
-          droppedNames.push(task.name)
+          // Needs a human decision
+          const allowed = daysOfWeekMap[task.templateId] ?? ALL_WEEKDAYS
+          const suggestedDay = remainingDays.find((d) => allowed.includes(d)) ?? remainingDays[0]
+          pendingDecisions.push({ task, originalDay: task.day, suggestedDay })
         }
       }
 
-      // Re-sort each day's tasks by time block order
+      // Re-sort surviving tasks by time block
       for (const day of remainingDays) {
         hydratedDays[day].tasks = hydratedDays[day].tasks.sort(
           (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock)
         )
       }
 
-      // Build a library-estimate lookup for resize baseline (use original, not week-plan estimate)
+      // Detect resized tasks
       const libraryEstimates = Object.fromEntries(taskLibrary.map((t) => [t.id, t.defaultTimeEstimate ?? 25]))
-
-      // Detect resized tasks — compare actual calendar duration against library baseline
       const resizedItems = []
       for (const day of remainingDays) {
         const dayDate = weekPlan.days?.[day]?.date
@@ -2074,21 +2068,21 @@ function App() {
         }
       }
 
-      // Store rationale as structured sections for rich rendering
-      const hasChanges = deletedTasks.length > 0 || resizedItems.length > 0
-      const rationaleObj = {
-        weeks: remainingDays,
-        noChanges: !hasChanges,
-        rescheduled: rescheduledNames,
-        dropped: droppedNames,
-        resized: resizedItems,
+      // Initialise user choices — default each pending task to its suggested day
+      const initialChoices = {}
+      for (const pd of pendingDecisions) {
+        initialChoices[pd.task.templateId] = pd.suggestedDay ?? remainingDays[0]
       }
+      setReplanChoices(initialChoices)
 
       const replanPlan = {
         ...weekPlan,
-        status: 'replanning',
-        aiRationale: JSON.stringify(rationaleObj),
-        days: { ...weekPlan.days, ...hydratedDays },
+        status: 'reviewing',
+        survivingDays: hydratedDays,
+        confirmedMoves,
+        pendingDecisions,
+        resizedItems,
+        remainingDays,
       }
       setWeekPlan(replanPlan)
       setShowAiRationale(true)
@@ -2136,7 +2130,35 @@ function App() {
         }
       }
 
-      updatedDays = await createWeekPlanEvents(weekPlan.days, providerToken, weekPlan.id)
+      // Build final days from surviving tasks + user choices for pending decisions
+      const finalDays = { ...(weekPlan.survivingDays ?? weekPlan.days) }
+
+      for (const pd of weekPlan.pendingDecisions ?? []) {
+        const choice = replanChoices[pd.task.templateId]
+        if (!choice || choice === 'drop') continue
+        const targetDay = choice
+        if (!finalDays[targetDay]) {
+          finalDays[targetDay] = { date: weekPlan.days?.[targetDay]?.date ?? '', tasks: [] }
+        }
+        const alreadyThere = finalDays[targetDay].tasks.some(
+          (t) => t.templateId === pd.task.templateId
+        )
+        if (!alreadyThere) {
+          finalDays[targetDay].tasks = [
+            ...finalDays[targetDay].tasks,
+            { ...pd.task, gcalEventId: null, status: 'planned' },
+          ]
+        }
+      }
+
+      // Re-sort each day
+      for (const day of Object.keys(finalDays)) {
+        finalDays[day].tasks = (finalDays[day].tasks ?? []).sort(
+          (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock)
+        )
+      }
+
+      updatedDays = await createWeekPlanEvents(finalDays, providerToken, weekPlan.id)
     }
 
     const appliedPlan = { ...weekPlan, status: 'replanned', days: updatedDays }
@@ -3156,6 +3178,7 @@ function App() {
 
     const isPublished = weekPlan?.status === 'published' || weekPlan?.status === 'replanned'
     const isReplanning = weekPlan?.status === 'replanning'
+    const isReviewing = weekPlan?.status === 'reviewing'
 
     // ── Draft / Published / Replanning state ─────────────────────────────────
     return (
@@ -3195,6 +3218,16 @@ function App() {
                 Apply Replan
               </button>
             )}
+            {isReviewing && (
+              <button
+                type="button"
+                onClick={handleApplyReplan}
+                disabled={weekPlanLoading}
+                className="rounded-md bg-blue-700 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                Apply Replan
+              </button>
+            )}
             {!isPublished && !isReplanning && (
               <button
                 type="button"
@@ -3217,10 +3250,107 @@ function App() {
           </p>
         )}
 
+        {/* Conversational review panel — shown while user is making decisions */}
+        {isReviewing && (
+          <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+            <p className="mb-3 text-sm font-semibold text-blue-900">
+              Here's what changed in your calendar this week:
+            </p>
+
+            {/* Confirmed moves — no action needed */}
+            {(weekPlan.confirmedMoves ?? []).length > 0 && (
+              <div className="mb-3">
+                {(weekPlan.confirmedMoves ?? []).map((m, i) => (
+                  <div key={i} className="mb-1 flex items-start gap-2 text-xs text-blue-800">
+                    <span className="mt-0.5 text-blue-400">↪</span>
+                    <span>
+                      <span className="font-medium">{m.task.name}</span>
+                      {' '}was moved from {m.fromDay} to {m.toDay} — noted.
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Resized tasks — no action needed */}
+            {(weekPlan.resizedItems ?? []).length > 0 && (
+              <div className="mb-3">
+                {(weekPlan.resizedItems ?? []).map((r, i) => (
+                  <div key={i} className="mb-1 flex items-start gap-2 text-xs text-blue-800">
+                    <span className="mt-0.5 text-amber-500">⏱</span>
+                    <span>
+                      <span className="font-medium">{r.name}</span>
+                      {' '}was adjusted to {r.to}m (was {r.from}m) — I'll use the new duration.
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pending decisions — ask the user */}
+            {(weekPlan.pendingDecisions ?? []).length > 0 && (
+              <div className="mt-3 space-y-3 border-t border-blue-200 pt-3">
+                <p className="text-xs font-semibold text-blue-900">
+                  These tasks were removed — what should I do with them?
+                </p>
+                {(weekPlan.pendingDecisions ?? []).map((pd, i) => {
+                  const choice = replanChoices[pd.task.templateId]
+                  return (
+                    <div key={i} className="rounded-lg border border-blue-200 bg-white p-3">
+                      <p className="mb-2 text-xs font-medium text-slate-800">
+                        <span className="mr-1 text-rose-400">✕</span>
+                        <span className="font-semibold">{pd.task.name}</span>
+                        <span className="ml-1 text-slate-400">
+                          ({pd.task.estimateMinutes}m · {pd.task.timeBlock}) — removed from {pd.originalDay}
+                        </span>
+                      </p>
+                      <p className="mb-2 text-[10px] text-slate-500">Should I reschedule it? If yes, when?</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(weekPlan.remainingDays ?? []).map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => setReplanChoices((prev) => ({ ...prev, [pd.task.templateId]: d }))}
+                            className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                              choice === d
+                                ? 'bg-blue-700 text-white'
+                                : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            {d.slice(0, 3)}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setReplanChoices((prev) => ({ ...prev, [pd.task.templateId]: 'drop' }))}
+                          className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${
+                            choice === 'drop'
+                              ? 'bg-rose-600 text-white'
+                              : 'border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100'
+                          }`}
+                        >
+                          Drop it
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* No changes at all */}
+            {(weekPlan.confirmedMoves ?? []).length === 0 &&
+             (weekPlan.resizedItems ?? []).length === 0 &&
+             (weekPlan.pendingDecisions ?? []).length === 0 && (
+              <p className="text-xs text-blue-700 italic">No changes detected — your plan matches the calendar.</p>
+            )}
+          </div>
+        )}
+
         {/* 5-column day grid */}
         <div className="grid grid-cols-5 gap-3">
           {dayNames.map((dayName, dayIdx) => {
-            const dayData = weekPlan?.days?.[dayName] ?? { date: '', tasks: [] }
+            const dayData = (isReviewing ? weekPlan?.survivingDays : weekPlan?.days)?.[dayName] ?? { date: '', tasks: [] }
             const isPast = todayIndex >= 0 && dayIdx < todayIndex
             const isToday = dayIdx === todayIndex
 
