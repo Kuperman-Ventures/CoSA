@@ -24,10 +24,10 @@ export default async function handler(req) {
   } catch (err) {
     return new Response(JSON.stringify({ error: `Bad request body: ${err.message}` }), { status: 400 })
   }
-  const { publishedPlan, calendarEvents, todayName } = body
+  const { publishedPlan, calendarEventIds, todayName } = body
 
   // Build set of event IDs currently in the calendar
-  const currentEventIds = new Set((calendarEvents ?? []).map((e) => e.id))
+  const currentEventIds = new Set(calendarEventIds ?? [])
 
   // Find tasks that have been deleted from Google Calendar
   const allPublishedTasks = Object.entries(publishedPlan.days ?? {}).flatMap(([day, dayData]) =>

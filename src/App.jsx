@@ -1923,16 +1923,38 @@ function App() {
     const calendarEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
     const todayName = DAY_NAMES[new Date().getDay()]
 
+    // Slim payload before sending: calendarEvents → just IDs, tasks → only fields the server needs
+    const slimCalendarEventIds = (calendarEvents ?? []).map((e) => e.id)
+    const slimPlan = {
+      weekStartDate: weekPlan.weekStartDate,
+      days: Object.fromEntries(
+        Object.entries(weekPlan.days ?? {}).map(([day, dayData]) => [
+          day,
+          {
+            date: dayData.date,
+            tasks: (dayData.tasks ?? []).map((t) => ({
+              templateId: t.templateId,
+              name: t.name,
+              track: t.track,
+              timeBlock: t.timeBlock,
+              estimateMinutes: t.estimateMinutes,
+              gcalEventId: t.gcalEventId ?? null,
+            })),
+          },
+        ]),
+      ),
+    }
+
     try {
       const clientAbort = new AbortController()
-      const clientTimeout = setTimeout(() => clientAbort.abort(new Error('Replan timed out — try again')), 30000)
+      const clientTimeout = setTimeout(() => clientAbort.abort(new Error('Replan timed out — try again')), 45000)
       let res
       try {
         res = await fetch('/api/replan-week', {
           method: 'POST',
           signal: clientAbort.signal,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ publishedPlan: weekPlan, calendarEvents, todayName }),
+          body: JSON.stringify({ publishedPlan: slimPlan, calendarEventIds: slimCalendarEventIds, todayName }),
         })
       } finally {
         clearTimeout(clientTimeout)
