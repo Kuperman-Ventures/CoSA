@@ -1727,19 +1727,31 @@ function App() {
     const currentReview = fridayReviews[0] ?? null
 
     try {
-      const res = await fetch('/api/generate-week-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          weekStartDate: planWeekStartDate,
-          currentWeekKpis: [],
-          deferredItems,
-          taskLibrary,
-          fridayReviewAnswers: currentReview
-            ? { q2: currentReview.q2 ?? '' }
-            : null,
-        }),
-      })
+      const controller = new AbortController()
+      const clientTimeout = setTimeout(() => controller.abort(), 25000)
+
+      let res
+      try {
+        res = await fetch('/api/generate-week-plan', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            weekStartDate: planWeekStartDate,
+            currentWeekKpis: [],
+            deferredItems,
+            taskLibrary,
+            fridayReviewAnswers: currentReview
+              ? { q2: currentReview.q2 ?? '' }
+              : null,
+          }),
+        })
+      } catch (fetchErr) {
+        clearTimeout(clientTimeout)
+        throw new Error(fetchErr.name === 'AbortError' ? 'Request timed out — try again' : fetchErr.message)
+      }
+      clearTimeout(clientTimeout)
+
       const text = await res.text()
       let data
       try { data = JSON.parse(text) } catch {

@@ -63,7 +63,7 @@ Task library: ${JSON.stringify(slimLibrary)}`
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
+        model: 'claude-3-5-haiku-20241022',
         max_tokens: 2000,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
