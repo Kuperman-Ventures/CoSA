@@ -2100,70 +2100,37 @@ function App() {
     setWeekPlanLoading(true)
     setWeekPlanMessage('')
 
-    const providerToken = session?.provider_token
-    let updatedDays = weekPlan.days
+    // Build final days from surviving tasks + user choices for pending decisions.
+    // We do NOT touch Google Calendar — the user has already made their changes there.
+    // We just update CoSA's internal plan so Today populates correctly through the week.
+    const finalDays = { ...(weekPlan.survivingDays ?? weekPlan.days) }
 
-    if (providerToken) {
-      const today = new Date()
-      const todayDow = today.getDay() // 0=Sun
-      const remainingDayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-        .filter((_, i) => i + 1 >= (todayDow === 0 ? 7 : todayDow))
-
-      // Fetch live calendar events for remaining days and delete them all.
-      // This is more reliable than relying on stored gcalEventIds (which may be null after reload).
-      const weekStart = weekPlan.weekStartDate
-      const weekEnd = weekPlan.days?.['Friday']?.date ?? weekStart
-      const liveEvents = await fetchCoSACalendarEvents(
-        providerToken,
-        `${weekStart}T00:00:00Z`,
-        `${weekEnd}T23:59:59Z`,
+    for (const pd of weekPlan.pendingDecisions ?? []) {
+      const choice = replanChoices[pd.task.templateId]
+      if (!choice || choice === 'drop') continue
+      const targetDay = choice
+      if (!finalDays[targetDay]) {
+        finalDays[targetDay] = { date: weekPlan.days?.[targetDay]?.date ?? '', tasks: [] }
+      }
+      const alreadyThere = finalDays[targetDay].tasks.some(
+        (t) => t.templateId === pd.task.templateId
       )
-      const CALENDAR_ID = 'c_f733c89ebd8fa8294dfb9b29147e64acc78eae845b47ea1271ddb7844e191716@group.calendar.google.com'
-      for (const event of liveEvents ?? []) {
-        const eventDate = (event.start?.dateTime ?? event.start?.date ?? '').split('T')[0]
-        const isRemainingDay = remainingDayNames.some(
-          (d) => weekPlan.days?.[d]?.date === eventDate
-        )
-        if (isRemainingDay) {
-          await fetch(
-            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CALENDAR_ID)}/events/${event.id}`,
-            { method: 'DELETE', headers: { Authorization: `Bearer ${providerToken}` } },
-          )
-        }
+      if (!alreadyThere) {
+        finalDays[targetDay].tasks = [
+          ...finalDays[targetDay].tasks,
+          { ...pd.task, gcalEventId: null, status: 'planned' },
+        ]
       }
-
-      // Build final days from surviving tasks + user choices for pending decisions
-      const finalDays = { ...(weekPlan.survivingDays ?? weekPlan.days) }
-
-      for (const pd of weekPlan.pendingDecisions ?? []) {
-        const choice = replanChoices[pd.task.templateId]
-        if (!choice || choice === 'drop') continue
-        const targetDay = choice
-        if (!finalDays[targetDay]) {
-          finalDays[targetDay] = { date: weekPlan.days?.[targetDay]?.date ?? '', tasks: [] }
-        }
-        const alreadyThere = finalDays[targetDay].tasks.some(
-          (t) => t.templateId === pd.task.templateId
-        )
-        if (!alreadyThere) {
-          finalDays[targetDay].tasks = [
-            ...finalDays[targetDay].tasks,
-            { ...pd.task, gcalEventId: null, status: 'planned' },
-          ]
-        }
-      }
-
-      // Re-sort each day
-      for (const day of Object.keys(finalDays)) {
-        finalDays[day].tasks = (finalDays[day].tasks ?? []).sort(
-          (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock)
-        )
-      }
-
-      updatedDays = await createWeekPlanEvents(finalDays, providerToken, weekPlan.id)
     }
 
-    const appliedPlan = { ...weekPlan, status: 'replanned', days: updatedDays }
+    // Re-sort each day by time block
+    for (const day of Object.keys(finalDays)) {
+      finalDays[day].tasks = (finalDays[day].tasks ?? []).sort(
+        (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock)
+      )
+    }
+
+    const appliedPlan = { ...weekPlan, status: 'replanned', days: finalDays }
 
     if (session?.user?.id) {
       if (weekPlan.id) {
@@ -2175,7 +2142,7 @@ function App() {
     }
 
     setWeekPlan(appliedPlan)
-    setWeekPlanMessage('Replan applied to Google Calendar.')
+    setWeekPlanMessage('Plan updated — Today will reflect your changes as the week unfolds.')
     setWeekPlanLoading(false)
   }
 
