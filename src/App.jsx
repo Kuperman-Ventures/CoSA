@@ -2029,8 +2029,8 @@ function App() {
 
         const targetDay =
           movedToDay ??
-          remainingDays.find((d) => d !== task.day && allowed.includes(d)) ??
-          remainingDays.find((d) => d !== task.day)
+          remainingDays.find((d) => allowed.includes(d)) ??
+          remainingDays.find(() => true)
 
         if (targetDay) {
           // Avoid adding a duplicate if the task is already in hydratedDays[targetDay]
