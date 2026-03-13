@@ -1922,9 +1922,7 @@ function App() {
       const timeMax = `${weekEnd}T23:59:59Z`
 
       const calendarEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
-      const currentEventIds = new Set((calendarEvents ?? []).map((e) => e.id))
       const todayName = DAY_NAMES[new Date().getDay()]
-      const todayIndex = DAY_NAMES.indexOf(todayName) // 0=Sun,1=Mon... use DAY_ORDER below
       const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
       const todayDayIndex = DAY_ORDER.indexOf(todayName)
       const remainingDays = todayDayIndex >= 0 ? DAY_ORDER.slice(todayDayIndex) : DAY_ORDER
@@ -1934,24 +1932,37 @@ function App() {
         taskLibrary.map((t) => [t.id, t.daysOfWeek ?? ALL_WEEKDAYS])
       )
 
-      // Find published tasks deleted from Google Calendar
+      // Use cosaTemplateId + date from extended properties to identify what's
+      // still in the calendar — works even when stored gcalEventIds are null.
+      // Key format: "YYYY-MM-DD::templateId"
+      const calendarPresent = new Set()
+      for (const event of calendarEvents ?? []) {
+        const templateId = event.extendedProperties?.private?.cosaTemplateId
+        const dateStr = (event.start?.dateTime ?? event.start?.date ?? '').split('T')[0]
+        if (templateId && dateStr) calendarPresent.add(`${dateStr}::${templateId}`)
+      }
+
+      // Find tasks whose (date + templateId) key is missing from the live calendar
       const deletedTasks = []
-      for (const dayData of Object.values(weekPlan.days ?? {})) {
+      for (const [dayName, dayData] of Object.entries(weekPlan.days ?? {})) {
+        if (!remainingDays.includes(dayName)) continue
         for (const task of dayData?.tasks ?? []) {
-          if (task.gcalEventId && !currentEventIds.has(task.gcalEventId)) {
-            deletedTasks.push(task)
+          const key = `${dayData.date}::${task.templateId}`
+          if (!calendarPresent.has(key)) {
+            deletedTasks.push({ ...task, day: dayName })
           }
         }
       }
 
-      // Start from the current published plan for remaining days
+      // Start from the current published plan for remaining days, keeping only
+      // tasks that are still present in the calendar
       const hydratedDays = {}
       for (const day of remainingDays) {
         const existing = weekPlan.days?.[day] ?? { date: getDayDate(weekStart, day), tasks: [] }
-        // Keep tasks that still exist in calendar (or have no gcalEventId yet)
-        const survivingTasks = (existing.tasks ?? []).filter(
-          (t) => !t.gcalEventId || currentEventIds.has(t.gcalEventId)
-        )
+        const survivingTasks = (existing.tasks ?? []).filter((t) => {
+          const key = `${existing.date}::${t.templateId}`
+          return calendarPresent.has(key)
+        })
         hydratedDays[day] = { ...existing, tasks: survivingTasks }
       }
 
@@ -2016,24 +2027,30 @@ function App() {
 
     if (providerToken) {
       const today = new Date()
-      const todayIndex = today.getDay()
+      const todayDow = today.getDay() // 0=Sun
       const remainingDayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-        .filter((_, i) => i + 1 >= (todayIndex === 0 ? 7 : todayIndex))
+        .filter((_, i) => i + 1 >= (todayDow === 0 ? 7 : todayDow))
 
-      // Delete displaced events for remaining days (those without a gcalEventId yet)
-      for (const dayName of remainingDayNames) {
-        for (const task of weekPlan.days[dayName]?.tasks ?? []) {
-          if (task.gcalEventId) {
-            await fetch(
-              `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
-                'c_f733c89ebd8fa8294dfb9b29147e64acc78eae845b47ea1271ddb7844e191716@group.calendar.google.com',
-              )}/events/${task.gcalEventId}`,
-              {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${providerToken}` },
-              },
-            )
-          }
+      // Fetch live calendar events for remaining days and delete them all.
+      // This is more reliable than relying on stored gcalEventIds (which may be null after reload).
+      const weekStart = weekPlan.weekStartDate
+      const weekEnd = weekPlan.days?.['Friday']?.date ?? weekStart
+      const liveEvents = await fetchCoSACalendarEvents(
+        providerToken,
+        `${weekStart}T00:00:00Z`,
+        `${weekEnd}T23:59:59Z`,
+      )
+      const CALENDAR_ID = 'c_f733c89ebd8fa8294dfb9b29147e64acc78eae845b47ea1271ddb7844e191716@group.calendar.google.com'
+      for (const event of liveEvents ?? []) {
+        const eventDate = (event.start?.dateTime ?? event.start?.date ?? '').split('T')[0]
+        const isRemainingDay = remainingDayNames.some(
+          (d) => weekPlan.days?.[d]?.date === eventDate
+        )
+        if (isRemainingDay) {
+          await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CALENDAR_ID)}/events/${event.id}`,
+            { method: 'DELETE', headers: { Authorization: `Bearer ${providerToken}` } },
+          )
         }
       }
 
