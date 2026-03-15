@@ -529,7 +529,7 @@ const NAV_ITEMS = [
   { id: 'weekAhead', label: 'Week Ahead' },
   { id: 'kpi', label: 'KPI Dashboard' },
   { id: 'analytics', label: 'Analytics' },
-  { id: 'settings', label: 'Settings', icon: 'gear' },
+  { id: 'settings', label: 'Settings' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
@@ -5158,9 +5158,6 @@ function App() {
                       : 'text-slate-500 hover:bg-slate-100'
                   }`}
                 >
-                  {item.icon === 'gear'
-                    ? <Settings className="mx-auto mb-0.5 h-4 w-4" />
-                    : null}
                   {item.label}
                   {pendingCount > 0 ? (
                     <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
