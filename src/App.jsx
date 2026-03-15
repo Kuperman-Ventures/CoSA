@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Pause, Play, SquareCheck, StopCircle, GripVertical, Sparkles, AlertTriangle, Clock } from 'lucide-react'
+import { Pause, Play, SquareCheck, StopCircle, GripVertical, Sparkles, AlertTriangle, Clock, Settings, Eye, EyeOff } from 'lucide-react'
 import {
   DndContext,
   closestCenter,
@@ -38,6 +38,8 @@ import {
   loadQuickLogEntries,
   loadPendingProposals,
   updateProposalStatus,
+  saveApiKeyHash,
+  loadApiKeyHash,
 } from './lib/supabaseSync'
 import {
   createEventsForSnapshot,
@@ -526,6 +528,7 @@ const NAV_ITEMS = [
   { id: 'weekAhead', label: 'Week Ahead' },
   { id: 'kpi', label: 'KPI Dashboard' },
   { id: 'analytics', label: 'Analytics' },
+  { id: 'settings', label: 'Settings', icon: 'gear' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
@@ -994,6 +997,11 @@ function App() {
   const [pendingProposals, setPendingProposals] = useState([])
   // proposalId -> Record<actionIndex, 'approved' | 'rejected'>
   const [actionStatuses, setActionStatuses] = useState({})
+  const [apiKeyHash, setApiKeyHash] = useState(null)
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [apiKeyRevealed, setApiKeyRevealed] = useState(false)
+  const [apiKeySaving, setApiKeySaving] = useState(false)
+  const [apiKeyMessage, setApiKeyMessage] = useState('')
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1337,6 +1345,10 @@ function App() {
       // 8. Pending AI task proposals
       const proposals = await loadPendingProposals()
       setPendingProposals(proposals)
+
+      // 9. API key hash (for Settings Connected status)
+      const storedHash = await loadApiKeyHash(userId)
+      if (storedHash) setApiKeyHash(storedHash)
     }
 
     doSync()
@@ -1520,6 +1532,29 @@ function App() {
     await updateProposalStatus(proposalId, 'rejected')
     setPendingProposals((prev) => prev.filter((p) => p.id !== proposalId))
     setActionStatuses((prev) => { const next = { ...prev }; delete next[proposalId]; return next })
+  }
+
+  // ── Settings — AI Integration ─────────────────────────────────────────────
+
+  async function hashKey(key) {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(key)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  async function handleSaveApiKey() {
+    if (!apiKeyInput.trim() || !session?.user?.id) return
+    setApiKeySaving(true)
+    setApiKeyMessage('')
+    const hash = await hashKey(apiKeyInput.trim())
+    await saveApiKeyHash(hash, session.user.id)
+    setApiKeyHash(hash)
+    setApiKeyInput('')
+    setApiKeyRevealed(false)
+    setApiKeyMessage('API key saved successfully.')
+    setApiKeySaving(false)
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -3115,6 +3150,89 @@ function App() {
         </article>
       </section>
       </>
+    )
+  }
+
+  function renderSettingsScreen() {
+    const isConnected = Boolean(apiKeyHash)
+    const isSignedIn = Boolean(session?.user?.id)
+
+    return (
+      <section className="mx-auto max-w-2xl p-4 space-y-6">
+        <h2 className="text-base font-semibold text-slate-800">Settings</h2>
+
+        {/* ── AI Integration ───────────────────────────────────────────── */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h3 className="text-sm font-semibold text-slate-800">AI Integration</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Allow Claude to propose Task Library changes directly into CoSA.
+            </p>
+          </div>
+
+          <div className="space-y-4 px-5 py-4">
+            {/* Status indicator */}
+            <div className="flex items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-amber-400'}`}
+              />
+              <span className={`text-sm font-medium ${isConnected ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {isConnected ? 'Connected' : 'Not configured'}
+              </span>
+            </div>
+
+            {/* Key input */}
+            {isSignedIn ? (
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-slate-700" htmlFor="api-key-input">
+                  CoSA Proposal API Key
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      id="api-key-input"
+                      type={apiKeyRevealed ? 'text' : 'password'}
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder={isConnected ? 'Paste new key to replace…' : 'Paste your API key…'}
+                      className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-3 pr-9 text-sm outline-none ring-indigo-300 focus:ring-2"
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setApiKeyRevealed((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      aria-label={apiKeyRevealed ? 'Hide key' : 'Reveal key'}
+                    >
+                      {apiKeyRevealed
+                        ? <EyeOff className="h-4 w-4" />
+                        : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveApiKey}
+                    disabled={!apiKeyInput.trim() || apiKeySaving}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+                  >
+                    {apiKeySaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  This key allows Claude to submit Task Library proposals directly to CoSA.
+                  Generate a key in Vercel and paste it here once — it never needs to be shared in chat.
+                  The key is hashed before storage and never appears in the database in plaintext.
+                </p>
+                {apiKeyMessage ? (
+                  <p className="text-xs font-medium text-emerald-600">{apiKeyMessage}</p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">Sign in to configure AI integration.</p>
+            )}
+          </div>
+        </div>
+      </section>
     )
   }
 
@@ -4719,6 +4837,7 @@ function App() {
       {activeScreen === 'weekAhead' ? renderWeekAhead() : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
       {activeScreen === 'analytics' ? renderAnalyticsScreen() : null}
+      {activeScreen === 'settings' ? renderSettingsScreen() : null}
 
       {/* ── Floating Quick Log button ─────────────────────────────────── */}
       <button
@@ -4888,7 +5007,7 @@ function App() {
       )}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-        <ul className="mx-auto grid max-w-5xl grid-cols-6 gap-1 p-2 text-center text-xs sm:text-sm">
+        <ul className="mx-auto grid max-w-5xl grid-cols-7 gap-1 p-2 text-center text-xs sm:text-sm">
           {NAV_ITEMS.map((item) => {
             const pendingCount = item.id === 'reschedule'
               ? rescheduleQueue.filter((q) => q.status === 'pending').length
@@ -4906,6 +5025,9 @@ function App() {
                       : 'text-slate-500 hover:bg-slate-100'
                   }`}
                 >
+                  {item.icon === 'gear'
+                    ? <Settings className="mx-auto mb-0.5 h-4 w-4" />
+                    : null}
                   {item.label}
                   {pendingCount > 0 ? (
                     <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">

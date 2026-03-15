@@ -520,3 +520,36 @@ export async function updateProposalStatus(proposalId, status) {
     console.error('[updateProposalStatus]', err.message)
   }
 }
+
+// ─── AI Integration Settings ──────────────────────────────────────────────────
+
+export async function saveApiKeyHash(hash, userId) {
+  if (!supabase || !userId) return
+  try {
+    const { error } = await supabase
+      .from('user_preferences')
+      .upsert(
+        { user_id: userId, api_key_hash: hash, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' },
+      )
+    if (error) console.error('[saveApiKeyHash]', error.message)
+  } catch (err) {
+    console.error('[saveApiKeyHash]', err.message)
+  }
+}
+
+export async function loadApiKeyHash(userId) {
+  if (!supabase || !userId) return null
+  try {
+    const { data, error } = await supabase
+      .from('user_preferences')
+      .select('api_key_hash')
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (error) { console.error('[loadApiKeyHash]', error.message); return null }
+    return data?.api_key_hash ?? null
+  } catch (err) {
+    console.error('[loadApiKeyHash]', err.message)
+    return null
+  }
+}
