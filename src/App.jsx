@@ -753,6 +753,26 @@ function getTodayDateString() {
   return new Date().toISOString().slice(0, 10)
 }
 
+// Returns the logical "target" date for a deploy: today if it's a weekday, next Monday if weekend.
+function getDeployTargetDate() {
+  const d = new Date()
+  const day = d.getDay()
+  if (day === 0) d.setDate(d.getDate() + 1)       // Sunday → Monday
+  else if (day === 6) d.setDate(d.getDate() + 2)  // Saturday → Monday
+  return d.toISOString().slice(0, 10)
+}
+
+// Formats an ISO date string as "Monday, March 16"
+function formatQueueDate(isoDate) {
+  if (!isoDate) return ''
+  const [year, month, day] = isoDate.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
 function formatDate(isoDate) {
   if (!isoDate) return ''
   const [year, month, day] = isoDate.split('-')
@@ -942,6 +962,7 @@ function App() {
       lastDeploymentAt: persisted?.lastDeploymentAt ?? new Date().toISOString(),
       rescheduleQueue: Array.isArray(persisted?.rescheduleQueue) ? persisted.rescheduleQueue : [],
       deferredTasks: Array.isArray(persisted?.deferredTasks) ? persisted.deferredTasks : [],
+      queueDate: persisted?.queueDate ?? getDeployTargetDate(),
     }
   }, [])
 
@@ -961,6 +982,7 @@ function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [libraryMessage, setLibraryMessage] = useState('')
   const [lastDeploymentAt, setLastDeploymentAt] = useState(bootstrap.lastDeploymentAt)
+  const [queueDate, setQueueDate] = useState(bootstrap.queueDate)
   const [libraryFilter, setLibraryFilter] = useState('All')
   const [rescheduleQueue, setRescheduleQueue] = useState(bootstrap.rescheduleQueue)
   const [deferredTasks, setDeferredTasks] = useState(bootstrap.deferredTasks)
@@ -1167,6 +1189,13 @@ function App() {
     if (libraryFilter === 'All') return taskLibrary
     return taskLibrary.filter((task) => task.status === libraryFilter)
   }, [libraryFilter, taskLibrary])
+
+  // Set of library task IDs currently (or recently) deployed to the active queue.
+  // Resets automatically the day after the queue date passes.
+  const deployedTemplateIds = useMemo(() => {
+    if (!queueDate || queueDate < getTodayDateString()) return new Set()
+    return new Set(todayTasks.map((t) => t.templateId).filter(Boolean))
+  }, [todayTasks, queueDate])
   const libraryValidationMap = useMemo(
     () =>
       taskLibrary.reduce((acc, task) => {
@@ -1234,8 +1263,9 @@ function App() {
       lastDeploymentAt,
       rescheduleQueue,
       deferredTasks,
+      queueDate,
     })
-  }, [activeTaskId, deferredTasks, lastDeploymentAt, rescheduleQueue, sessions, taskLibrary, todayTasks])
+  }, [activeTaskId, deferredTasks, lastDeploymentAt, queueDate, rescheduleQueue, sessions, taskLibrary, todayTasks])
 
   useEffect(() => {
     saveCompletionLog(completionLog)
@@ -1277,40 +1307,63 @@ function App() {
       }
 
       } else {
-        // Check for 9am auto-population
-        const hour = new Date().getHours()
+        // Check for 9am auto-population — weekdays only (Mon–Fri)
+        const nowDate = new Date()
+        const weekday = nowDate.getDay() // 0=Sun, 6=Sat
+        const hour = nowDate.getHours()
         const lastAutoDate = window.localStorage.getItem('cosa.lastAutoDeployDate')
         const localCleared = JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]')
-        if (hour >= 9 && lastAutoDate !== todayStr && !localCleared.includes(todayStr)) {
-          const deployable = activeLibrary
-            .filter((t) => t.status === 'Active')
-            .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
-          const validDeployable = deployable.filter((t) => validateLibraryTask(t).length === 0)
-          if (validDeployable.length > 0) {
-            const deployId = Date.now()
-            let snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
+        if (
+          weekday >= 1 && weekday <= 5 &&
+          hour >= 9 &&
+          lastAutoDate !== todayStr &&
+          !localCleared.includes(todayStr)
+        ) {
+          // Guard: if a published/replanned Week Ahead plan has tasks for today,
+          // skip auto-deploy — it would create duplicate calendar events and
+          // overwrite the intentional task order from Week Ahead / Replan.
+          const thisWeekStart = getWeekStartDateStr()
+          const existingPlan = await loadCurrentWeekPlan(thisWeekStart, userId)
+          const planIsActive =
+            existingPlan?.status === 'published' || existingPlan?.status === 'replanned'
+          const todayDayName = DAY_NAMES[nowDate.getDay()]
+          const planHasTodayTasks =
+            planIsActive && (existingPlan?.days?.[todayDayName]?.tasks?.length ?? 0) > 0
+          if (planHasTodayTasks) {
+            // Week Ahead plan is live for today — leave Today queue to be deployed
+            // manually so the user's planned order and calendar events are preserved.
+          } else {
+            const deployable = activeLibrary
+              .filter((t) => t.status === 'Active')
+              .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
+            const validDeployable = deployable.filter((t) => validateLibraryTask(t).length === 0)
+            if (validDeployable.length > 0) {
+              const deployId = Date.now()
+              let snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
 
-            // Create calendar events for auto-deployed tasks
-            const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
-            if (providerToken) {
-              const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
-              if (Object.keys(eventIdMap).length > 0) {
-                snapshot = snapshot.map((t) => ({
-                  ...t,
-                  calendarEventId: eventIdMap[t.id] ?? null,
-                }))
+              // Create calendar events for auto-deployed tasks
+              const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
+              if (providerToken) {
+                const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
+                if (Object.keys(eventIdMap).length > 0) {
+                  snapshot = snapshot.map((t) => ({
+                    ...t,
+                    calendarEventId: eventIdMap[t.id] ?? null,
+                  }))
+                }
               }
-            }
 
-            setTodayTasks(snapshot)
-            setSessions(buildSessionsFromTodayTasks(snapshot))
-            setActiveTaskId(snapshot[0]?.id ?? null)
-            window.localStorage.setItem('cosa.lastAutoDeployDate', todayStr)
-            upsertTodayTasks(snapshot, userId, todayStr)
-            setStatusMessage("Today's tasks auto-deployed from your library.")
-          }
-        }
-      }
+              setTodayTasks(snapshot)
+              setSessions(buildSessionsFromTodayTasks(snapshot))
+              setActiveTaskId(snapshot[0]?.id ?? null)
+              setQueueDate(todayStr)
+              window.localStorage.setItem('cosa.lastAutoDeployDate', todayStr)
+              upsertTodayTasks(snapshot, userId, todayStr)
+              setStatusMessage("Today's tasks auto-deployed from your library.")
+            }
+          } // end if/else planHasTodayTasks
+        } // end if weekday + hour condition
+      } // end else (no remote today tasks)
 
       // 3. Timer sessions → completion log for KPI/analytics
       const remoteSessions = await loadTimerSessions(userId)
@@ -1609,13 +1662,13 @@ function App() {
       mapLibraryTaskToTodayTask(task, deploymentId, index),
     )
 
-    const todayStr = getTodayDateString()
+    const deployTargetDate = getDeployTargetDate()
 
     // Create Google Calendar events (if Calendar scope granted)
     let finalSnapshot = snapshot
     const providerToken = session?.provider_token
     if (providerToken) {
-      const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
+      const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, deployTargetDate)
       if (Object.keys(eventIdMap).length > 0) {
         finalSnapshot = snapshot.map((t) => ({
           ...t,
@@ -1632,16 +1685,17 @@ function App() {
     setOutcomeSelection(null)
     setStatusMessage('')
     setLastDeploymentAt(new Date().toISOString())
+    setQueueDate(deployTargetDate)
     setLibraryMessage(
       `Deployed ${finalSnapshot.length} Active task template(s) to Today.${providerToken ? ' Calendar events created.' : ''} Paused (${pausedCount}) and Archived (${archivedCount}) tasks were excluded.`,
     )
     if (supabaseConfigured && session?.user?.id) {
-      upsertTodayTasks(finalSnapshot, session.user.id, todayStr)
+      upsertTodayTasks(finalSnapshot, session.user.id, deployTargetDate)
     }
 
     // If this date was manually cleared, un-clear it — intent has changed
-    if (clearedDates.includes(todayStr)) {
-      const next = clearedDates.filter((d) => d !== todayStr)
+    if (clearedDates.includes(deployTargetDate)) {
+      const next = clearedDates.filter((d) => d !== deployTargetDate)
       setClearedDates(next)
       window.localStorage.setItem('cosa.clearedDates', JSON.stringify(next))
       if (session?.user?.id) upsertUserPreferences({ cleared_dates: next }, session.user.id)
@@ -2836,6 +2890,7 @@ function App() {
             {filteredTaskLibrary.map((task) => {
               const selected = task.id === effectiveSelectedLibraryTaskId
               const meta = getTrackMeta(task.track)
+              const isDeployed = deployedTemplateIds.has(task.id)
               return (
                 <li key={task.id}>
                   <button
@@ -2847,12 +2902,23 @@ function App() {
                     className={`w-full rounded-md border px-2 py-2 text-left text-sm ${
                       selected
                         ? 'border-slate-900 bg-slate-900 text-white'
-                        : 'border-slate-200 bg-white hover:bg-slate-50'
+                        : isDeployed
+                          ? 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
+                          : 'border-slate-200 bg-white hover:bg-slate-50'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span>{task.name}</span>
-                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta?.color }} />
+                      <span className="min-w-0 truncate">{task.name}</span>
+                      <div className="flex flex-shrink-0 items-center gap-1.5">
+                        {isDeployed ? (
+                          <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                            selected ? 'bg-emerald-500 text-white' : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            In Today
+                          </span>
+                        ) : null}
+                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta?.color }} />
+                      </div>
                     </div>
                     <div className="mt-1 flex items-center justify-between text-xs opacity-80">
                       <span>{task.status}</span>
@@ -4494,7 +4560,12 @@ function App() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <img src="/logo.png" alt="CoSA" className="h-10 w-auto" />
-            <p className="text-sm text-slate-600">{activeScreenLabel}</p>
+            <div>
+              <p className="text-sm text-slate-600">{activeScreenLabel}</p>
+              {activeScreen === 'today' && todayTasks.length > 0 && queueDate ? (
+                <p className="text-xs font-medium text-slate-500">{formatQueueDate(queueDate)}</p>
+              ) : null}
+            </div>
           </div>
           <div className="flex items-center gap-2 text-xs sm:text-sm">
             {session?.provider_token ? (
@@ -4789,7 +4860,7 @@ function App() {
               </button>
             </div>
             <p className="mb-2 text-xs text-slate-500">
-              Snapshot deployed: {new Date(lastDeploymentAt).toLocaleString()}
+              {queueDate ? `Queue for: ${formatQueueDate(queueDate)}` : `Deployed: ${new Date(lastDeploymentAt).toLocaleDateString()}`}
             </p>
             {tasksByBlock.map((group) => (
               <div key={group.timeBlock} className="mb-3">
