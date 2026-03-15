@@ -129,6 +129,30 @@ export async function upsertTodayTasks(tasks, userId, date) {
   }
 }
 
+/**
+ * Replace all today tasks for a given date with a fresh set.
+ * Used when a Week Ahead plan is published or replanned so the Today queue
+ * stays in sync with the plan without leaving stale rows from prior deploys.
+ */
+export async function replaceTodayTasks(tasks, userId, date) {
+  if (!supabase || !userId || !tasks.length) return
+  try {
+    const { error: delError } = await supabase
+      .from('today_task_instances')
+      .delete()
+      .eq('user_id', userId)
+      .eq('scheduled_for_date', date)
+    if (delError) { console.error('[replaceTodayTasks:delete]', delError.message); return }
+    const rows = tasks.map((t, i) => todayTaskToRow(t, userId, date, i))
+    const { error } = await supabase
+      .from('today_task_instances')
+      .insert(rows)
+    if (error) console.error('[replaceTodayTasks:insert]', error.message)
+  } catch (err) {
+    console.error('[replaceTodayTasks]', err.message)
+  }
+}
+
 export async function loadTodayTasks(userId, date) {
   if (!supabase || !userId) return null
   try {

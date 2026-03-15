@@ -21,6 +21,7 @@ import {
   upsertTaskTemplates,
   loadTaskTemplates,
   upsertTodayTasks,
+  replaceTodayTasks,
   loadTodayTasks,
   upsertTimerSession,
   loadTimerSessions,
@@ -813,6 +814,30 @@ function mapLibraryTaskToTodayTask(task, deploymentId, index) {
   }
 }
 
+// Maps a Week Ahead plan task → today_task_instance shape.
+// Plan estimates win; library fills in subtasks, completion type, and other metadata.
+function planTaskToTodayTask(planTask, library, dayName, planId, index) {
+  const libTask = library.find((t) => t.id === planTask.templateId)
+  const subtasks = libTask?.subtasks
+    ? libTask.subtasks.split('\n').map((s) => s.trim()).filter(Boolean)
+    : []
+  return {
+    id: `today-plan-${planId ?? 'x'}-${dayName}-${index}`,
+    templateId: planTask.templateId ?? null,
+    name: planTask.name ?? '',
+    track: planTask.track ?? 'advisors',
+    timeBlock: planTask.timeBlock ?? 'BD',
+    estimateMinutes: planTask.estimateMinutes ?? libTask?.defaultTimeEstimate ?? 25,
+    completionType: libTask?.completionType ?? 'Done',
+    outcomePrompt: libTask?.outcomePrompt ?? '',
+    requiresDefinitionOfDone: Boolean(libTask?.requiresDefinitionOfDone),
+    subtasks,
+    kpiMapping: planTask.kpiMapping ?? libTask?.kpiMapping ?? '',
+    frequency: libTask?.frequency ?? 'Weekly',
+    calendarEventId: planTask.gcalEventId ?? null,
+  }
+}
+
 function buildSessionsFromTodayTasks(tasks) {
   return tasks.reduce((acc, task) => {
     acc[task.id] = getInitialSession(task)
@@ -1276,6 +1301,8 @@ function App() {
     if (!supabaseConfigured || !supabase || !session?.user?.id) return
     const userId = session.user.id
     const todayStr = getTodayDateString()
+    // On weekends, load the next Monday's queue so pre-deployed Week Ahead tasks show up.
+    const targetStr = getDeployTargetDate()
 
     const doSync = async () => {
       // 1. Task library
@@ -1288,10 +1315,11 @@ function App() {
         upsertTaskTemplates(taskLibrary, userId)
       }
 
-      // 2. Today tasks
-      const remoteTodayTasks = await loadTodayTasks(userId, todayStr)
+      // 2. Today tasks — load for the deploy target date (next weekday on weekends)
+      const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
       if (remoteTodayTasks && remoteTodayTasks.length > 0) {
         setTodayTasks(remoteTodayTasks)
+        setQueueDate(targetStr)
         setSessions((prev) => {
           const next = { ...prev }
           remoteTodayTasks.forEach((task) => {
@@ -2220,6 +2248,21 @@ function App() {
       }
     }
 
+    // Sync each day's plan tasks into today_task_instances so the Today queue
+    // reflects the Week Ahead plan (with Replan-adjusted estimates) when each day arrives.
+    // Only write future dates — past days are historical and should not be overwritten.
+    if (session?.user?.id) {
+      const todayStr = getTodayDateString()
+      for (const [dayName, dayData] of Object.entries(updatedDays)) {
+        if (!dayData?.date || !dayData.tasks?.length) continue
+        if (dayData.date < todayStr) continue  // skip past days
+        const snapshot = dayData.tasks.map((planTask, index) =>
+          planTaskToTodayTask(planTask, taskLibrary, dayName, publishedPlan.id, index)
+        )
+        replaceTodayTasks(snapshot, session.user.id, dayData.date)
+      }
+    }
+
     setWeekPlan(publishedPlan)
     setWeekPlanMessage(
       providerToken ? 'Plan published to Google Calendar.' : 'Plan saved. Enable calendar sync to publish events.',
@@ -2460,6 +2503,20 @@ function App() {
       } else {
         const newId = await upsertWeeklyPlan(appliedPlan, weekPlan.weekStartDate, session.user.id)
         appliedPlan.id = newId
+      }
+    }
+
+    // Sync updated plan days into today_task_instances so Today queue reflects replan changes.
+    // Only write future dates — past days are historical.
+    if (session?.user?.id) {
+      const todayStr = getTodayDateString()
+      for (const [dayName, dayData] of Object.entries(finalDays)) {
+        if (!dayData?.date || !dayData.tasks?.length) continue
+        if (dayData.date < todayStr) continue  // skip past days
+        const snapshot = dayData.tasks.map((planTask, index) =>
+          planTaskToTodayTask(planTask, taskLibrary, dayName, appliedPlan.id, index)
+        )
+        replaceTodayTasks(snapshot, session.user.id, dayData.date)
       }
     }
 
