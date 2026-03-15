@@ -1315,52 +1315,84 @@ function App() {
         upsertTaskTemplates(taskLibrary, userId)
       }
 
-      // 2. Today tasks — load for the deploy target date (next weekday on weekends)
-      const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
-      if (remoteTodayTasks && remoteTodayTasks.length > 0) {
-        setTodayTasks(remoteTodayTasks)
-        setQueueDate(targetStr)
-        setSessions((prev) => {
-          const next = { ...prev }
-          remoteTodayTasks.forEach((task) => {
-            if (!next[task.id]) next[task.id] = getInitialSession(task)
-          })
-          return next
-        })
-      // Load user preferences (cleared dates)
-      const prefs = await loadUserPreferences(userId)
-      if (prefs?.cleared_dates) {
-        setClearedDates(prefs.cleared_dates)
-        window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
-      }
+      // 2. Weekly plan — load first so it can take priority over today_task_instances
+      //    when the plan is published/replanned and covers the target date.
+      const nowForPlan = new Date()
+      const isWeekend = nowForPlan.getDay() === 0 || nowForPlan.getDay() === 6
+      const planWeekStart = isWeekend || nowForPlan.getDay() === 5
+        ? getNextMondayStr()
+        : getWeekStartDateStr()
+      const loadedPlan = await loadCurrentWeekPlan(planWeekStart, userId)
+      if (loadedPlan) setWeekPlan(loadedPlan)
 
+      const planIsActive =
+        loadedPlan?.status === 'published' || loadedPlan?.status === 'replanned'
+      const targetDayName = DAY_NAMES[new Date(targetStr + 'T12:00:00').getDay()]
+      const planDayData  = planIsActive ? (loadedPlan?.days?.[targetDayName] ?? null) : null
+      const planHasTargetTasks = (planDayData?.tasks?.length ?? 0) > 0
+
+      // 3. Today tasks
+      //
+      //    WEEKEND (targetStr > todayStr): plan is always authoritative — sync plan
+      //    tasks into today_task_instances and load them. This fixes stale library
+      //    tasks that may have been written before the plan was published.
+      //
+      //    WEEKDAY (targetStr === todayStr): load today_task_instances first to
+      //    preserve any in-progress work; fall back to plan if table is empty;
+      //    fall back to 9am auto-deploy if no plan.
+
+      if (planHasTargetTasks && targetStr > todayStr) {
+        // Weekend → next weekday: plan wins, always.
+        const planSnapshot = planDayData.tasks.map((planTask, index) =>
+          planTaskToTodayTask(planTask, activeLibrary, targetDayName, loadedPlan.id, index)
+        )
+        await replaceTodayTasks(planSnapshot, userId, targetStr)
+        setTodayTasks(planSnapshot)
+        setQueueDate(targetStr)
+        setSessions(buildSessionsFromTodayTasks(planSnapshot))
+        setActiveTaskId(planSnapshot[0]?.id ?? null)
       } else {
-        // Check for 9am auto-population — weekdays only (Mon–Fri)
-        const nowDate = new Date()
-        const weekday = nowDate.getDay() // 0=Sun, 6=Sat
-        const hour = nowDate.getHours()
-        const lastAutoDate = window.localStorage.getItem('cosa.lastAutoDeployDate')
-        const localCleared = JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]')
-        if (
-          weekday >= 1 && weekday <= 5 &&
-          hour >= 9 &&
-          lastAutoDate !== todayStr &&
-          !localCleared.includes(todayStr)
-        ) {
-          // Guard: if a published/replanned Week Ahead plan has tasks for today,
-          // skip auto-deploy — it would create duplicate calendar events and
-          // overwrite the intentional task order from Week Ahead / Replan.
-          const thisWeekStart = getWeekStartDateStr()
-          const existingPlan = await loadCurrentWeekPlan(thisWeekStart, userId)
-          const planIsActive =
-            existingPlan?.status === 'published' || existingPlan?.status === 'replanned'
-          const todayDayName = DAY_NAMES[nowDate.getDay()]
-          const planHasTodayTasks =
-            planIsActive && (existingPlan?.days?.[todayDayName]?.tasks?.length ?? 0) > 0
-          if (planHasTodayTasks) {
-            // Week Ahead plan is live for today — leave Today queue to be deployed
-            // manually so the user's planned order and calendar events are preserved.
-          } else {
+        // Weekday path: check today_task_instances first
+        const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
+        if (remoteTodayTasks && remoteTodayTasks.length > 0) {
+          setTodayTasks(remoteTodayTasks)
+          setQueueDate(targetStr)
+          setSessions((prev) => {
+            const next = { ...prev }
+            remoteTodayTasks.forEach((task) => {
+              if (!next[task.id]) next[task.id] = getInitialSession(task)
+            })
+            return next
+          })
+          // Load user preferences (cleared dates)
+          const prefs = await loadUserPreferences(userId)
+          if (prefs?.cleared_dates) {
+            setClearedDates(prefs.cleared_dates)
+            window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
+          }
+        } else if (planHasTargetTasks) {
+          // No today_task_instances yet — seed from plan
+          const planSnapshot = planDayData.tasks.map((planTask, index) =>
+            planTaskToTodayTask(planTask, activeLibrary, targetDayName, loadedPlan.id, index)
+          )
+          await replaceTodayTasks(planSnapshot, userId, targetStr)
+          setTodayTasks(planSnapshot)
+          setQueueDate(targetStr)
+          setSessions(buildSessionsFromTodayTasks(planSnapshot))
+          setActiveTaskId(planSnapshot[0]?.id ?? null)
+        } else {
+          // No plan and no existing tasks — check for 9am auto-population (weekdays only)
+          const nowDate = new Date()
+          const weekday = nowDate.getDay() // 0=Sun, 6=Sat
+          const hour = nowDate.getHours()
+          const lastAutoDate = window.localStorage.getItem('cosa.lastAutoDeployDate')
+          const localCleared = JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]')
+          if (
+            weekday >= 1 && weekday <= 5 &&
+            hour >= 9 &&
+            lastAutoDate !== todayStr &&
+            !localCleared.includes(todayStr)
+          ) {
             const deployable = activeLibrary
               .filter((t) => t.status === 'Active')
               .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
@@ -1389,34 +1421,27 @@ function App() {
               upsertTodayTasks(snapshot, userId, todayStr)
               setStatusMessage("Today's tasks auto-deployed from your library.")
             }
-          } // end if/else planHasTodayTasks
-        } // end if weekday + hour condition
-      } // end else (no remote today tasks)
+          }
+        }
+      }
 
-      // 3. Timer sessions → completion log for KPI/analytics
+      // 4. Timer sessions → completion log for KPI/analytics
       const remoteSessions = await loadTimerSessions(userId)
       if (remoteSessions && remoteSessions.length > 0) {
         setCompletionLog(remoteSessions)
       }
 
-      // 4. Reschedule queue
+      // 5. Reschedule queue
       const remoteQueue = await loadRescheduleQueue(userId)
       if (remoteQueue && remoteQueue.length > 0) {
         setRescheduleQueue(remoteQueue)
       }
 
-      // 5. Friday reviews
+      // 6. Friday reviews
       const reviews = await loadFridayReviews(userId)
       setFridayReviews(reviews)
 
-      // 6. Weekly plan — load for current week or next week
-      const today = new Date()
-      const isWeekend = today.getDay() === 0 || today.getDay() === 6
-      const planWeekStart = isWeekend || today.getDay() === 5
-        ? getNextMondayStr()
-        : getWeekStartDateStr()
-      const existingPlan = await loadCurrentWeekPlan(planWeekStart, userId)
-      if (existingPlan) setWeekPlan(existingPlan)
+      // Weekly plan already loaded in step 2 above — no re-fetch needed.
 
       // 7. Quick log entries for this week (for Analytics display)
       const { start: qlStart, end: qlEnd } = getWeekBounds(0)
@@ -4620,7 +4645,11 @@ function App() {
             <div>
               <p className="text-sm text-slate-600">{activeScreenLabel}</p>
               {activeScreen === 'today' && todayTasks.length > 0 && queueDate ? (
-                <p className="text-xs font-medium text-slate-500">{formatQueueDate(queueDate)}</p>
+                <p className="text-xs font-medium text-slate-500">
+                  {queueDate > getTodayDateString()
+                    ? `Tomorrow's Queue — ${formatQueueDate(queueDate)}`
+                    : formatQueueDate(queueDate)}
+                </p>
               ) : null}
             </div>
           </div>
