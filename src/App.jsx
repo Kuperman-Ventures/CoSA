@@ -4630,9 +4630,14 @@ function App() {
                 📅 Calendar sync on
               </span>
             ) : supabaseConfigured && session ? (
-              <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">
-                Calendar sync off
-              </span>
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="rounded-md bg-amber-50 px-2 py-1 text-amber-700 hover:bg-amber-100"
+                title="Click to reconnect Google Calendar"
+              >
+                📅 Reconnect Calendar
+              </button>
             ) : null}
             {supabaseConfigured && session?.user?.email ? (
               <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">{session.user.email}</span>
