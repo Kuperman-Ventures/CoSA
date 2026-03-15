@@ -36,6 +36,8 @@ import {
   upsertUserPreferences,
   upsertQuickLogEntry,
   loadQuickLogEntries,
+  loadPendingProposals,
+  updateProposalStatus,
 } from './lib/supabaseSync'
 import {
   createEventsForSnapshot,
@@ -989,6 +991,9 @@ function App() {
   const [showClearDayModal, setShowClearDayModal] = useState(false)
   const [clearFrom, setClearFrom] = useState(getTodayDateString())
   const [clearTo, setClearTo] = useState(getTodayDateString())
+  const [pendingProposals, setPendingProposals] = useState([])
+  // proposalId -> Record<actionIndex, 'approved' | 'rejected'>
+  const [actionStatuses, setActionStatuses] = useState({})
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1328,11 +1333,25 @@ function App() {
       const { start: qlStart, end: qlEnd } = getWeekBounds(0)
       const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
       if (qlEntries.length > 0) setQuickLogEntries(qlEntries)
+
+      // 8. Pending AI task proposals
+      const proposals = await loadPendingProposals()
+      setPendingProposals(proposals)
     }
 
     doSync()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id, supabaseConfigured])
+
+  // ── Poll for new AI task proposals every 60 seconds while signed in ─────────
+  useEffect(() => {
+    if (!supabaseConfigured || !supabase || !session?.user?.id) return
+    const interval = setInterval(async () => {
+      const proposals = await loadPendingProposals()
+      setPendingProposals(proposals)
+    }, 60_000)
+    return () => clearInterval(interval)
+  }, [session, supabaseConfigured])
 
   // ── Sync task library edits to Supabase (debounced 500ms) ────────────────
   useEffect(() => {
@@ -1363,6 +1382,147 @@ function App() {
     )
     setLibraryMessage('Saved to Task Library template. Changes apply to future deployments only.')
   }
+
+  // ── AI Task Proposal handlers ─────────────────────────────────────────────
+
+  function applyProposalAction(library, action) {
+    const { taskData } = action
+    switch (action.action) {
+      case 'add': {
+        const newTask = {
+          id: taskData.id ?? `lib-${Date.now()}`,
+          name: taskData.name ?? '',
+          track: taskData.track ?? 'advisors',
+          timeBlock: taskData.timeBlock ?? 'BD',
+          defaultTimeEstimate: taskData.defaultTimeEstimate ?? 25,
+          frequency: taskData.frequency ?? 'Weekly',
+          completionType: taskData.completionType ?? 'Done',
+          kpiMapping: taskData.kpiMapping ?? '',
+          subtasks: taskData.subtasks ?? '',
+          outcomePrompt: taskData.outcomePrompt ?? '',
+          status: taskData.status ?? 'Active',
+          requiresDefinitionOfDone: Boolean(taskData.requiresDefinitionOfDone),
+          daysOfWeek: taskData.daysOfWeek ?? ALL_WEEKDAYS,
+        }
+        return [...library, newTask]
+      }
+      case 'modify': {
+        return library.map((t) =>
+          t.id === taskData.taskId ? { ...t, ...taskData } : t,
+        )
+      }
+      case 'pause': {
+        return library.map((t) =>
+          t.id === taskData.taskId ? { ...t, status: 'Paused' } : t,
+        )
+      }
+      case 'activate': {
+        return library.map((t) =>
+          t.id === taskData.taskId ? { ...t, status: 'Active' } : t,
+        )
+      }
+      case 'reorder': {
+        return library.map((t) =>
+          t.id === taskData.taskId ? { ...t, daysOfWeek: taskData.daysOfWeek } : t,
+        )
+      }
+      default:
+        return library
+    }
+  }
+
+  async function handleApproveAction(proposal, actionIndex) {
+    const individualAction = proposal.proposal_data.proposals[actionIndex]
+    if (!individualAction) return
+
+    // Validate 'add' proposals before applying
+    if (individualAction.action === 'add') {
+      const errors = validateLibraryTask({
+        ...individualAction.taskData,
+        defaultTimeEstimate: individualAction.taskData.defaultTimeEstimate ?? 0,
+      })
+      if (errors.length > 0) {
+        setActionStatuses((prev) => ({
+          ...prev,
+          [proposal.id]: {
+            ...(prev[proposal.id] ?? {}),
+            [actionIndex]: `error:${errors.join(' ')}`,
+          },
+        }))
+        return
+      }
+    }
+
+    // Apply the action
+    setTaskLibrary((prev) => {
+      const updated = applyProposalAction(prev, individualAction)
+      if (supabaseConfigured && session?.user?.id) {
+        upsertTaskTemplates(updated, session.user.id)
+      }
+      return updated
+    })
+
+    // Mark this action as approved
+    const totalActions = proposal.proposal_data.proposals.length
+    const prevStatuses = actionStatuses[proposal.id] ?? {}
+    const updatedStatuses = { ...prevStatuses, [actionIndex]: 'approved' }
+    const resolvedCount = Object.keys(updatedStatuses).filter(
+      (k) => updatedStatuses[k] === 'approved' || updatedStatuses[k] === 'rejected',
+    ).length
+
+    setActionStatuses((prev) => ({
+      ...prev,
+      [proposal.id]: updatedStatuses,
+    }))
+
+    if (resolvedCount >= totalActions) {
+      await updateProposalStatus(proposal.id, 'approved')
+      setPendingProposals((prev) => prev.filter((p) => p.id !== proposal.id))
+      setActionStatuses((prev) => { const next = { ...prev }; delete next[proposal.id]; return next })
+    }
+  }
+
+  async function handleRejectAction(proposal, actionIndex) {
+    const totalActions = proposal.proposal_data.proposals.length
+    const prevStatuses = actionStatuses[proposal.id] ?? {}
+    const updatedStatuses = { ...prevStatuses, [actionIndex]: 'rejected' }
+    const resolvedCount = Object.keys(updatedStatuses).filter(
+      (k) => updatedStatuses[k] === 'approved' || updatedStatuses[k] === 'rejected',
+    ).length
+
+    setActionStatuses((prev) => ({
+      ...prev,
+      [proposal.id]: updatedStatuses,
+    }))
+
+    if (resolvedCount >= totalActions) {
+      await updateProposalStatus(proposal.id, 'rejected')
+      setPendingProposals((prev) => prev.filter((p) => p.id !== proposal.id))
+      setActionStatuses((prev) => { const next = { ...prev }; delete next[proposal.id]; return next })
+    }
+  }
+
+  async function handleApproveAllProposals(proposal) {
+    let updatedLibrary = taskLibrary
+    for (const action of proposal.proposal_data.proposals) {
+      updatedLibrary = applyProposalAction(updatedLibrary, action)
+    }
+    setTaskLibrary(updatedLibrary)
+    if (supabaseConfigured && session?.user?.id) {
+      upsertTaskTemplates(updatedLibrary, session.user.id)
+    }
+    await updateProposalStatus(proposal.id, 'approved')
+    setPendingProposals((prev) => prev.filter((p) => p.id !== proposal.id))
+    setActionStatuses((prev) => { const next = { ...prev }; delete next[proposal.id]; return next })
+  }
+
+  async function handleRejectProposalBatch(proposalId) {
+    await updateProposalStatus(proposalId, 'rejected')
+    setPendingProposals((prev) => prev.filter((p) => p.id !== proposalId))
+    setActionStatuses((prev) => { const next = { ...prev }; delete next[proposalId]; return next })
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   function createLibraryTask() {
     const nextId = `lib-${Date.now()}`
@@ -2394,8 +2554,210 @@ function App() {
   const definitionWords = wordsCount(definitionInput)
   const activeScreenLabel = NAV_ITEMS.find((item) => item.id === activeScreen)?.label ?? 'Today'
 
+  function renderProposalsPanel() {
+    if (pendingProposals.length === 0) return null
+
+    const ACTION_LABELS = {
+      add: 'Add',
+      modify: 'Modify',
+      pause: 'Pause',
+      activate: 'Activate',
+      reorder: 'Reorder',
+    }
+    const ACTION_COLORS = {
+      add: 'bg-emerald-100 text-emerald-800',
+      modify: 'bg-blue-100 text-blue-800',
+      pause: 'bg-amber-100 text-amber-800',
+      activate: 'bg-indigo-100 text-indigo-800',
+      reorder: 'bg-slate-100 text-slate-700',
+    }
+
+    return (
+      <div className="mx-4 mt-4 space-y-4">
+        {pendingProposals.map((proposal) => {
+          const { proposals: actions, sessionContext } = proposal.proposal_data ?? {}
+          const statuses = actionStatuses[proposal.id] ?? {}
+          const unresolved = (actions ?? []).filter(
+            (_, i) => statuses[i] !== 'approved' && statuses[i] !== 'rejected' && !String(statuses[i] ?? '').startsWith('error:'),
+          )
+
+          return (
+            <div key={proposal.id} className="rounded-xl border-l-4 border-indigo-500 bg-white shadow-sm">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    Proposals from Claude
+                    <span className="ml-2 rounded-full bg-indigo-600 px-2 py-0.5 text-[11px] font-bold text-white">
+                      {unresolved.length} pending
+                    </span>
+                  </p>
+                  {sessionContext ? (
+                    <p className="mt-0.5 text-xs text-slate-500">{sessionContext}</p>
+                  ) : null}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleApproveAllProposals(proposal)}
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Approve All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRejectProposalBatch(proposal.id)}
+                    className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-100"
+                  >
+                    Reject All
+                  </button>
+                </div>
+              </div>
+
+              {/* Action cards */}
+              <ul className="divide-y divide-slate-100">
+                {(actions ?? []).map((action, i) => {
+                  const status = statuses[i]
+                  const isError = String(status ?? '').startsWith('error:')
+                  const errorMsg = isError ? String(status).slice(6) : ''
+                  const isDone = status === 'approved' || status === 'rejected'
+                  const track = action.taskData?.track
+                  const trackMeta = track ? getTrackMeta(track) : null
+
+                  return (
+                    <li key={i} className={`px-4 py-3 ${isDone ? 'opacity-40' : ''}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          {/* Action badge + task name */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ACTION_COLORS[action.action] ?? 'bg-slate-100 text-slate-700'}`}>
+                              {ACTION_LABELS[action.action] ?? action.action}
+                            </span>
+                            {trackMeta ? (
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: trackMeta.color }}
+                              />
+                            ) : null}
+                            <span className="truncate text-sm font-medium text-slate-900">
+                              {action.taskData?.name ?? action.taskData?.taskId ?? '—'}
+                            </span>
+                          </div>
+
+                          {/* Rationale */}
+                          {action.rationale ? (
+                            <p className="mt-1 text-xs text-slate-500">{action.rationale}</p>
+                          ) : null}
+
+                          {/* Add card details */}
+                          {action.action === 'add' && action.taskData ? (
+                            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-slate-600 sm:grid-cols-4">
+                              <span><span className="font-medium">Track:</span> {trackMeta?.label ?? action.taskData.track}</span>
+                              <span><span className="font-medium">Block:</span> {action.taskData.timeBlock}</span>
+                              <span><span className="font-medium">Days:</span> {(action.taskData.daysOfWeek ?? []).join(', ')}</span>
+                              <span><span className="font-medium">Est:</span> {action.taskData.defaultTimeEstimate}m</span>
+                              {action.taskData.subtasks ? (
+                                <span className="col-span-2 sm:col-span-4">
+                                  <span className="font-medium">Subtasks:</span>{' '}
+                                  {action.taskData.subtasks.split('\n').filter(Boolean).join(' · ')}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {/* Modify card: show changed fields */}
+                          {action.action === 'modify' && action.taskData ? (
+                            <div className="mt-1 text-xs text-slate-500">
+                              {Object.entries(action.taskData)
+                                .filter(([k]) => k !== 'taskId')
+                                .map(([k, v]) => {
+                                  const existing = taskLibrary.find((t) => t.id === action.taskData.taskId)
+                                  const before = existing ? existing[k] : '—'
+                                  return (
+                                    <span key={k} className="mr-3">
+                                      <span className="font-medium">{k}:</span>{' '}
+                                      <span className="line-through text-rose-400">{String(before)}</span>
+                                      {' → '}
+                                      <span className="text-emerald-600">{String(v)}</span>
+                                    </span>
+                                  )
+                                })}
+                            </div>
+                          ) : null}
+
+                          {/* Pause/Activate card */}
+                          {(action.action === 'pause' || action.action === 'activate') ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                              Status:{' '}
+                              <span className="font-medium text-slate-700">
+                                {action.action === 'pause' ? 'Active → Paused' : 'Paused → Active'}
+                              </span>
+                            </p>
+                          ) : null}
+
+                          {/* Reorder card */}
+                          {action.action === 'reorder' && action.taskData?.daysOfWeek ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                              New days: <span className="font-medium text-slate-700">{action.taskData.daysOfWeek.join(', ')}</span>
+                            </p>
+                          ) : null}
+
+                          {/* Validation error */}
+                          {isError ? (
+                            <p className="mt-1 text-xs font-medium text-rose-600">{errorMsg}</p>
+                          ) : null}
+
+                          {/* Resolved status */}
+                          {isDone ? (
+                            <p className={`mt-1 text-xs font-semibold ${status === 'approved' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                              {status === 'approved' ? '✓ Approved' : '✕ Rejected'}
+                            </p>
+                          ) : null}
+                        </div>
+
+                        {/* Approve / Reject buttons */}
+                        {!isDone && !isError ? (
+                          <div className="flex shrink-0 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleApproveAction(proposal, i)}
+                              className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectAction(proposal, i)}
+                              className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : isError ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRejectAction(proposal, i)}
+                            className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                          >
+                            Dismiss
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   function renderTaskLibrary() {
     return (
+      <>
+      {renderProposalsPanel()}
       <section className="grid gap-4 p-4 lg:grid-cols-[340px_1fr]">
         <aside className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 space-y-2">
@@ -2752,6 +3114,7 @@ function App() {
           ) : null}
         </article>
       </section>
+      </>
     )
   }
 
@@ -4529,7 +4892,9 @@ function App() {
           {NAV_ITEMS.map((item) => {
             const pendingCount = item.id === 'reschedule'
               ? rescheduleQueue.filter((q) => q.status === 'pending').length
-              : 0
+              : item.id === 'taskLibrary'
+                ? pendingProposals.length
+                : 0
             return (
               <li key={item.id}>
                 <button

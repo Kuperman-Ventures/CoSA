@@ -489,3 +489,34 @@ export async function upsertUserPreferences(prefs, userId) {
     console.error('[upsertUserPreferences]', err.message)
   }
 }
+
+// ─── AI Task Proposals ────────────────────────────────────────────────────────
+
+export async function loadPendingProposals() {
+  if (!supabase) return []
+  try {
+    const { data, error } = await supabase
+      .from('ai_task_proposals')
+      .select('*')
+      .eq('status', 'pending')
+      .order('proposed_at', { ascending: true })
+    if (error) { console.error('[loadPendingProposals]', error.message); return [] }
+    return data ?? []
+  } catch (err) {
+    console.error('[loadPendingProposals]', err.message)
+    return []
+  }
+}
+
+export async function updateProposalStatus(proposalId, status) {
+  if (!supabase) return
+  try {
+    const { error } = await supabase
+      .from('ai_task_proposals')
+      .update({ status, reviewed_at: new Date().toISOString() })
+      .eq('id', proposalId)
+    if (error) console.error('[updateProposalStatus]', error.message)
+  } catch (err) {
+    console.error('[updateProposalStatus]', err.message)
+  }
+}
