@@ -270,7 +270,7 @@ export default function WeekPlanner({
   const [flags, setFlags] = useState([])
   const [activeDragTask, setActiveDragTask] = useState(null)
   const [rejectedId, setRejectedId] = useState(null)
-  const [expandedSubTracks, setExpandedSubTracks] = useState({})
+  const [expandedSubTracks, setExpandedSubTracks] = useState({ advisors: true, jobSearch: true, ventures: true })
   const [collapsedTracks, setCollapsedTracks] = useState({})
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -599,19 +599,23 @@ export default function WeekPlanner({
       }
 
       // ── Build two lookup maps from fetched events ──────────────────────────
-      // 1. gcalEventId → { date }  — used for instances that have a stored gcalEventId
-      // 2. templateId  → [{ gcalEventId, date }] — fallback for older plan entries
-      const byGcalId = {}     // gcalEventId → { date }
-      const byTemplateId = {} // templateId  → [{ gcalEventId, date }]
+      // 1. gcalEventId → { date, durationMin }
+      // 2. templateId  → [{ gcalEventId, date, durationMin }]
+      const byGcalId = {}
+      const byTemplateId = {}
 
       for (const ev of calEvents) {
         const evDate = ev.start?.dateTime?.slice(0, 10) ?? ev.start?.date
         if (!evDate) continue
-        byGcalId[ev.id] = { date: evDate }
+        const durationMin =
+          ev.start?.dateTime && ev.end?.dateTime
+            ? Math.round((new Date(ev.end.dateTime) - new Date(ev.start.dateTime)) / 60000)
+            : null
+        byGcalId[ev.id] = { date: evDate, durationMin }
         const tId = ev.extendedProperties?.private?.cosaTemplateId
         if (tId) {
           if (!byTemplateId[tId]) byTemplateId[tId] = []
-          byTemplateId[tId].push({ gcalEventId: ev.id, date: evDate })
+          byTemplateId[tId].push({ gcalEventId: ev.id, date: evDate, durationMin })
         }
       }
 
@@ -625,25 +629,31 @@ export default function WeekPlanner({
       // ── Diff: match each placed instance against the live calendar ─────────
       const deleted = []
       const moved = []
+      // Duration changes for tasks that stayed on the same date
+      const durationUpdates = [] // { dayName, taskId, newMinutes }
 
       for (const [dayName, dayData] of Object.entries(planDays)) {
         for (const task of dayData?.tasks ?? []) {
           let matchedDate = null
+          let matchedDuration = null
 
           if (task.gcalEventId && byGcalId[task.gcalEventId]) {
             // Primary match: by exact Google Calendar event ID (most reliable)
             matchedDate = byGcalId[task.gcalEventId].date
+            matchedDuration = byGcalId[task.gcalEventId].durationMin
           } else if (task.templateId && byTemplateId[task.templateId]) {
             // Fallback: by templateId — find an entry on the expected date
             const entries = byTemplateId[task.templateId]
             const onExpected = entries.find((e) => e.date === dayData.date)
             if (onExpected) {
               matchedDate = onExpected.date
+              matchedDuration = onExpected.durationMin
               // Mark this entry as consumed so the same gcal event isn't double-matched
               byTemplateId[task.templateId] = entries.filter((e) => e !== onExpected)
             } else if (entries.length > 0) {
               // Exists on a different date — moved
               matchedDate = entries[0].date
+              matchedDuration = entries[0].durationMin
               byTemplateId[task.templateId] = entries.slice(1)
             }
             // else: entries exhausted → deleted
@@ -653,16 +663,18 @@ export default function WeekPlanner({
             deleted.push({ task, dayName, planDate: dayData.date })
           } else if (matchedDate !== dayData.date) {
             const newDayName = dateToDay[matchedDate] ?? null
-            moved.push({ task, dayName, planDate: dayData.date, calDate: matchedDate, newDayName })
+            moved.push({ task, dayName, planDate: dayData.date, calDate: matchedDate, newDayName, matchedDuration })
+          } else if (matchedDuration !== null && matchedDuration !== task.estimateMinutes) {
+            // Same date, but GCal event duration was changed — update allocation
+            durationUpdates.push({ dayName, taskId: task.id, newMinutes: matchedDuration })
           }
-          // else: matched on same date — no change needed
         }
       }
 
       setCalendarDiff({ deleted, moved, total: calEvents.length })
 
       // ── Apply changes to planDays (Assign grid follows GCal) ──────────────
-      if (deleted.length > 0 || moved.length > 0) {
+      if (deleted.length > 0 || moved.length > 0 || durationUpdates.length > 0) {
         setPlanDays((prev) => {
           const next = {}
           for (const [dn, dd] of Object.entries(prev)) {
@@ -672,12 +684,21 @@ export default function WeekPlanner({
           for (const { task, dayName } of deleted) {
             next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
           }
-          // Move instances to new day
-          for (const { task, dayName, newDayName } of moved) {
+          // Move instances to new day, carrying over the GCal duration
+          for (const { task, dayName, newDayName, matchedDuration } of moved) {
             next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
             if (newDayName && next[newDayName]) {
-              next[newDayName].tasks = [...next[newDayName].tasks, { ...task }]
+              const updatedTask = matchedDuration != null
+                ? { ...task, estimateMinutes: matchedDuration }
+                : { ...task }
+              next[newDayName].tasks = [...next[newDayName].tasks, updatedTask]
             }
+          }
+          // Update durations for same-day tasks whose GCal event was resized
+          for (const { dayName, taskId, newMinutes } of durationUpdates) {
+            next[dayName].tasks = next[dayName].tasks.map((t) =>
+              t.id === taskId ? { ...t, estimateMinutes: newMinutes } : t,
+            )
           }
           return next
         })
