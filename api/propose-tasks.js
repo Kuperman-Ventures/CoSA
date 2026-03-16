@@ -1,5 +1,5 @@
 /* global process */
-export const runtime = 'edge'
+export const config = { runtime: 'edge' }
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -17,6 +17,11 @@ async function hashKey(key) {
 }
 
 export default async function handler(req) {
+  // Health check — confirms edge routing is live
+  if (req.method === 'GET') {
+    return jsonResponse({ ok: true, runtime: 'edge' })
+  }
+
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, 405)
   }
