@@ -1,6 +1,13 @@
 /* global process */
 export const runtime = 'edge'
 
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
 async function hashKey(key) {
   const encoder = new TextEncoder()
   const data = encoder.encode(key)
@@ -11,25 +18,25 @@ async function hashKey(key) {
 
 export default async function handler(req) {
   if (req.method !== 'POST') {
-    return Response.json({ error: 'Method not allowed' }, { status: 405 })
+    return jsonResponse({ error: 'Method not allowed' }, 405)
   }
 
   let body
   try {
     body = await req.json()
   } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
+    return jsonResponse({ error: 'Invalid JSON body' }, 400)
   }
 
   const { userId, proposals, sessionContext } = body
   if (!userId || !proposals || !Array.isArray(proposals) || proposals.length === 0) {
-    return Response.json({ error: 'Missing required fields: userId, proposals (non-empty array)' }, { status: 400 })
+    return jsonResponse({ error: 'Missing required fields: userId, proposals (non-empty array)' }, 400)
   }
 
   // Extract API key from Authorization header
   const authHeader = req.headers.get('Authorization')
   if (!authHeader?.startsWith('Bearer ')) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    return jsonResponse({ error: 'Unauthorized' }, 401)
   }
   const incomingKey = authHeader.slice(7)
 
@@ -49,17 +56,17 @@ export default async function handler(req) {
     .maybeSingle()
 
   if (prefsError || !prefs?.api_key_hash || prefs.api_key_hash !== incomingHash) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    return jsonResponse({ error: 'Unauthorized' }, 401)
   }
 
   // Validate each proposal has required fields
   for (const p of proposals) {
     const validActions = ['add', 'modify', 'pause', 'activate', 'reorder']
     if (!validActions.includes(p.action)) {
-      return Response.json({ error: `Invalid action type: ${p.action}` }, { status: 400 })
+      return jsonResponse({ error: `Invalid action type: ${p.action}` }, 400)
     }
     if (!p.taskData) {
-      return Response.json({ error: 'Each proposal must include taskData' }, { status: 400 })
+      return jsonResponse({ error: 'Each proposal must include taskData' }, 400)
     }
   }
 
@@ -74,10 +81,10 @@ export default async function handler(req) {
     .single()
 
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
+    return jsonResponse({ error: error.message }, 500)
   }
 
-  return Response.json({
+  return jsonResponse({
     success: true,
     proposalId: data.id,
     proposalCount: proposals.length,
