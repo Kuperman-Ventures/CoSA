@@ -48,6 +48,7 @@ import {
   moveCalendarEvent,
   createWeekPlanEvents,
   fetchCoSACalendarEvents,
+  fetchAllCalendarEvents,
   BLOCK_CAPACITY_MINUTES,
 } from './lib/googleCalendar'
 
@@ -1028,6 +1029,7 @@ function App() {
   const [replanLoading, setReplanLoading] = useState(false)
   const [showAiRationale, setShowAiRationale] = useState(false)
   const [replanChoices, setReplanChoices] = useState({}) // taskKey → dayName | 'drop'
+  const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [clearedDates, setClearedDates] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]') } catch { return [] }
   })
@@ -2176,8 +2178,10 @@ function App() {
     setShowAiRationale(false)
 
     const today = new Date()
-    const isWeekend = today.getDay() === 0 || today.getDay() === 6
-    const planWeekStartDate = isWeekend || today.getDay() === 5
+    const dayOfWeek = today.getDay() // 0=Sun, 1=Mon … 6=Sat
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+    const isFridayGen = dayOfWeek === 5
+    const planWeekStartDate = isWeekend || isFridayGen
       ? getNextMondayStr()
       : getWeekStartDateStr()
 
@@ -2185,8 +2189,12 @@ function App() {
 
     try {
       // Generate plan deterministically from daysOfWeek routing — instant, no API call needed.
-      // The daysOfWeek field already encodes the full POS schedule.
-      const planDayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+      // On Mon–Thu: only generate remaining days of the current week (today onward).
+      // On Fri/weekend: generate full Mon–Fri of next week.
+      const ALL_PLAN_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+      const planDayNames = (isWeekend || isFridayGen)
+        ? ALL_PLAN_DAYS
+        : ALL_PLAN_DAYS.slice(Math.max(0, dayOfWeek - 1))
       const hydratedDays = {}
 
       for (const dayName of planDayNames) {
@@ -2235,8 +2243,11 @@ function App() {
       // Build structured rationale for the initial draft plan
       const totalTasks = Object.values(hydratedDays).reduce((n, d) => n + d.tasks.length, 0)
       const deferredCount = pendingDeferred.length
+      const dayRange = planDayNames.length === 5
+        ? `week of ${planWeekStartDate}`
+        : `${planDayNames[0]}–Friday of week of ${planWeekStartDate}`
       const aiRationale = JSON.stringify({
-        summary: `${totalTasks} tasks scheduled for the week of ${planWeekStartDate} using your day-of-week routing.`,
+        summary: `${totalTasks} tasks scheduled for ${dayRange} using your day-of-week routing.`,
         deferred: deferredCount > 0
           ? pendingDeferred.map((i) => i.taskName)
           : [],
@@ -2325,6 +2336,13 @@ function App() {
     setWeekPlanLoading(false)
   }
 
+  function handleReplanWeekFromToday() {
+    setActiveScreen('weekAhead')
+    if (weekPlan && session?.provider_token) {
+      handleReplan()
+    }
+  }
+
   async function handleReplan() {
     if (!weekPlan) return
     setReplanLoading(true)
@@ -2337,14 +2355,25 @@ function App() {
       return
     }
 
+    setKpiCreditVotes({})
+
     try {
       const weekStart = weekPlan.weekStartDate
       const weekEnd = getDayDate(weekStart, 'Friday')
-      const timeMin = `${weekStart}T00:00:00Z`
+      const todayStr = new Date().toISOString().split('T')[0]
+      // Only fetch remaining days so we diff what's still live, not completed past days.
+      const rangeStart = todayStr > weekStart ? todayStr : weekStart
+      const timeMin = `${rangeStart}T00:00:00Z`
       const timeMax = `${weekEnd}T23:59:59Z`
 
-      const calendarEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
-      const todayStr = new Date().toISOString().split('T')[0]
+      const [calendarEvents, allCalendarEvents] = await Promise.all([
+        fetchCoSACalendarEvents(providerToken, timeMin, timeMax),
+        fetchAllCalendarEvents(providerToken, timeMin, timeMax),
+      ])
+      // Personal events = everything that is NOT a CoSA-tagged event
+      const personalEvents = allCalendarEvents.filter(
+        (e) => e.extendedProperties?.private?.cosaTag !== 'cosa-event'
+      )
       const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
       // If the plan week hasn't started yet, ALL days are remaining.
@@ -2468,6 +2497,36 @@ function App() {
         }
       }
 
+      // Detect KPI credit candidates: personal events that occupied the same time block
+      // on the same day as a deleted CoSA task → prompt the user to credit the KPI.
+      const BLOCK_HOURS = {
+        'BD':         [9.5, 11],
+        'Networking': [11,  12],
+        'Job Search': [13,  14],
+        'Encore OS':  [14,  16],
+        'Friday':     [14,  16],
+      }
+      for (const pd of pendingDecisions) {
+        const taskDate = weekPlan.days?.[pd.originalDay]?.date
+        if (!taskDate) continue
+        const [blockStart, blockEnd] = BLOCK_HOURS[pd.task.timeBlock] ?? [0, 24]
+        const replacement = personalEvents.find((e) => {
+          const eventDate = (e.start?.dateTime ?? e.start?.date ?? '').split('T')[0]
+          if (eventDate !== taskDate) return false
+          if (!e.start?.dateTime) return false
+          const d = new Date(e.start.dateTime)
+          const hour = d.getHours() + d.getMinutes() / 60
+          return hour >= blockStart && hour < blockEnd
+        })
+        if (replacement) {
+          const libTask = taskLibrary.find((t) => t.id === pd.task.templateId)
+          pd.kpiCreditCandidate = {
+            replacedBy: replacement.summary ?? 'a personal event',
+            kpiMapping: libTask?.kpiMapping ?? '',
+          }
+        }
+      }
+
       // Re-sort surviving tasks by time block
       for (const day of remainingDays) {
         hydratedDays[day].tasks = hydratedDays[day].tasks.sort(
@@ -2551,6 +2610,21 @@ function App() {
     }
 
     const appliedPlan = { ...weekPlan, status: 'replanned', days: finalDays }
+
+    // Create Quick Log entries for tasks the user credited toward a KPI.
+    if (session?.user?.id) {
+      for (const pd of weekPlan.pendingDecisions ?? []) {
+        if (!pd.kpiCreditCandidate || kpiCreditVotes[pd.task.templateId] !== true) continue
+        const libTask = taskLibrary.find((t) => t.id === pd.task.templateId)
+        await upsertQuickLogEntry({
+          who: 'Self',
+          activityType: 'KPI Credit — Calendar Replacement',
+          durationMinutes: pd.task.estimateMinutes ?? null,
+          kpiCredits: libTask?.kpiMapping ? [libTask.kpiMapping] : [],
+          note: `${pd.task.name} replaced by: ${pd.kpiCreditCandidate.replacedBy}`,
+        }, session.user.id)
+      }
+    }
 
     if (session?.user?.id) {
       if (weekPlan.id) {
@@ -3966,8 +4040,12 @@ function App() {
       ? getNextMondayStr()
       : getWeekStartDateStr()
 
-    // Unlocked on Fridays only
-    const isFriday = today.getDay() === 5
+    const dayOfWeekRender = today.getDay()
+    const isFridayOrWeekendRender = dayOfWeekRender === 5 || dayOfWeekRender === 0 || dayOfWeekRender === 6
+    const generateLabel = isFridayOrWeekendRender ? 'Plan Next Week' : 'Plan Remaining Week'
+    // Soft nudge: on Friday, if no review exists for this week yet
+    const thisWeekStart = getWeekStartDateStr()
+    const missingFridayReview = dayOfWeekRender === 5 && !fridayReviews.some((r) => r.week_start === thisWeekStart)
 
     const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     const todayDayName = DAY_NAMES[today.getDay()]
@@ -3987,8 +4065,9 @@ function App() {
           <div className="mx-auto max-w-xl rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
             <h2 className="text-xl font-semibold text-slate-900">Week Ahead</h2>
             <p className="mt-2 text-sm text-slate-600">
-              Generate a full Monday–Friday plan based on your task library, this week&apos;s
-              performance, and any deferred items.
+              {isFridayOrWeekendRender
+                ? 'Generate a full Monday–Friday plan for next week based on your task library and any deferred items.'
+                : 'Generate a plan for the remaining days of this week based on your task library and any deferred items.'}
             </p>
             <p className="mt-1 text-xs text-slate-500">
               Planning for: week of {planWeekStartDate}
@@ -3996,14 +4075,13 @@ function App() {
             <button
               type="button"
               onClick={handleGenerateWeekPlan}
-              disabled={!isFriday}
-              className="mt-6 w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+              className="mt-6 w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white"
             >
-              Generate Week Plan
+              {generateLabel}
             </button>
-            {!isFriday && (
+            {missingFridayReview && (
               <p className="mt-3 text-xs text-amber-700">
-                Available on Fridays — come back then to plan next week.
+                You haven&apos;t completed this week&apos;s Friday Review yet — plan anyway?
               </p>
             )}
             {weekPlanMessage && (
@@ -4148,6 +4226,7 @@ function App() {
                 </p>
                 {(weekPlan.pendingDecisions ?? []).map((pd, i) => {
                   const choice = replanChoices[pd.task.templateId]
+                  const kpiVote = kpiCreditVotes[pd.task.templateId]
                   return (
                     <div key={i} className="rounded-lg border border-blue-200 bg-white p-3">
                       <p className="mb-2 text-xs font-medium text-slate-800">
@@ -4157,6 +4236,42 @@ function App() {
                           ({pd.task.estimateMinutes}m · {pd.task.timeBlock}) — removed from {pd.originalDay}
                         </span>
                       </p>
+
+                      {/* KPI credit prompt when a personal event replaced this task */}
+                      {pd.kpiCreditCandidate && (
+                        <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-2">
+                          <p className="text-[10px] text-amber-800">
+                            Looks like <span className="font-semibold">{pd.task.name}</span> was replaced
+                            by <span className="font-semibold">{pd.kpiCreditCandidate.replacedBy}</span>
+                            {pd.kpiCreditCandidate.kpiMapping ? ` — did this count toward your ${pd.kpiCreditCandidate.kpiMapping} KPI?` : ' — did this count toward a KPI?'}
+                          </p>
+                          <div className="mt-1.5 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setKpiCreditVotes((prev) => ({ ...prev, [pd.task.templateId]: true }))}
+                              className={`rounded px-2.5 py-0.5 text-[10px] font-medium transition-colors ${
+                                kpiVote === true
+                                  ? 'bg-amber-600 text-white'
+                                  : 'border border-amber-300 bg-white text-amber-700 hover:bg-amber-100'
+                              }`}
+                            >
+                              Yes — credit it
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setKpiCreditVotes((prev) => ({ ...prev, [pd.task.templateId]: false }))}
+                              className={`rounded px-2.5 py-0.5 text-[10px] font-medium transition-colors ${
+                                kpiVote === false
+                                  ? 'bg-slate-500 text-white'
+                                  : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-100'
+                              }`}
+                            >
+                              No
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <p className="mb-2 text-[10px] text-slate-500">Should I reschedule it? If yes, when?</p>
                       <div className="flex flex-wrap gap-1.5">
                         {(weekPlan.remainingDays ?? []).map((d) => (
@@ -4221,7 +4336,7 @@ function App() {
               <div
                 key={dayName}
                 className={`rounded-xl border bg-white p-3 shadow-sm ${
-                  isPast && isReplanning ? 'opacity-40' : ''
+                  isPast && (isReplanning || isReviewing) ? 'opacity-40' : ''
                 } ${isToday ? 'border-blue-300' : 'border-slate-200'}`}
               >
                 <p className={`mb-2 text-xs font-semibold ${isToday ? 'text-blue-700' : 'text-slate-700'}`}>
@@ -4968,17 +5083,26 @@ function App() {
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold uppercase text-slate-500">Today Queue</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setClearFrom(getTodayDateString())
-                  setClearTo(getTodayDateString())
-                  setShowClearDayModal(true)
-                }}
-                className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-400 hover:border-slate-300 hover:text-slate-600"
-              >
-                Clear Day
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleReplanWeekFromToday}
+                  className="rounded border border-blue-200 px-2 py-0.5 text-[11px] text-blue-500 hover:border-blue-300 hover:text-blue-700"
+                >
+                  Replan Week
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClearFrom(getTodayDateString())
+                    setClearTo(getTodayDateString())
+                    setShowClearDayModal(true)
+                  }}
+                  className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-400 hover:border-slate-300 hover:text-slate-600"
+                >
+                  Clear Day
+                </button>
+              </div>
             </div>
             <p className="mb-2 text-xs text-slate-500">
               {queueDate ? `Queue for: ${formatQueueDate(queueDate)}` : `Deployed: ${new Date(lastDeploymentAt).toLocaleDateString()}`}

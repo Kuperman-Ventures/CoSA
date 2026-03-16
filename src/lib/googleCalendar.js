@@ -239,3 +239,20 @@ export async function fetchCoSACalendarEvents(providerToken, timeMin, timeMax) {
   const data = await gcalFetch(`?${params.toString()}`, 'GET', providerToken)
   return data?.items ?? []
 }
+
+/**
+ * Fetch ALL calendar events (including personal) within a date range.
+ * Used by Replan to detect personal events that replaced deleted CoSA tasks.
+ * timeMin / timeMax: ISO 8601 strings (e.g. "2026-03-17T00:00:00Z")
+ */
+export async function fetchAllCalendarEvents(providerToken, timeMin, timeMax) {
+  if (!providerToken) return []
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: 'true',
+    maxResults: '250',
+  })
+  const data = await gcalFetch(`?${params.toString()}`, 'GET', providerToken)
+  return data?.items ?? []
+}
