@@ -186,10 +186,12 @@ export async function createWeekPlanEvents(planDays, providerToken, planId) {
     if (!day) { updatedDays[dayName] = day; continue }
 
     // Group tasks by block for sequential offset calculation.
-    // Use a stable unique key per task: templateId, falling back to name.
+    // Use the instance's own unique id (plan-...) so multiple instances of
+    // the same template get correct sequential start times within a block.
     const normalisedTasks = day.tasks.map((t, i) => ({
       ...t,
-      _uid: t.templateId || `task-${dayName}-${i}`,
+      // Guarantee a non-empty string id — fall back only if somehow missing
+      id: t.id || t.templateId || `task-${dayName}-${i}`,
     }))
 
     const blockGroups = normalisedTasks.reduce((acc, t) => {
@@ -201,10 +203,8 @@ export async function createWeekPlanEvents(planDays, providerToken, planId) {
     const updatedTasks = []
     for (const task of normalisedTasks) {
       const blockTasks = blockGroups[task.timeBlock] ?? [task]
-
-      // Build a sanitised version where id is always a non-empty string
-      const taskForApi   = { ...task, id: task._uid, estimateMinutes: task.estimateMinutes ?? 25 }
-      const blockForApi  = blockTasks.map((t) => ({ ...t, id: t._uid, estimateMinutes: t.estimateMinutes ?? 25 }))
+      const taskForApi  = { ...task, estimateMinutes: task.estimateMinutes ?? 25 }
+      const blockForApi = blockTasks.map((t) => ({ ...t, estimateMinutes: t.estimateMinutes ?? 25 }))
 
       const gcalEventId = await createCalendarEvent(
         taskForApi,

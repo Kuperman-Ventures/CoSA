@@ -584,68 +584,97 @@ export default function WeekPlanner({
     try {
       const monday = weekStartDate
       const friday = getDayDate(weekStartDate, 'Friday')
-      // Use local midnight bounds so we don't miss events at the day edges
-      const timeMin = `${monday}T00:00:00`
-      const timeMax = `${friday}T23:59:59`
+      // RFC 3339 with Z = UTC — required by Google Calendar API
+      const timeMin = `${monday}T00:00:00Z`
+      const timeMax = `${friday}T23:59:59Z`
       const calEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
 
-      // Store raw events so Calendar tab can render actual GCal state
+      // Store raw events so Calendar tab renders actual GCal state
       setFetchedCalEvents(calEvents)
 
-      // Build templateId → { calEventId, date } — allow multiple events per templateId
-      // (same task on multiple days), store them all
-      const calMap = {} // templateId → array of { calEventId, date }
+      if (calEvents.length === 0) {
+        setCalendarDiff({ deleted: [], moved: [], total: 0 })
+        setSyncingCalendar(false)
+        return
+      }
+
+      // ── Build two lookup maps from fetched events ──────────────────────────
+      // 1. gcalEventId → { date }  — used for instances that have a stored gcalEventId
+      // 2. templateId  → [{ gcalEventId, date }] — fallback for older plan entries
+      const byGcalId = {}     // gcalEventId → { date }
+      const byTemplateId = {} // templateId  → [{ gcalEventId, date }]
+
       for (const ev of calEvents) {
-        const tId = ev.extendedProperties?.private?.cosaTemplateId
         const evDate = ev.start?.dateTime?.slice(0, 10) ?? ev.start?.date
-        if (tId && evDate) {
-          if (!calMap[tId]) calMap[tId] = []
-          calMap[tId].push({ calEventId: ev.id, date: evDate })
+        if (!evDate) continue
+        byGcalId[ev.id] = { date: evDate }
+        const tId = ev.extendedProperties?.private?.cosaTemplateId
+        if (tId) {
+          if (!byTemplateId[tId]) byTemplateId[tId] = []
+          byTemplateId[tId].push({ gcalEventId: ev.id, date: evDate })
         }
       }
 
-      // Build date → dayName lookup
+      // Build date → dayName lookup (including days not yet in planDays)
       const dateToDay = {}
-      for (const [dayName, dayData] of Object.entries(planDays)) {
-        if (dayData?.date) dateToDay[dayData.date] = dayName
+      for (const dayName of DAY_NAMES) {
+        const date = planDays[dayName]?.date ?? getDayDate(weekStartDate, dayName)
+        dateToDay[date] = dayName
       }
 
-      // Diff: compare planDays tasks against live Google Calendar events
+      // ── Diff: match each placed instance against the live calendar ─────────
       const deleted = []
       const moved = []
+
       for (const [dayName, dayData] of Object.entries(planDays)) {
         for (const task of dayData?.tasks ?? []) {
-          const calEntries = calMap[task.templateId]
-          if (!calEntries || calEntries.length === 0) {
-            // No matching event in calendar at all — was deleted
-            deleted.push({ task, dayName, planDate: dayData.date })
-          } else {
-            // Check if there's an entry on the expected date
-            const onExpectedDate = calEntries.some((e) => e.date === dayData.date)
-            if (!onExpectedDate) {
-              // Event exists but on a different date — was moved
-              const calEntry = calEntries[0]
-              const newDayName = dateToDay[calEntry.date] ?? null
-              moved.push({ task, dayName, planDate: dayData.date, calDate: calEntry.date, newDayName })
+          let matchedDate = null
+
+          if (task.gcalEventId && byGcalId[task.gcalEventId]) {
+            // Primary match: by exact Google Calendar event ID (most reliable)
+            matchedDate = byGcalId[task.gcalEventId].date
+          } else if (task.templateId && byTemplateId[task.templateId]) {
+            // Fallback: by templateId — find an entry on the expected date
+            const entries = byTemplateId[task.templateId]
+            const onExpected = entries.find((e) => e.date === dayData.date)
+            if (onExpected) {
+              matchedDate = onExpected.date
+              // Mark this entry as consumed so the same gcal event isn't double-matched
+              byTemplateId[task.templateId] = entries.filter((e) => e !== onExpected)
+            } else if (entries.length > 0) {
+              // Exists on a different date — moved
+              matchedDate = entries[0].date
+              byTemplateId[task.templateId] = entries.slice(1)
             }
+            // else: entries exhausted → deleted
           }
+
+          if (matchedDate === null) {
+            deleted.push({ task, dayName, planDate: dayData.date })
+          } else if (matchedDate !== dayData.date) {
+            const newDayName = dateToDay[matchedDate] ?? null
+            moved.push({ task, dayName, planDate: dayData.date, calDate: matchedDate, newDayName })
+          }
+          // else: matched on same date — no change needed
         }
       }
 
       setCalendarDiff({ deleted, moved, total: calEvents.length })
 
-      // Apply changes to planDays so the Assign grid reflects what's in GCal
+      // ── Apply changes to planDays (Assign grid follows GCal) ──────────────
       if (deleted.length > 0 || moved.length > 0) {
         setPlanDays((prev) => {
           const next = {}
-          for (const [dayName, dayData] of Object.entries(prev)) {
-            next[dayName] = { ...dayData, tasks: [...(dayData?.tasks ?? [])] }
+          for (const [dn, dd] of Object.entries(prev)) {
+            next[dn] = { ...dd, tasks: [...(dd?.tasks ?? [])] }
           }
+          // Remove deleted instances by exact id
           for (const { task, dayName } of deleted) {
-            next[dayName].tasks = next[dayName].tasks.filter((t) => t.templateId !== task.templateId)
+            next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
           }
+          // Move instances to new day
           for (const { task, dayName, newDayName } of moved) {
-            next[dayName].tasks = next[dayName].tasks.filter((t) => t.templateId !== task.templateId)
+            next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
             if (newDayName && next[newDayName]) {
               next[newDayName].tasks = [...next[newDayName].tasks, { ...task }]
             }
