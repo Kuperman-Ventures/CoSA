@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw, X } from 'lucide-react'
@@ -202,8 +202,6 @@ export default function WeekPlanner({
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [message, setMessage] = useState('')
-  const [publishOverrideVisible, setPublishOverrideVisible] = useState(false)
-  const publishHoverTimer = useRef(null)
   const [clearConfirm, setClearConfirm] = useState(false)
   const [calendarDiff, setCalendarDiff] = useState(null)
   const [syncingCalendar, setSyncingCalendar] = useState(false)
@@ -437,20 +435,12 @@ export default function WeekPlanner({
     }
   }
 
-  async function handlePublish(forcePublish = false) {
+  async function handlePublish() {
     const newFlags = computeFlags(allocations)
     setFlags(newFlags)
 
-    const hasRedTrack = Object.entries(SUB_TRACK_TARGETS).some(([track, data]) => {
-      const assigned = allocations.trackTotals[track] ?? 0
-      return healthColor(assigned, data.weekly) === 'red'
-    })
-
-    if (hasRedTrack && !forcePublish) return
-
     setPublishing(true)
     setMessage('')
-    setPublishOverrideVisible(false)
     try {
       const planId = weekPlan?.id
       const updatedDays = providerToken
@@ -491,15 +481,6 @@ export default function WeekPlanner({
     setPlanDays({})
     setFlags([])
     setClearConfirm(false)
-  }
-
-  // ── Publish hover override ────────────────────────────────────────────────
-
-  function handlePublishMouseEnter() {
-    publishHoverTimer.current = setTimeout(() => setPublishOverrideVisible(true), 2000)
-  }
-  function handlePublishMouseLeave() {
-    clearTimeout(publishHoverTimer.current)
   }
 
   // ── Calendar sync ─────────────────────────────────────────────────────────
@@ -556,11 +537,6 @@ export default function WeekPlanner({
   // ─────────────────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────────────────
-
-  const hasRedTrack = Object.entries(SUB_TRACK_TARGETS).some(([track, data]) => {
-    const assigned = allocations.trackTotals[track] ?? 0
-    return healthColor(assigned, data.weekly) === 'red'
-  })
 
   return (
     <section className="mx-auto max-w-[1400px] px-4 py-6">
@@ -767,29 +743,14 @@ export default function WeekPlanner({
                 >
                   {saving ? 'Saving…' : 'Save Draft'}
                 </button>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => handlePublish(false)}
-                    onMouseEnter={hasRedTrack ? handlePublishMouseEnter : undefined}
-                    onMouseLeave={hasRedTrack ? handlePublishMouseLeave : undefined}
-                    disabled={publishing}
-                    className={`rounded-md px-3 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50 ${
-                      hasRedTrack ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
-                  >
-                    {publishing ? 'Publishing…' : 'Publish to Calendar'}
-                  </button>
-                  {publishOverrideVisible && (
-                    <button
-                      type="button"
-                      onClick={() => handlePublish(true)}
-                      className="absolute left-0 top-full mt-1 whitespace-nowrap rounded-md bg-orange-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-600 shadow-lg z-10"
-                    >
-                      Publish Anyway
-                    </button>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={handlePublish}
+                  disabled={publishing}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {publishing ? 'Publishing…' : 'Publish to Calendar'}
+                </button>
               </div>
             </div>
           </div>
