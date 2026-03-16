@@ -120,10 +120,11 @@ export async function createCalendarEvent(task, allTasksInBlock, providerToken, 
 
 /**
  * Fully replace an existing event (used when task details change).
+ * extras: { templateId, planId } — preserved so CoSA sync can still identify the event.
  */
-export async function updateCalendarEvent(eventId, task, allTasksInBlock, providerToken, date) {
+export async function updateCalendarEvent(eventId, task, allTasksInBlock, providerToken, date, extras = {}) {
   if (!providerToken || !eventId) return
-  await gcalFetch(`/${eventId}`, 'PUT', providerToken, buildEventBody(task, allTasksInBlock, date))
+  await gcalFetch(`/${eventId}`, 'PUT', providerToken, buildEventBody(task, allTasksInBlock, date, extras))
 }
 
 /**
@@ -170,7 +171,11 @@ export async function createEventsForSnapshot(tasks, providerToken, date) {
 }
 
 /**
- * Create calendar events for an entire week plan.
+ * Upsert calendar events for an entire week plan.
+ * - Tasks that already have a gcalEventId → PUT (update) the existing event.
+ * - Tasks without a gcalEventId → POST (create) a new event.
+ * This prevents duplicate events when publishing more than once.
+ *
  * planDays: { Monday: { date, tasks: [...] }, ... }
  * Returns a copy of planDays with gcalEventId filled in on each task.
  * Sequential (not concurrent) to avoid Google Calendar API rate limits.
@@ -190,7 +195,6 @@ export async function createWeekPlanEvents(planDays, providerToken, planId) {
     // the same template get correct sequential start times within a block.
     const normalisedTasks = day.tasks.map((t, i) => ({
       ...t,
-      // Guarantee a non-empty string id — fall back only if somehow missing
       id: t.id || t.templateId || `task-${dayName}-${i}`,
     }))
 
@@ -205,14 +209,22 @@ export async function createWeekPlanEvents(planDays, providerToken, planId) {
       const blockTasks = blockGroups[task.timeBlock] ?? [task]
       const taskForApi  = { ...task, estimateMinutes: task.estimateMinutes ?? 25 }
       const blockForApi = blockTasks.map((t) => ({ ...t, estimateMinutes: t.estimateMinutes ?? 25 }))
+      const extras = { templateId: task.templateId, planId }
 
-      const gcalEventId = await createCalendarEvent(
-        taskForApi,
-        blockForApi,
-        providerToken,
-        day.date,
-        { templateId: task.templateId, planId },
-      )
+      let gcalEventId = task.gcalEventId ?? null
+
+      if (gcalEventId) {
+        // Event already exists from a previous publish — update it in place.
+        // On a 404 (event was manually deleted in GCal), fall through to create.
+        const res = await gcalFetch(`/${gcalEventId}`, 'PUT', providerToken, buildEventBody(taskForApi, blockForApi, day.date, extras))
+        if (!res) {
+          // PUT failed (likely deleted) — create a fresh event instead
+          gcalEventId = await createCalendarEvent(taskForApi, blockForApi, providerToken, day.date, extras)
+        }
+      } else {
+        gcalEventId = await createCalendarEvent(taskForApi, blockForApi, providerToken, day.date, extras)
+      }
+
       updatedTasks.push({ ...task, gcalEventId: gcalEventId ?? null })
     }
 
