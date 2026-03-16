@@ -25,6 +25,7 @@ import {
   loadTodayTasks,
   upsertTimerSession,
   loadTimerSessions,
+  loadTodayTimerSessions,
   syncRescheduleQueue,
   loadRescheduleQueue,
   updateRescheduleItem,
@@ -1357,11 +1358,32 @@ function App() {
         if (remoteTodayTasks && remoteTodayTasks.length > 0) {
           setTodayTasks(remoteTodayTasks)
           setQueueDate(targetStr)
+          // Load timer session state from Supabase so progress is restored even
+          // when localStorage is stale or the user signs in on another device.
+          const taskIds = remoteTodayTasks.map((t) => t.id)
+          const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
           setSessions((prev) => {
             const next = { ...prev }
             remoteTodayTasks.forEach((task) => {
               if (!next[task.id]) next[task.id] = getInitialSession(task)
             })
+            if (remoteTimerSessions) {
+              remoteTimerSessions.forEach((remoteSession) => {
+                const { taskId } = remoteSession
+                if (!taskId) return
+                const hasProgress =
+                  remoteSession.timerState !== 'notStarted' || remoteSession.elapsedSeconds > 0
+                if (hasProgress) {
+                  // Preserve subtaskChecks from local state; everything else comes from Supabase.
+                  const existing = next[taskId] ?? {}
+                  next[taskId] = {
+                    ...existing,
+                    ...remoteSession,
+                    subtaskChecks: existing.subtaskChecks ?? [],
+                  }
+                }
+              })
+            }
             return next
           })
           // Load user preferences (cleared dates)
@@ -1761,6 +1783,7 @@ function App() {
     if (selectedSession.timerState === TIMER_STATES.running) return
     setActiveTaskId(taskId)
     setStatusMessage('')
+    setCompletionInput(selectedSession.actualCompleted ?? '')
   }
 
   function handleStart() {

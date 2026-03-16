@@ -197,6 +197,32 @@ function sessionToRow(session, task, userId) {
   }
 }
 
+function rowToSession(row) {
+  const estimateSeconds = row.estimate_seconds ?? 0
+  const elapsedSeconds = row.elapsed_seconds ?? 0
+  // If the timer was running when saved, restore as paused — the timer is no longer live.
+  const savedState = row.timer_state ?? 'notStarted'
+  const timerState = savedState === 'running' ? 'paused' : savedState
+  return {
+    sessionId: row.id,
+    taskId: row.task_instance_id,
+    timerState,
+    estimateSeconds,
+    remainingSeconds: Math.max(0, estimateSeconds - elapsedSeconds),
+    elapsedSeconds,
+    pauseCount: row.pause_count ?? 0,
+    pauseDurationSeconds: row.pause_duration_seconds ?? 0,
+    currentPauseStartedAtMs: null,
+    cancelledSeconds: row.cancelled_seconds ?? 0,
+    startedAtISO: row.started_at ?? null,
+    completionType: row.completion_type ?? null,
+    definitionOfDone: row.definition_of_done ?? '',
+    actualCompleted: row.actual_completed ?? '',
+    outcomeAchieved: row.outcome_achieved ?? null,
+    completionLoggedAtISO: row.completed_at ?? null,
+  }
+}
+
 function rowToLogEntry(row) {
   return {
     id: row.id,
@@ -243,6 +269,22 @@ export async function loadTimerSessions(userId, days = 90) {
     return (data ?? []).map(rowToLogEntry)
   } catch (err) {
     console.error('[loadTimerSessions]', err.message)
+    return null
+  }
+}
+
+export async function loadTodayTimerSessions(userId, taskInstanceIds) {
+  if (!supabase || !userId || !taskInstanceIds?.length) return null
+  try {
+    const { data, error } = await supabase
+      .from('timer_sessions')
+      .select('*')
+      .eq('user_id', userId)
+      .in('task_instance_id', taskInstanceIds)
+    if (error) { console.error('[loadTodayTimerSessions]', error.message); return null }
+    return (data ?? []).map(rowToSession)
+  } catch (err) {
+    console.error('[loadTodayTimerSessions]', err.message)
     return null
   }
 }
