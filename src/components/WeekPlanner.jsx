@@ -306,13 +306,6 @@ export default function WeekPlanner({
     const targetTask = sourceIsGrid ? activeDragTask : libTask
     if (!targetTask) return
 
-    // Block-match enforcement
-    if (targetTask.timeBlock !== block) {
-      setRejectedId(active.id)
-      setTimeout(() => setRejectedId(null), 600)
-      return
-    }
-
     // Check capacity
     const existingInBlock = (planDays[dayName]?.tasks ?? []).filter(
       (t) => t.timeBlock === block && t.id !== active.id,
