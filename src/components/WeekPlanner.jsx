@@ -118,8 +118,8 @@ function healthTextClass(color) {
 
 // ─── Draggable task card ──────────────────────────────────────────────────────
 
-function DraggableCard({ id, children, className = '' }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id })
+function DraggableCard({ id, children, className = '', disabled = false }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id, disabled })
   const style = transform
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined
@@ -127,9 +127,9 @@ function DraggableCard({ id, children, className = '' }) {
     <div
       ref={setNodeRef}
       style={style}
-      {...listeners}
-      {...attributes}
-      className={`${className} ${isDragging ? 'opacity-30' : ''} cursor-grab active:cursor-grabbing`}
+      {...(disabled ? {} : listeners)}
+      {...(disabled ? {} : attributes)}
+      className={`${className} ${isDragging ? 'opacity-30' : ''} ${disabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}
     >
       {children}
     </div>
@@ -150,14 +150,65 @@ function DroppableZone({ id, children, className = '' }) {
   )
 }
 
-// ─── Task card (shared between bin and grid) ──────────────────────────────────
+// ─── Bin task card (shows sub-track tally, locks when full) ──────────────────
 
-function TaskCard({ task, trackColor, onRemove, compact = false, shaking = false }) {
+function BinTaskCard({ task, trackColor, allocated, target, isFull, shaking = false }) {
+  const pct = target > 0 ? Math.min((allocated / target) * 100, 100) : 0
+  const isOver = target > 0 && allocated > target
   return (
     <div
       className={`rounded-md border bg-white px-2 py-1.5 text-xs shadow-sm select-none
         ${shaking ? 'animate-shake' : ''}
-        ${compact ? '' : 'mb-1'}`}
+        ${isFull ? 'opacity-50' : ''}`}
+      style={{ borderLeftColor: isFull ? '#94a3b8' : trackColor, borderLeftWidth: 3 }}
+    >
+      <div className="flex items-center justify-between gap-1">
+        <span className={`font-medium leading-tight truncate ${isFull ? 'text-slate-400' : 'text-slate-700'}`}>
+          {task.name}
+        </span>
+        {isFull && (
+          <span className="ml-1 shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 whitespace-nowrap">
+            ✓ Full
+          </span>
+        )}
+      </div>
+      <div className="mt-0.5 text-slate-400">
+        <span>{task.defaultTimeEstimate ?? 25}m</span>
+        {task.subTrack && <span> · {task.subTrack}</span>}
+      </div>
+      {target > 0 && (
+        <div className="mt-1">
+          <div className="h-1 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${isOver ? 'bg-amber-400' : isFull ? 'bg-emerald-500' : 'bg-blue-400'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className={`mt-0.5 text-[9px] ${isOver ? 'text-amber-600' : isFull ? 'text-emerald-600' : 'text-slate-400'}`}>
+            {allocated}m / {target}m{isOver ? ' — over' : ''}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Grid task card (inline minute edit, removable) ──────────────────────────
+
+function TaskCard({ task, trackColor, onRemove, onEditMinutes, shaking = false }) {
+  const [editing, setEditing] = useState(false)
+  const [editVal, setEditVal] = useState(String(task.estimateMinutes ?? 25))
+
+  function commitEdit() {
+    const n = parseInt(editVal, 10)
+    if (!isNaN(n) && n > 0 && n !== task.estimateMinutes) onEditMinutes?.(n)
+    setEditing(false)
+  }
+
+  return (
+    <div
+      className={`rounded-md border bg-white px-2 py-1.5 text-xs shadow-sm select-none mb-1
+        ${shaking ? 'animate-shake' : ''}`}
       style={{ borderLeftColor: trackColor, borderLeftWidth: 3 }}
     >
       <div className="flex items-center justify-between gap-1">
@@ -167,14 +218,36 @@ function TaskCard({ task, trackColor, onRemove, compact = false, shaking = false
             type="button"
             onClick={(e) => { e.stopPropagation(); onRemove() }}
             className="ml-1 shrink-0 text-slate-300 hover:text-rose-500"
-            title="Remove back to bin"
+            title="Remove instance"
           >
             <X size={11} />
           </button>
         )}
       </div>
       <div className="mt-0.5 flex items-center gap-1 text-slate-400">
-        <span>{task.estimateMinutes}m</span>
+        {editing ? (
+          <input
+            type="number"
+            min={1}
+            max={240}
+            value={editVal}
+            onChange={(e) => setEditVal(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(false) }}
+            className="w-12 rounded border border-blue-300 px-1 py-0 text-xs text-slate-700 outline-none focus:ring-1 focus:ring-blue-400"
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setEditing(true); setEditVal(String(task.estimateMinutes ?? 25)) }}
+            className="rounded px-0.5 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+            title="Click to edit duration"
+          >
+            {task.estimateMinutes ?? 25}m
+          </button>
+        )}
         {task.subTrack && <span>· {task.subTrack}</span>}
       </div>
     </div>
@@ -237,17 +310,11 @@ export default function WeekPlanner({
     return { trackTotals, subTrackTotals }
   }, [planDays, taskLibrary])
 
-  // ── Task bin ──────────────────────────────────────────────────────────────
-
-  const assignedTemplateIds = useMemo(() => {
-    const s = new Set()
-    for (const d of Object.values(planDays)) (d?.tasks ?? []).forEach((t) => s.add(t.templateId))
-    return s
-  }, [planDays])
+  // ── Task bin — always shows all active tasks ──────────────────────────────
 
   const binTasks = useMemo(
-    () => taskLibrary.filter((t) => t.status === 'Active' && !assignedTemplateIds.has(t.id)),
-    [taskLibrary, assignedTemplateIds],
+    () => taskLibrary.filter((t) => t.status === 'Active'),
+    [taskLibrary],
   )
 
   const binByTrack = useMemo(() => {
@@ -260,13 +327,25 @@ export default function WeekPlanner({
     return groups
   }, [binTasks])
 
+  // Sub-tracks that have hit or exceeded their weekly target
+  const fullSubTracks = useMemo(() => {
+    const full = new Set()
+    for (const [track, data] of Object.entries(SUB_TRACK_TARGETS)) {
+      for (const [sub, target] of Object.entries(data.subTracks)) {
+        const assigned = allocations.subTrackTotals[`${track}::${sub}`] ?? 0
+        if (assigned >= target) full.add(`${track}::${sub}`)
+      }
+    }
+    return full
+  }, [allocations])
+
   // ── DnD logic ─────────────────────────────────────────────────────────────
 
   function handleDragStart({ active }) {
-    // Active id can be a library id (from bin) or a placed task id (from grid)
+    // Bin drags use the library task id (e.g. 'lib-v2-advisors-1')
+    // Grid drags use the instance id (e.g. 'plan-lib-v2-advisors-1-...')
     const libTask = taskLibrary.find((t) => t.id === active.id)
     if (libTask) { setActiveDragTask({ ...libTask, _source: 'bin' }); return }
-    // Search in placed tasks
     for (const [dayName, dayData] of Object.entries(planDays)) {
       const placed = (dayData?.tasks ?? []).find((t) => t.id === active.id)
       if (placed) { setActiveDragTask({ ...placed, _source: 'grid', _fromDay: dayName }); return }
@@ -277,9 +356,9 @@ export default function WeekPlanner({
     setActiveDragTask(null)
     if (!over) return
 
-    const overId = over.id // 'bin' | `${dayName}::${timeBlock}`
+    const overId = over.id // 'bin' | `${dayName}::${block}`
 
-    // Dropping back on the bin — remove from grid
+    // Dropping a grid instance back on the bin — remove that instance
     if (overId === 'bin') {
       if (activeDragTask?._source === 'grid') {
         const fromDay = activeDragTask._fromDay
@@ -291,60 +370,55 @@ export default function WeekPlanner({
           },
         }))
       }
+      // Bin→bin drop: ignore
       return
     }
 
     const [dayName, block] = overId.split('::')
     if (!dayName || !block) return
 
-    // Resolve the library task being dragged
-    const libTask = taskLibrary.find(
-      (t) => t.id === active.id || t.id === activeDragTask?.templateId,
-    )
     const sourceIsGrid = activeDragTask?._source === 'grid'
     const fromDay = activeDragTask?._fromDay
 
-    const targetTask = sourceIsGrid ? activeDragTask : libTask
-    if (!targetTask) return
-
-    // Check capacity
-    const existingInBlock = (planDays[dayName]?.tasks ?? []).filter(
-      (t) => t.timeBlock === block && t.id !== active.id,
-    )
-    const usedMinutes = existingInBlock.reduce((s, t) => s + (t.estimateMinutes ?? 0), 0)
-    const cap = BLOCK_CAPACITY_MINUTES[block] ?? 999
-    const taskMinutes = targetTask.estimateMinutes ?? targetTask.defaultTimeEstimate ?? 25
-    if (usedMinutes + taskMinutes > cap) {
-      setRejectedId(active.id)
-      setTimeout(() => setRejectedId(null), 600)
-      return
-    }
-
-    setPlanDays((prev) => {
-      const dayDate = prev[dayName]?.date ?? getDayDate(weekStartDate, dayName)
-      const newTask = sourceIsGrid ? targetTask : planTaskFromLib(libTask ?? targetTask)
-
-      // Remove from source day if coming from grid
-      let nextState = { ...prev }
-      if (sourceIsGrid && fromDay) {
-        nextState = {
-          ...nextState,
-          [fromDay]: {
-            ...nextState[fromDay],
-            tasks: (nextState[fromDay]?.tasks ?? []).filter((t) => t.id !== active.id),
+    if (sourceIsGrid) {
+      // ── Move an existing instance to a different day/block ──
+      const movedTask = { ...activeDragTask, timeBlock: block }
+      setPlanDays((prev) => {
+        const dayDate = prev[dayName]?.date ?? getDayDate(weekStartDate, dayName)
+        let next = { ...prev }
+        // Remove from old day
+        if (fromDay) {
+          next = {
+            ...next,
+            [fromDay]: {
+              ...next[fromDay],
+              tasks: (next[fromDay]?.tasks ?? []).filter((t) => t.id !== active.id),
+            },
+          }
+        }
+        // Add to new day (avoid duplicate if same day/same id)
+        const existing = (next[dayName]?.tasks ?? []).filter((t) => t.id !== active.id)
+        return {
+          ...next,
+          [dayName]: { date: dayDate, tasks: [...existing, movedTask] },
+        }
+      })
+    } else {
+      // ── Create a new instance from the bin ──
+      const libTask = taskLibrary.find((t) => t.id === active.id)
+      if (!libTask) return
+      const newInstance = { ...planTaskFromLib(libTask), timeBlock: block }
+      setPlanDays((prev) => {
+        const dayDate = prev[dayName]?.date ?? getDayDate(weekStartDate, dayName)
+        return {
+          ...prev,
+          [dayName]: {
+            date: dayDate,
+            tasks: [...(prev[dayName]?.tasks ?? []), newInstance],
           },
         }
-      }
-
-      const existingTasks = (nextState[dayName]?.tasks ?? []).filter((t) => t.id !== active.id)
-      return {
-        ...nextState,
-        [dayName]: {
-          date: dayDate,
-          tasks: [...existingTasks, newTask],
-        },
-      }
-    })
+      })
+    }
   }
 
   function removeTaskFromDay(dayName, taskId) {
@@ -353,6 +427,18 @@ export default function WeekPlanner({
       [dayName]: {
         ...prev[dayName],
         tasks: (prev[dayName]?.tasks ?? []).filter((t) => t.id !== taskId),
+      },
+    }))
+  }
+
+  function updateInstanceMinutes(dayName, taskId, newMinutes) {
+    setPlanDays((prev) => ({
+      ...prev,
+      [dayName]: {
+        ...prev[dayName],
+        tasks: (prev[dayName]?.tasks ?? []).map((t) =>
+          t.id === taskId ? { ...t, estimateMinutes: newMinutes } : t,
+        ),
       },
     }))
   }
@@ -369,20 +455,25 @@ export default function WeekPlanner({
       newDays[day] = { date: getDayDate(weekStartDate, day), tasks: [] }
     }
 
+    // Track sub-track minutes placed so far
+    const subTrackUsed = {}
+
     for (const task of taskLibrary.filter((t) => t.status === 'Active')) {
+      const track = normaliseTrack(task.track)
+      const subTrack = task.subTrack ?? 'Other'
+      const key = `${track}::${subTrack}`
+      const target = SUB_TRACK_TARGETS[track]?.subTracks[subTrack] ?? 0
+
       const eligibleDays = remainingDays.filter((d) =>
         (task.daysOfWeek ?? DAY_NAMES).includes(d),
       )
+
       for (const day of eligibleDays) {
-        const block = task.timeBlock
-        const cap = BLOCK_CAPACITY_MINUTES[block] ?? 999
-        const used = newDays[day].tasks
-          .filter((t) => t.timeBlock === block)
-          .reduce((s, t) => s + (t.estimateMinutes ?? 0), 0)
-        if (used + (task.defaultTimeEstimate ?? 25) <= cap) {
-          newDays[day].tasks.push(planTaskFromLib(task))
-          break
-        }
+        const used = subTrackUsed[key] ?? 0
+        // Stop placing this task if sub-track target already met
+        if (target > 0 && used >= target) break
+        newDays[day].tasks.push(planTaskFromLib(task))
+        subTrackUsed[key] = used + (task.defaultTimeEstimate ?? 25)
       }
     }
 
@@ -398,9 +489,16 @@ export default function WeekPlanner({
         .map(([sub, target]) => {
           const assigned = allocs.subTrackTotals[`${track}::${sub}`] ?? 0
           const delta = target - assigned
-          return delta / target > 0.25
-            ? { track, subTrack: sub, assigned, target, delta, id: `${track}::${sub}` }
-            : null
+          const pct = target > 0 ? assigned / target : 1
+          if (pct > 1.1) {
+            // Over-allocated by more than 10%
+            return { track, subTrack: sub, assigned, target, delta, over: true, id: `${track}::${sub}` }
+          }
+          if (delta / target > 0.25) {
+            // Under-allocated by more than 25%
+            return { track, subTrack: sub, assigned, target, delta, over: false, id: `${track}::${sub}` }
+          }
+          return null
         })
         .filter(Boolean),
     )
@@ -621,12 +719,14 @@ export default function WeekPlanner({
         >
           <div className="flex gap-4">
             {/* Task Bin */}
-            <aside className="w-56 shrink-0">
+            <aside className="w-60 shrink-0">
               <DroppableZone id="bin" className="min-h-[120px] rounded-xl border-2 border-dashed border-slate-200 p-2">
                 <h2 className="mb-2 text-xs font-bold uppercase text-slate-500">Task Bin</h2>
                 {Object.entries(binByTrack).map(([track, tasks]) => {
-                  const allAssigned = tasks.length === 0
                   const collapsed = collapsedTracks[track]
+                  const trackTarget = SUB_TRACK_TARGETS[track]?.weekly ?? 0
+                  const trackAssigned = allocations.trackTotals[track] ?? 0
+                  const trackFull = trackTarget > 0 && trackAssigned >= trackTarget
                   return (
                     <div key={track} className={`mb-3 rounded-lg border p-2 ${TRACK_BG[track] ?? 'bg-slate-50 border-slate-200'}`}>
                       <button
@@ -637,29 +737,41 @@ export default function WeekPlanner({
                         <span className="text-[11px] font-bold uppercase" style={{ color: TRACK_COLORS[track] }}>
                           {TRACK_LABELS[track] ?? track}
                         </span>
-                        {allAssigned ? (
+                        {trackFull ? (
                           <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            Complete
+                            ✓ Track Full
                           </span>
                         ) : (
                           collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />
                         )}
                       </button>
-                      {!collapsed && !allAssigned && (
+                      {!collapsed && (
                         <div className="mt-1.5 space-y-1">
-                          {tasks.map((task) => (
-                            <DraggableCard
-                              key={task.id}
-                              id={task.id}
-                              className={highlightedTemplateIds.has(task.id) ? 'ring-2 ring-amber-400 ring-offset-1 rounded-md' : ''}
-                            >
-                              <TaskCard
-                                task={{ ...task, estimateMinutes: task.defaultTimeEstimate ?? 25 }}
-                                trackColor={TRACK_COLORS[normaliseTrack(task.track)] ?? '#94a3b8'}
-                                shaking={rejectedId === task.id}
-                              />
-                            </DraggableCard>
-                          ))}
+                          {tasks.map((task) => {
+                            const t = normaliseTrack(task.track)
+                            const sub = task.subTrack ?? 'Other'
+                            const key = `${t}::${sub}`
+                            const subTarget = SUB_TRACK_TARGETS[t]?.subTracks[sub] ?? 0
+                            const subAllocated = allocations.subTrackTotals[key] ?? 0
+                            const isFull = fullSubTracks.has(key)
+                            return (
+                              <DraggableCard
+                                key={task.id}
+                                id={task.id}
+                                disabled={isFull}
+                                className={highlightedTemplateIds.has(task.id) ? 'ring-2 ring-amber-400 ring-offset-1 rounded-md' : ''}
+                              >
+                                <BinTaskCard
+                                  task={task}
+                                  trackColor={TRACK_COLORS[t] ?? '#94a3b8'}
+                                  allocated={subAllocated}
+                                  target={subTarget}
+                                  isFull={isFull}
+                                  shaking={rejectedId === task.id}
+                                />
+                              </DraggableCard>
+                            )
+                          })}
                         </div>
                       )}
                     </div>
@@ -676,17 +788,23 @@ export default function WeekPlanner({
                   {flags.map((flag) => (
                     <div
                       key={flag.id}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm"
+                      className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm ${
+                        flag.over
+                          ? 'border-orange-200 bg-orange-50'
+                          : 'border-amber-200 bg-amber-50'
+                      }`}
                     >
-                      <AlertTriangle size={14} className="shrink-0 text-amber-500" />
-                      <span className="flex-1 text-amber-800">
+                      <AlertTriangle size={14} className={`shrink-0 ${flag.over ? 'text-orange-500' : 'text-amber-500'}`} />
+                      <span className={`flex-1 ${flag.over ? 'text-orange-800' : 'text-amber-800'}`}>
                         <strong>{TRACK_LABELS[flag.track] ?? flag.track} / {flag.subTrack}</strong>
-                        {' '}— {flag.assigned}m of {flag.target}m target ({Math.round((flag.assigned / flag.target) * 100)}%)
+                        {flag.over
+                          ? ` — over-allocated: ${flag.assigned}m vs ${flag.target}m target`
+                          : ` — ${flag.assigned}m of ${flag.target}m target (${Math.round((flag.assigned / flag.target) * 100)}%)`}
                       </span>
                       <button
                         type="button"
                         onClick={() => dismissFlag(flag.id)}
-                        className="text-amber-400 hover:text-amber-700"
+                        className={`${flag.over ? 'text-orange-400 hover:text-orange-700' : 'text-amber-400 hover:text-amber-700'}`}
                       >
                         <X size={14} />
                       </button>
@@ -717,13 +835,19 @@ export default function WeekPlanner({
                       </div>
                       {allBlocks.map((block) => {
                         const blockTasks = dayTasks.filter((t) => t.timeBlock === block)
+                        const blockMinutes = blockTasks.reduce((s, t) => s + (t.estimateMinutes ?? 0), 0)
                         return (
                           <DroppableZone
                             key={block}
                             id={`${dayName}::${block}`}
                             className="min-h-[60px] rounded-lg border border-dashed border-slate-200 bg-slate-50 p-1.5"
                           >
-                            <p className="mb-1 text-[9px] font-semibold uppercase text-slate-400">{block}</p>
+                            <div className="mb-1 flex items-center justify-between">
+                              <p className="text-[9px] font-semibold uppercase text-slate-400">{block}</p>
+                              {blockMinutes > 0 && (
+                                <p className="text-[9px] text-slate-400">{blockMinutes}m</p>
+                              )}
+                            </div>
                             {blockTasks.map((task) => {
                               const track = normaliseTrack(task.track)
                               return (
@@ -732,6 +856,7 @@ export default function WeekPlanner({
                                     task={task}
                                     trackColor={TRACK_COLORS[track] ?? '#94a3b8'}
                                     onRemove={() => removeTaskFromDay(dayName, task.id)}
+                                    onEditMinutes={(n) => updateInstanceMinutes(dayName, task.id, n)}
                                     shaking={rejectedId === task.id}
                                   />
                                 </DraggableCard>
@@ -795,13 +920,13 @@ export default function WeekPlanner({
           {/* Drag Overlay */}
           <DragOverlay>
             {activeDragTask ? (
-              <TaskCard
-                task={{
-                  ...activeDragTask,
-                  estimateMinutes: activeDragTask.estimateMinutes ?? activeDragTask.defaultTimeEstimate ?? 25,
-                }}
-                trackColor={TRACK_COLORS[normaliseTrack(activeDragTask.track)] ?? '#94a3b8'}
-              />
+              <div
+                className="rounded-md border bg-white px-2 py-1.5 text-xs shadow-lg select-none opacity-95"
+                style={{ borderLeftColor: TRACK_COLORS[normaliseTrack(activeDragTask.track)] ?? '#94a3b8', borderLeftWidth: 3, minWidth: 140 }}
+              >
+                <p className="font-medium text-slate-700 truncate">{activeDragTask.name}</p>
+                <p className="text-slate-400">{activeDragTask.estimateMinutes ?? activeDragTask.defaultTimeEstimate ?? 25}m</p>
+              </div>
             ) : null}
           </DragOverlay>
         </DndContext>
