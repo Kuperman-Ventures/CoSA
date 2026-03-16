@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import WeekPlanner from './components/WeekPlanner'
-import { Pause, Play, SquareCheck, StopCircle, GripVertical, Sparkles, AlertTriangle, Clock, Settings, Eye, EyeOff } from 'lucide-react'
+import { Pause, Play, SquareCheck, StopCircle, GripVertical, Sparkles, AlertTriangle, Clock, Settings, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   DndContext,
   closestCenter,
@@ -1180,6 +1180,7 @@ function App() {
   const [lastDeploymentAt, setLastDeploymentAt] = useState(bootstrap.lastDeploymentAt)
   const [queueDate, setQueueDate] = useState(bootstrap.queueDate)
   const [libraryFilter, setLibraryFilter] = useState('All')
+  const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
   const [rescheduleQueue, setRescheduleQueue] = useState(bootstrap.rescheduleQueue)
   const [deferredTasks, setDeferredTasks] = useState(bootstrap.deferredTasks)
   const [aiSuggestion, setAiSuggestion] = useState({ loading: false, text: '', error: '' })
@@ -3296,72 +3297,129 @@ function App() {
               Last deployment: {new Date(lastDeploymentAt).toLocaleString()}
             </p>
           </div>
-          <ul className="space-y-2">
-            {filteredTaskLibrary.map((task) => {
-              const selected = task.id === effectiveSelectedLibraryTaskId
-              const meta = getTrackMeta(task.track)
-              const isDeployed = deployedTemplateIds.has(task.id)
-              return (
-                <li key={task.id}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedLibraryTaskId(task.id)
-                      setLibraryMessage('')
-                    }}
-                    className={`w-full rounded-md border px-2 py-2 text-left text-sm ${
-                      selected
-                        ? 'border-slate-900 bg-slate-900 text-white'
-                        : isDeployed
-                          ? 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
-                          : 'border-slate-200 bg-white hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate">{task.name}</span>
-                      <div className="flex flex-shrink-0 items-center gap-1.5">
-                        {isDeployed ? (
-                          <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
-                            selected ? 'bg-emerald-500 text-white' : 'bg-emerald-100 text-emerald-700'
-                          }`}>
-                            In Today
-                          </span>
-                        ) : null}
-                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta?.color }} />
-                      </div>
-                    </div>
-                    <div className="mt-1 flex items-center justify-between text-xs opacity-80">
-                      <span>{task.status}</span>
-                      <span>{task.defaultTimeEstimate}m</span>
-                    </div>
-                    <div className="mt-1 flex gap-0.5">
-                      {['M', 'T', 'W', 'T', 'F'].map((abbr, i) => {
-                        const fullDay = DAYS_OF_WEEK[i]
-                        const active = (task.daysOfWeek ?? ALL_WEEKDAYS).includes(fullDay)
-                        return (
-                          <span
-                            key={fullDay}
-                            className={`rounded px-0.5 text-[9px] font-medium ${
-                              active
-                                ? selected ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700'
-                                : selected ? 'text-white/30' : 'text-slate-300'
-                            }`}
-                          >
-                            {abbr}
-                          </span>
-                        )
-                      })}
-                    </div>
-                  </button>
-                </li>
-              )
-            })}
+          <div className="space-y-3">
             {filteredTaskLibrary.length === 0 ? (
-              <li className="rounded-md border border-dashed border-slate-300 p-2 text-xs text-slate-500">
+              <p className="rounded-md border border-dashed border-slate-300 p-2 text-xs text-slate-500">
                 No tasks in this filter.
-              </li>
-            ) : null}
-          </ul>
+              </p>
+            ) : (() => {
+              // Group by track in display order
+              const trackOrder = [TRACKS.advisors.key, TRACKS.jobSearch.key, TRACKS.ventures.key]
+              const grouped = {}
+              for (const tk of trackOrder) grouped[tk] = []
+              for (const task of filteredTaskLibrary) {
+                const key = task.track ?? TRACKS.advisors.key
+                if (!grouped[key]) grouped[key] = []
+                grouped[key].push(task)
+              }
+              return trackOrder.map((trackKey) => {
+                const group = grouped[trackKey]
+                if (group.length === 0) return null
+                const meta = getTrackMeta(trackKey)
+                const collapsed = collapsedLibraryTracks[trackKey]
+                return (
+                  <div key={trackKey}>
+                    <button
+                      type="button"
+                      onClick={() => setCollapsedLibraryTracks((p) => ({ ...p, [trackKey]: !p[trackKey] }))}
+                      className="flex w-full items-center justify-between rounded-md px-1 py-1 hover:bg-slate-50"
+                    >
+                      <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: meta?.color }}>
+                        {meta?.label ?? trackKey}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                          {group.length}
+                        </span>
+                        {collapsed
+                          ? <ChevronRight size={12} className="text-slate-400" />
+                          : <ChevronDown size={12} className="text-slate-400" />
+                        }
+                      </div>
+                    </button>
+                    {!collapsed && (
+                      <ul className="mt-1 space-y-1.5 pl-1">
+                        {group.map((task) => {
+                          const selected = task.id === effectiveSelectedLibraryTaskId
+                          const isDeployed = deployedTemplateIds.has(task.id)
+                          return (
+                            <li key={task.id}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedLibraryTaskId(task.id)
+                                  setLibraryMessage('')
+                                }}
+                                className={`w-full rounded-md border px-2 py-2 text-left text-sm ${
+                                  selected
+                                    ? 'border-slate-900 bg-slate-900 text-white'
+                                    : isDeployed
+                                      ? 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
+                                      : task.status === 'Paused'
+                                        ? 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                                        : task.status === 'Archived'
+                                          ? 'border-slate-100 bg-white opacity-50 hover:opacity-100'
+                                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="min-w-0 truncate font-medium">{task.name}</span>
+                                  <div className="flex flex-shrink-0 items-center gap-1">
+                                    {isDeployed ? (
+                                      <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                        selected ? 'bg-emerald-500 text-white' : 'bg-emerald-100 text-emerald-700'
+                                      }`}>
+                                        In Today
+                                      </span>
+                                    ) : null}
+                                    {task.status === 'Paused' && !selected && (
+                                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">
+                                        Paused
+                                      </span>
+                                    )}
+                                    {task.status === 'Archived' && !selected && (
+                                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500">
+                                        Archived
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="mt-1 flex items-center justify-between text-xs opacity-70">
+                                  {task.subTrack
+                                    ? <span>{task.subTrack}</span>
+                                    : <span>{task.timeBlock}</span>
+                                  }
+                                  <span>{task.defaultTimeEstimate}m</span>
+                                </div>
+                                <div className="mt-1 flex gap-0.5">
+                                  {['M', 'T', 'W', 'T', 'F'].map((abbr, i) => {
+                                    const fullDay = DAYS_OF_WEEK[i]
+                                    const active = (task.daysOfWeek ?? ALL_WEEKDAYS).includes(fullDay)
+                                    return (
+                                      <span
+                                        key={fullDay}
+                                        className={`rounded px-0.5 text-[9px] font-medium ${
+                                          active
+                                            ? selected ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700'
+                                            : selected ? 'text-white/30' : 'text-slate-300'
+                                        }`}
+                                      >
+                                        {abbr}
+                                      </span>
+                                    )
+                                  })}
+                                </div>
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                )
+              })
+            })()}
+          </div>
           <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2">
             <p className="text-[11px] font-semibold uppercase text-slate-500">
               Today&apos;s Deploy Preview · {DAY_NAMES[new Date().getDay()]}
