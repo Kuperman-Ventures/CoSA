@@ -292,7 +292,7 @@ export default function WeekPlanner({
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  // ── Allocation computation ────────────────────────────────────────────────
+  // ── Allocation computation — draft plan ──────────────────────────────────
 
   const allocations = useMemo(() => {
     const trackTotals = { advisors: 0, jobSearch: 0, ventures: 0 }
@@ -309,6 +309,37 @@ export default function WeekPlanner({
     }
     return { trackTotals, subTrackTotals }
   }, [planDays, taskLibrary])
+
+  // ── Allocation computation — live Google Calendar data ───────────────────
+  // When fetchedCalEvents is available (after Sync), derive allocations from
+  // actual GCal event durations + cosaTemplateId → subTrack lookup.
+  // This replaces draft-plan allocations so the tracker matches the calendar.
+
+  const calAllocations = useMemo(() => {
+    if (!fetchedCalEvents || fetchedCalEvents.length === 0) return null
+    const trackTotals = { advisors: 0, jobSearch: 0, ventures: 0 }
+    const subTrackTotals = {}
+    for (const ev of fetchedCalEvents) {
+      const templateId = ev.extendedProperties?.private?.cosaTemplateId
+      if (!templateId) continue
+      const lib = taskLibrary.find((t) => t.id === templateId)
+      if (!lib) continue
+      const track = normaliseTrack(lib.track)
+      if (!track || trackTotals[track] === undefined) continue
+      const durationMin =
+        ev.start?.dateTime && ev.end?.dateTime
+          ? Math.round((new Date(ev.end.dateTime) - new Date(ev.start.dateTime)) / 60000)
+          : 0
+      if (durationMin <= 0) continue
+      trackTotals[track] = (trackTotals[track] ?? 0) + durationMin
+      const subTrack = lib.subTrack ?? null
+      if (subTrack) {
+        const key = `${track}::${subTrack}`
+        subTrackTotals[key] = (subTrackTotals[key] ?? 0) + durationMin
+      }
+    }
+    return { trackTotals, subTrackTotals }
+  }, [fetchedCalEvents, taskLibrary])
 
   // ── Task bin — always shows all active tasks ──────────────────────────────
 
@@ -921,7 +952,12 @@ export default function WeekPlanner({
               </div>
 
               {/* Health bars */}
-              <HealthBars allocations={allocations} expandedSubTracks={expandedSubTracks} setExpandedSubTracks={setExpandedSubTracks} />
+              <HealthBars
+                allocations={calAllocations ?? allocations}
+                usingLiveData={calAllocations !== null}
+                expandedSubTracks={expandedSubTracks}
+                setExpandedSubTracks={setExpandedSubTracks}
+              />
 
               {/* Actions */}
               <div className="mt-4 flex items-center gap-2 flex-wrap">
@@ -1013,10 +1049,18 @@ export default function WeekPlanner({
 
 // ─── Health Bars sub-component ────────────────────────────────────────────────
 
-function HealthBars({ allocations, expandedSubTracks, setExpandedSubTracks }) {
+function HealthBars({ allocations, usingLiveData, expandedSubTracks, setExpandedSubTracks }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-xs font-bold uppercase text-slate-500">Weekly Allocation</h3>
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase text-slate-500">Weekly Allocation</h3>
+        {usingLiveData && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+            Live · Google Calendar
+          </span>
+        )}
+      </div>
       <div className="space-y-3">
         {Object.entries(SUB_TRACK_TARGETS).map(([track, data]) => {
           const assigned = allocations.trackTotals[track] ?? 0
