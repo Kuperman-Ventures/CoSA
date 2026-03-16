@@ -489,14 +489,25 @@ export default function WeekPlanner({
       const timeMax = `${friday}T23:59:59Z`
       const calEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
 
-      // Build a map of templateId → { calEventId, date }
+      // Build a map of templateId → { calEventId, date, timeBlock }
       const calMap = {}
       for (const ev of calEvents) {
         const tId = ev.extendedProperties?.private?.cosaTemplateId
-        if (tId) calMap[tId] = { calEventId: ev.id, date: ev.start?.dateTime?.slice(0, 10) }
+        if (tId) {
+          calMap[tId] = {
+            calEventId: ev.id,
+            date: ev.start?.dateTime?.slice(0, 10) ?? ev.start?.date,
+          }
+        }
       }
 
-      // Find planned tasks missing from calendar or on a different day
+      // Build date → dayName lookup from planDays
+      const dateToDay = {}
+      for (const [dayName, dayData] of Object.entries(planDays)) {
+        if (dayData?.date) dateToDay[dayData.date] = dayName
+      }
+
+      // Diff: find deleted and moved tasks
       const deleted = []
       const moved = []
       for (const [dayName, dayData] of Object.entries(planDays)) {
@@ -505,12 +516,41 @@ export default function WeekPlanner({
           if (!calInfo) {
             deleted.push({ task, dayName, planDate: dayData.date })
           } else if (calInfo.date && calInfo.date !== dayData.date) {
-            moved.push({ task, dayName, planDate: dayData.date, calDate: calInfo.date })
+            const newDayName = dateToDay[calInfo.date] ?? null
+            moved.push({ task, dayName, planDate: dayData.date, calDate: calInfo.date, newDayName })
           }
         }
       }
 
       setCalendarDiff({ deleted, moved })
+
+      // Apply changes to planDays so the grid reflects Google Calendar
+      if (deleted.length > 0 || moved.length > 0) {
+        setPlanDays((prev) => {
+          const next = {}
+          for (const [dayName, dayData] of Object.entries(prev)) {
+            next[dayName] = { ...dayData, tasks: [...(dayData?.tasks ?? [])] }
+          }
+
+          // Remove deleted tasks from their day
+          for (const { task, dayName } of deleted) {
+            next[dayName].tasks = next[dayName].tasks.filter((t) => t.templateId !== task.templateId)
+          }
+
+          // Move tasks to their new day (if the new date is within this week)
+          for (const { task, dayName, newDayName, calDate } of moved) {
+            // Remove from old day
+            next[dayName].tasks = next[dayName].tasks.filter((t) => t.templateId !== task.templateId)
+            // Add to new day if it's in the plan
+            if (newDayName && next[newDayName]) {
+              next[newDayName].tasks = [...next[newDayName].tasks, { ...task }]
+            }
+            // If moved outside the week, task is dropped (returns to bin)
+          }
+
+          return next
+        })
+      }
     } catch (err) {
       setMessage(`Sync failed: ${err.message}`)
     } finally {
