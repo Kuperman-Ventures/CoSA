@@ -1358,16 +1358,23 @@ function App() {
         if (remoteTodayTasks && remoteTodayTasks.length > 0) {
           setTodayTasks(remoteTodayTasks)
           setQueueDate(targetStr)
-          // Load timer session state from Supabase so progress is restored even
-          // when localStorage is stale or the user signs in on another device.
-          const taskIds = remoteTodayTasks.map((t) => t.id)
-          const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
+          // Ensure every task has a session before any render fires.
           setSessions((prev) => {
             const next = { ...prev }
             remoteTodayTasks.forEach((task) => {
               if (!next[task.id]) next[task.id] = getInitialSession(task)
             })
-            if (remoteTimerSessions) {
+            return next
+          })
+          // Load timer session state from Supabase so progress is restored even
+          // when localStorage is stale or the user signs in on another device.
+          // This is done AFTER the initial setSessions so the render is never
+          // caught with todayTasks updated but sessions missing entries.
+          const taskIds = remoteTodayTasks.map((t) => t.id)
+          const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
+          if (remoteTimerSessions) {
+            setSessions((prev) => {
+              const next = { ...prev }
               remoteTimerSessions.forEach((remoteSession) => {
                 const { taskId } = remoteSession
                 if (!taskId) return
@@ -1383,9 +1390,9 @@ function App() {
                   }
                 }
               })
-            }
-            return next
-          })
+              return next
+            })
+          }
           // Load user preferences (cleared dates)
           const prefs = await loadUserPreferences(userId)
           if (prefs?.cleared_dates) {
