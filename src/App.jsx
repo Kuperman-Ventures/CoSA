@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import WeekPlanner from './components/WeekPlanner'
 import { Pause, Play, SquareCheck, StopCircle, GripVertical, Sparkles, AlertTriangle, Clock, Settings, Eye, EyeOff } from 'lucide-react'
 import {
   DndContext,
@@ -528,7 +529,7 @@ const NAV_ITEMS = [
   { id: 'today', label: 'Today' },
   { id: 'taskLibrary', label: 'Task Library' },
   { id: 'reschedule', label: 'Reschedule' },
-  { id: 'weekAhead', label: 'Week Ahead' },
+  { id: 'weekPlanner', label: 'Week Planner' },
   { id: 'kpi', label: 'KPI Dashboard' },
   { id: 'analytics', label: 'Analytics' },
   { id: 'settings', label: 'Settings' },
@@ -1030,6 +1031,7 @@ function App() {
   const [showAiRationale, setShowAiRationale] = useState(false)
   const [replanChoices, setReplanChoices] = useState({}) // taskKey → dayName | 'drop'
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
+  const [todayPreviewDate, setTodayPreviewDate] = useState(null)
   const [clearedDates, setClearedDates] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]') } catch { return [] }
   })
@@ -1258,6 +1260,60 @@ function App() {
     () => taskLibrary.filter((task) => task.status === 'Archived').length,
     [taskLibrary],
   )
+
+  // Day-scroll helpers for Today Queue sidebar preview
+  function formatScrollLabel(dateStr) {
+    const today = getTodayDateString()
+    if (dateStr === today) return 'Today'
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowStr = tomorrow.toISOString().slice(0, 10)
+    const d = new Date(dateStr + 'T12:00:00')
+    const label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    if (dateStr === tomorrowStr) return `Tomorrow — ${label}`
+    return label
+  }
+
+  function getWeekdayOffsetDate(baseStr, offsetDays) {
+    const d = new Date(baseStr + 'T12:00:00')
+    d.setDate(d.getDate() + offsetDays)
+    return d.toISOString().slice(0, 10)
+  }
+
+  const previewScrollBase = todayPreviewDate ?? getTodayDateString()
+  const weekScrollStart = weekPlan?.weekStartDate ?? getWeekStartDateStr()
+  const weekScrollEnd = (() => {
+    const d = new Date(weekScrollStart + 'T12:00:00')
+    d.setDate(d.getDate() + 4)
+    return d.toISOString().slice(0, 10)
+  })()
+
+  function canScrollPrev() {
+    return previewScrollBase > weekScrollStart
+  }
+  function canScrollNext() {
+    return previewScrollBase < weekScrollEnd
+  }
+  function goToPrevDay() {
+    let d = new Date(previewScrollBase + 'T12:00:00')
+    d.setDate(d.getDate() - 1)
+    if (d.getDay() === 0) d.setDate(d.getDate() - 2)
+    if (d.getDay() === 6) d.setDate(d.getDate() - 1)
+    const next = d.toISOString().slice(0, 10)
+    setTodayPreviewDate(next === getTodayDateString() ? null : next)
+  }
+  function goToNextDay() {
+    let d = new Date(previewScrollBase + 'T12:00:00')
+    d.setDate(d.getDate() + 1)
+    if (d.getDay() === 6) d.setDate(d.getDate() + 2)
+    if (d.getDay() === 0) d.setDate(d.getDate() + 1)
+    const next = d.toISOString().slice(0, 10)
+    setTodayPreviewDate(next)
+  }
+
+  const previewTasks = todayPreviewDate
+    ? (Object.values(weekPlan?.days ?? {}).find((d) => d.date === todayPreviewDate)?.tasks ?? [])
+    : null
 
   const kpiSummary = useMemo(() => {
     const { start: ws, end: we } = getWeekBounds(weekOffset)
@@ -2337,7 +2393,7 @@ function App() {
   }
 
   function handleReplanWeekFromToday() {
-    setActiveScreen('weekAhead')
+    setActiveScreen('weekPlanner')
     if (weekPlan && session?.provider_token) {
       handleReplan()
     }
@@ -4033,477 +4089,6 @@ function App() {
     )
   }
 
-  function renderWeekAhead() {
-    const today = new Date()
-    const isWeekend = today.getDay() === 0 || today.getDay() === 6
-    const planWeekStartDate = isWeekend || today.getDay() === 5
-      ? getNextMondayStr()
-      : getWeekStartDateStr()
-
-    const dayOfWeekRender = today.getDay()
-    const isFridayOrWeekendRender = dayOfWeekRender === 5 || dayOfWeekRender === 0 || dayOfWeekRender === 6
-    const generateLabel = isFridayOrWeekendRender ? 'Plan Next Week' : 'Plan Remaining Week'
-    // Soft nudge: on Friday, if no review exists for this week yet
-    const thisWeekStart = getWeekStartDateStr()
-    const missingFridayReview = dayOfWeekRender === 5 && !fridayReviews.some((r) => r.week_start === thisWeekStart)
-
-    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    const todayDayName = DAY_NAMES[today.getDay()]
-    const todayIndex = dayNames.indexOf(todayDayName)
-
-    const trackColors = {
-      advisors:   '#1E6B3C',
-      networking: '#B8600B',
-      jobSearch:  '#2E75B6',
-      ventures:   '#9B6BAE',
-    }
-
-    // ── Empty state ──────────────────────────────────────────────────────────
-    if (!weekPlan && !weekPlanLoading) {
-      return (
-        <section className="p-4">
-          <div className="mx-auto max-w-xl rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-            <h2 className="text-xl font-semibold text-slate-900">Week Ahead</h2>
-            <p className="mt-2 text-sm text-slate-600">
-              {isFridayOrWeekendRender
-                ? 'Generate a full Monday–Friday plan for next week based on your task library and any deferred items.'
-                : 'Generate a plan for the remaining days of this week based on your task library and any deferred items.'}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Planning for: week of {planWeekStartDate}
-            </p>
-            <button
-              type="button"
-              onClick={handleGenerateWeekPlan}
-              className="mt-6 w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white"
-            >
-              {generateLabel}
-            </button>
-            {missingFridayReview && (
-              <p className="mt-3 text-xs text-amber-700">
-                You haven&apos;t completed this week&apos;s Friday Review yet — plan anyway?
-              </p>
-            )}
-            {weekPlanMessage && (
-              <p className="mt-3 text-xs text-rose-600">{weekPlanMessage}</p>
-            )}
-          </div>
-        </section>
-      )
-    }
-
-    // ── Loading state ────────────────────────────────────────────────────────
-    if (weekPlanLoading || replanLoading) {
-      return (
-        <section className="p-4">
-          <p className="mb-4 text-center text-sm font-medium text-slate-600">
-            {replanLoading ? 'Replanning your week…' : 'Generating your week plan…'}
-          </p>
-          <div className="grid grid-cols-5 gap-3">
-            {dayNames.map((d) => (
-              <div key={d} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-                <div className="mb-3 h-4 w-16 animate-pulse rounded bg-slate-200" />
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="mb-2 h-14 animate-pulse rounded bg-slate-100" />
-                ))}
-              </div>
-            ))}
-          </div>
-        </section>
-      )
-    }
-
-    const isPublished = weekPlan?.status === 'published' || weekPlan?.status === 'replanned'
-    const isReplanning = weekPlan?.status === 'replanning'
-    const isReviewing = weekPlan?.status === 'reviewing'
-    const isDraft = !isPublished && !isReplanning && !isReviewing
-    // Replan is available whenever calendar sync is on and a plan exists —
-    // even if the plan status got reset to draft after a reload.
-    const canReplan = !!session?.provider_token && !!weekPlan && !replanLoading && !isReplanning && !isReviewing
-
-    // ── Draft / Published / Replanning state ─────────────────────────────────
-    return (
-      <section className="p-4">
-        {/* Header bar */}
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">Week Ahead</h2>
-            <p className="text-xs text-slate-500">Week of {weekPlan?.weekStartDate}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {isDraft && (
-              <button
-                type="button"
-                onClick={handleGenerateWeekPlan}
-                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Regenerate
-              </button>
-            )}
-            {canReplan && (
-              <button
-                type="button"
-                onClick={handleReplan}
-                className="rounded-md border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
-              >
-                Replan
-              </button>
-            )}
-            {(isReplanning || isReviewing) && (
-              <button
-                type="button"
-                onClick={handleApplyReplan}
-                disabled={weekPlanLoading}
-                className="rounded-md bg-blue-700 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-              >
-                Apply Replan
-              </button>
-            )}
-            {isDraft && (
-              <button
-                type="button"
-                onClick={handlePublishWeekPlan}
-                disabled={
-                  weekPlanLoading ||
-                  !dayNames.some((d) => (weekPlan?.days?.[d]?.tasks ?? []).length > 0)
-                }
-                className="rounded-md bg-slate-900 px-4 py-1.5 text-xs font-medium text-white disabled:opacity-40"
-              >
-                Publish to Calendar
-              </button>
-            )}
-          </div>
-        </div>
-
-        {weekPlanMessage && (
-          <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {weekPlanMessage}
-          </p>
-        )}
-
-        {/* Conversational review panel — shown while user is making decisions */}
-        {isReviewing && (
-          <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
-            <p className="mb-3 text-sm font-semibold text-blue-900">
-              Here's what changed in your calendar this week:
-            </p>
-
-            {/* Confirmed moves — no action needed */}
-            {(weekPlan.confirmedMoves ?? []).length > 0 && (
-              <div className="mb-3">
-                {(weekPlan.confirmedMoves ?? []).map((m, i) => (
-                  <div key={i} className="mb-1 flex items-start gap-2 text-xs text-blue-800">
-                    <span className="mt-0.5 text-blue-400">↪</span>
-                    <span>
-                      <span className="font-medium">{m.task.name}</span>
-                      {' '}was moved from {m.fromDay} to {m.toDay} — noted.
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Resized tasks — no action needed */}
-            {(weekPlan.resizedItems ?? []).length > 0 && (
-              <div className="mb-3">
-                {(weekPlan.resizedItems ?? []).map((r, i) => (
-                  <div key={i} className="mb-1 flex items-start gap-2 text-xs text-blue-800">
-                    <span className="mt-0.5 text-amber-500">⏱</span>
-                    <span>
-                      <span className="font-medium">{r.name}</span>
-                      {' '}was adjusted to {r.to}m (was {r.from}m) — I'll use the new duration.
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Pending decisions — ask the user */}
-            {(weekPlan.pendingDecisions ?? []).length > 0 && (
-              <div className="mt-3 space-y-3 border-t border-blue-200 pt-3">
-                <p className="text-xs font-semibold text-blue-900">
-                  These tasks were removed — what should I do with them?
-                </p>
-                {(weekPlan.pendingDecisions ?? []).map((pd, i) => {
-                  const choice = replanChoices[pd.task.templateId]
-                  const kpiVote = kpiCreditVotes[pd.task.templateId]
-                  return (
-                    <div key={i} className="rounded-lg border border-blue-200 bg-white p-3">
-                      <p className="mb-2 text-xs font-medium text-slate-800">
-                        <span className="mr-1 text-rose-400">✕</span>
-                        <span className="font-semibold">{pd.task.name}</span>
-                        <span className="ml-1 text-slate-400">
-                          ({pd.task.estimateMinutes}m · {pd.task.timeBlock}) — removed from {pd.originalDay}
-                        </span>
-                      </p>
-
-                      {/* KPI credit prompt when a personal event replaced this task */}
-                      {pd.kpiCreditCandidate && (
-                        <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-2">
-                          <p className="text-[10px] text-amber-800">
-                            Looks like <span className="font-semibold">{pd.task.name}</span> was replaced
-                            by <span className="font-semibold">{pd.kpiCreditCandidate.replacedBy}</span>
-                            {pd.kpiCreditCandidate.kpiMapping ? ` — did this count toward your ${pd.kpiCreditCandidate.kpiMapping} KPI?` : ' — did this count toward a KPI?'}
-                          </p>
-                          <div className="mt-1.5 flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setKpiCreditVotes((prev) => ({ ...prev, [pd.task.templateId]: true }))}
-                              className={`rounded px-2.5 py-0.5 text-[10px] font-medium transition-colors ${
-                                kpiVote === true
-                                  ? 'bg-amber-600 text-white'
-                                  : 'border border-amber-300 bg-white text-amber-700 hover:bg-amber-100'
-                              }`}
-                            >
-                              Yes — credit it
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setKpiCreditVotes((prev) => ({ ...prev, [pd.task.templateId]: false }))}
-                              className={`rounded px-2.5 py-0.5 text-[10px] font-medium transition-colors ${
-                                kpiVote === false
-                                  ? 'bg-slate-500 text-white'
-                                  : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-100'
-                              }`}
-                            >
-                              No
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      <p className="mb-2 text-[10px] text-slate-500">Should I reschedule it? If yes, when?</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(weekPlan.remainingDays ?? []).map((d) => (
-                          <button
-                            key={d}
-                            type="button"
-                            onClick={() => setReplanChoices((prev) => ({ ...prev, [pd.task.templateId]: d }))}
-                            className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${
-                              choice === d
-                                ? 'bg-blue-700 text-white'
-                                : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            {d.slice(0, 3)}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => setReplanChoices((prev) => ({ ...prev, [pd.task.templateId]: 'drop' }))}
-                          className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${
-                            choice === 'drop'
-                              ? 'bg-rose-600 text-white'
-                              : 'border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100'
-                          }`}
-                        >
-                          Drop it
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* No changes at all */}
-            {(weekPlan.confirmedMoves ?? []).length === 0 &&
-             (weekPlan.resizedItems ?? []).length === 0 &&
-             (weekPlan.pendingDecisions ?? []).length === 0 && (
-              <p className="text-xs text-blue-700 italic">No changes detected — your plan matches the calendar.</p>
-            )}
-          </div>
-        )}
-
-        {/* 5-column day grid */}
-        <div className="grid grid-cols-5 gap-3">
-          {dayNames.map((dayName, dayIdx) => {
-            const dayData = (isReviewing ? weekPlan?.survivingDays : weekPlan?.days)?.[dayName] ?? { date: '', tasks: [] }
-            const isPast = todayIndex >= 0 && dayIdx < todayIndex
-            const isToday = dayIdx === todayIndex
-
-            // Detect over-scheduled blocks
-            const blockTotals = (dayData.tasks ?? []).reduce((acc, t) => {
-              const blk = t.timeBlock ?? 'BD'
-              acc[blk] = (acc[blk] ?? 0) + (t.estimateMinutes ?? 25)
-              return acc
-            }, {})
-            const overScheduledBlocks = Object.entries(blockTotals)
-              .filter(([blk, mins]) => mins > (BLOCK_CAPACITY_MINUTES[blk] ?? 999))
-              .map(([blk, mins]) => `${blk} (${mins}m / ${BLOCK_CAPACITY_MINUTES[blk]}m cap)`)
-
-            return (
-              <div
-                key={dayName}
-                className={`rounded-xl border bg-white p-3 shadow-sm ${
-                  isPast && (isReplanning || isReviewing) ? 'opacity-40' : ''
-                } ${isToday ? 'border-blue-300' : 'border-slate-200'}`}
-              >
-                <p className={`mb-2 text-xs font-semibold ${isToday ? 'text-blue-700' : 'text-slate-700'}`}>
-                  {dayName.slice(0, 3)}
-                  {dayData.date && (
-                    <span className="ml-1 font-normal text-slate-400">
-                      {new Date(dayData.date + 'T12:00:00').getDate()}
-                    </span>
-                  )}
-                  {isToday && <span className="ml-1 text-blue-500">·</span>}
-                </p>
-                {overScheduledBlocks.length > 0 && (
-                  <div
-                    className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[9px] text-amber-700"
-                    title={`Over-scheduled: ${overScheduledBlocks.join(', ')}`}
-                  >
-                    ⚠ Over-scheduled — remove tasks before publishing:{' '}
-                    {overScheduledBlocks.join(', ')}
-                  </div>
-                )}
-
-                {(dayData.tasks ?? []).length === 0 ? (
-                  <p className="text-[10px] text-slate-400 italic">No tasks</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {(dayData.tasks ?? []).map((task, taskIdx) => (
-                      <div
-                        key={`${dayName}-${taskIdx}`}
-                        className="relative rounded-md border border-slate-100 bg-slate-50 p-2 text-xs"
-                      >
-                        {!isPublished && !isReplanning && !(isPast && isReplanning) && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveTaskFromDraft(dayName, taskIdx)}
-                            className="absolute right-1 top-1 text-slate-300 hover:text-rose-500"
-                            aria-label="Remove task"
-                          >
-                            ×
-                          </button>
-                        )}
-                        <div className="flex items-start gap-1.5 pr-3">
-                          <span
-                            className="mt-0.5 h-1.5 w-1.5 flex-shrink-0 rounded-full"
-                            style={{ backgroundColor: trackColors[task.track] ?? '#94a3b8' }}
-                          />
-                          <span className="font-medium leading-tight text-slate-800">{task.name}</span>
-                        </div>
-                        <div className="mt-1 flex items-center gap-1">
-                          <span className="rounded bg-slate-200 px-1 py-0.5 text-[9px] text-slate-600">
-                            {task.timeBlock}
-                          </span>
-                          <span className="text-[9px] text-slate-400">{task.estimateMinutes}m</span>
-                          {task.isDeferred && (
-                            <span className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium text-amber-700">
-                              Deferred
-                            </span>
-                          )}
-                          {task.gcalEventId && (
-                            <span className="text-[9px] text-emerald-600">📅</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Rationale collapsible */}
-        {weekPlan?.aiRationale && (() => {
-          let r = null
-          try { r = JSON.parse(weekPlan.aiRationale) } catch { /* plain string fallback */ }
-          return (
-            <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setShowAiRationale((v) => !v)}
-                className="flex w-full items-center justify-between text-xs font-medium text-slate-700"
-              >
-                <span>Why this plan?</span>
-                <span className="text-slate-400">{showAiRationale ? '▲' : '▼'}</span>
-              </button>
-              {showAiRationale && (
-                <div className="mt-3 space-y-3 text-xs text-slate-600">
-                  {r ? (
-                    <>
-                      {/* Initial draft plan rationale */}
-                      {r.summary && (
-                        <>
-                          <p>{r.summary}</p>
-                          {r.deferred?.length > 0 && (
-                            <div>
-                              <p className="mb-1 font-semibold text-slate-700">Carried over from reschedule queue</p>
-                              <ul className="space-y-0.5 pl-3">
-                                {r.deferred.map((name, i) => (
-                                  <li key={i} className="flex items-start gap-1.5">
-                                    <span className="mt-0.5 text-amber-400">⟳</span>
-                                    <span>{name}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          {r.note && <p className="text-slate-400 italic">{r.note}</p>}
-                        </>
-                      )}
-                      {/* Replan rationale */}
-                      {r.noChanges && (
-                        <p className="text-slate-500 italic">No changes detected in your calendar — plan is unchanged.</p>
-                      )}
-                      {r.rescheduled?.length > 0 && (
-                        <div>
-                          <p className="mb-1 font-semibold text-slate-700">Rescheduled</p>
-                          <ul className="space-y-0.5 pl-3">
-                            {r.rescheduled.map((item, i) => (
-                              <li key={i} className="flex items-start gap-1.5">
-                                <span className="mt-0.5 text-blue-400">↪</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {r.dropped?.length > 0 && (
-                        <div>
-                          <p className="mb-1 font-semibold text-slate-700">Could not reschedule</p>
-                          <ul className="space-y-0.5 pl-3">
-                            {r.dropped.map((item, i) => (
-                              <li key={i} className="flex items-start gap-1.5">
-                                <span className="mt-0.5 text-rose-400">✕</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {r.resized?.length > 0 && (
-                        <div>
-                          <p className="mb-1 font-semibold text-slate-700">Duration adjusted</p>
-                          <ul className="space-y-0.5 pl-3">
-                            {r.resized.map((item, i) => (
-                              <li key={i} className="flex items-start gap-1.5">
-                                <span className="mt-0.5 text-amber-400">⏱</span>
-                                <span>
-                                  {item.name}
-                                  <span className="ml-1 text-slate-400">{item.from}m → {item.to}m</span>
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <p className="leading-relaxed">{weekPlan.aiRationale}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })()}
-      </section>
-    )
-  }
-
   function renderRescheduleScreen() {
     const pendingQueue = rescheduleQueue.filter((q) => q.status === 'pending')
     const reorderableTasks = todayTasks.filter((t) => {
@@ -5082,8 +4667,52 @@ function App() {
         <aside className="space-y-4">
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase text-slate-500">Today Queue</h3>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={goToPrevDay}
+                  disabled={!canScrollPrev()}
+                  className="rounded px-1 py-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                  title="Previous day"
+                >
+                  ←
+                </button>
+                <h3 className="text-sm font-semibold uppercase text-slate-500">
+                  {todayPreviewDate ? formatScrollLabel(todayPreviewDate) : 'Today Queue'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={goToNextDay}
+                  disabled={!canScrollNext()}
+                  className="rounded px-1 py-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                  title="Next day"
+                >
+                  →
+                </button>
+              </div>
               <div className="flex items-center gap-1.5">
+                {todayPreviewDate && (
+                  <button
+                    type="button"
+                    onClick={() => setTodayPreviewDate(null)}
+                    className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                  >
+                    Back to Today
+                  </button>
+                )}
+                {!todayPreviewDate && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClearFrom(getTodayDateString())
+                      setClearTo(getTodayDateString())
+                      setShowClearDayModal(true)
+                    }}
+                    className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-400 hover:border-slate-300 hover:text-slate-600"
+                  >
+                    Clear Day
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleReplanWeekFromToday}
@@ -5091,66 +4720,93 @@ function App() {
                 >
                   Replan Week
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setClearFrom(getTodayDateString())
-                    setClearTo(getTodayDateString())
-                    setShowClearDayModal(true)
-                  }}
-                  className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-400 hover:border-slate-300 hover:text-slate-600"
-                >
-                  Clear Day
-                </button>
               </div>
             </div>
-            <p className="mb-2 text-xs text-slate-500">
-              {queueDate ? `Queue for: ${formatQueueDate(queueDate)}` : `Deployed: ${new Date(lastDeploymentAt).toLocaleDateString()}`}
-            </p>
-            {tasksByBlock.map((group) => (
-              <div key={group.timeBlock} className="mb-3">
-                <p className="mb-1 text-xs font-semibold text-slate-500">{group.timeBlock}</p>
-                <ul className="space-y-1">
-                  {group.tasks.map((task) => {
-                    const session = sessions[task.id]
-                    const selected = task.id === activeTaskId
-                    const meta = getTrackMeta(task.track)
-                    return (
-                      <li key={task.id}>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTask(task.id)}
-                          className={`w-full rounded-md border px-2 py-2 text-left text-sm ${
-                            selected
-                              ? 'border-slate-900 bg-slate-900 text-white'
-                              : 'border-slate-200 bg-white hover:bg-slate-50'
-                          }`}
-                        >
+
+            {todayPreviewDate ? (
+              <>
+                <p className="mb-2 text-xs text-slate-400">Preview — read only</p>
+                {previewTasks && previewTasks.length > 0 ? (
+                  <ul className="space-y-1">
+                    {previewTasks.map((task) => {
+                      const lib = taskLibrary.find((t) => t.id === task.templateId)
+                      const meta = getTrackMeta(lib?.track ?? '')
+                      return (
+                        <li key={task.id ?? task.templateId} className="rounded-md border border-slate-200 px-2 py-2 text-sm">
                           <div className="flex items-center justify-between gap-2">
-                            <span>{task.name}</span>
-                            <span
-                              className="h-2 w-2 rounded-full"
-                              style={{ backgroundColor: meta?.color }}
-                            />
+                            <span className="text-slate-700">{task.name ?? lib?.name ?? '—'}</span>
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta?.color }} />
                           </div>
-                          <div className="mt-1 flex items-center justify-between text-xs opacity-80">
-                            <span>{session.timerState}</span>
-                            <span>{task.estimateMinutes}m</span>
-                          </div>
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            ))}
+                          <p className="mt-0.5 text-xs text-slate-400">{task.estimateMinutes ?? lib?.defaultTimeEstimate}m · {task.timeBlock}</p>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-slate-400">No tasks planned for this day yet.</p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="mb-2 text-xs text-slate-500">
+                  {queueDate ? `Queue for: ${formatQueueDate(queueDate)}` : `Deployed: ${new Date(lastDeploymentAt).toLocaleDateString()}`}
+                </p>
+                {tasksByBlock.map((group) => (
+                  <div key={group.timeBlock} className="mb-3">
+                    <p className="mb-1 text-xs font-semibold text-slate-500">{group.timeBlock}</p>
+                    <ul className="space-y-1">
+                      {group.tasks.map((task) => {
+                        const session = sessions[task.id]
+                        const selected = task.id === activeTaskId
+                        const meta = getTrackMeta(task.track)
+                        return (
+                          <li key={task.id}>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTask(task.id)}
+                              className={`w-full rounded-md border px-2 py-2 text-left text-sm ${
+                                selected
+                                  ? 'border-slate-900 bg-slate-900 text-white'
+                                  : 'border-slate-200 bg-white hover:bg-slate-50'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span>{task.name}</span>
+                                <span
+                                  className="h-2 w-2 rounded-full"
+                                  style={{ backgroundColor: meta?.color }}
+                                />
+                              </div>
+                              <div className="mt-1 flex items-center justify-between text-xs opacity-80">
+                                <span>{session.timerState}</span>
+                                <span>{task.estimateMinutes}m</span>
+                              </div>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </>
+            )}
           </section>
         </aside>
       </section>
       ) : null}
       {activeScreen === 'taskLibrary' ? renderTaskLibrary() : null}
       {activeScreen === 'reschedule' ? renderRescheduleScreen() : null}
-      {activeScreen === 'weekAhead' ? renderWeekAhead() : null}
+      {activeScreen === 'weekPlanner' ? (
+        <WeekPlanner
+          weekPlan={weekPlan}
+          setWeekPlan={setWeekPlan}
+          taskLibrary={taskLibrary}
+          session={session}
+          rescheduleQueue={rescheduleQueue}
+          supabaseConfigured={supabaseConfigured}
+          onTriggerReplan={handleReplan}
+        />
+      ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
       {activeScreen === 'analytics' ? renderAnalyticsScreen() : null}
       {activeScreen === 'settings' ? renderSettingsScreen() : null}
