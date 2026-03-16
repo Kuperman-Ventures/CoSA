@@ -204,6 +204,7 @@ export default function WeekPlanner({
   const [message, setMessage] = useState('')
   const [clearConfirm, setClearConfirm] = useState(false)
   const [calendarDiff, setCalendarDiff] = useState(null)
+  const [fetchedCalEvents, setFetchedCalEvents] = useState(null) // raw GCal events after sync
   const [syncingCalendar, setSyncingCalendar] = useState(false)
   const [highlightedTemplateIds, setHighlightedTemplateIds] = useState(new Set())
 
@@ -485,69 +486,72 @@ export default function WeekPlanner({
     try {
       const monday = weekStartDate
       const friday = getDayDate(weekStartDate, 'Friday')
-      const timeMin = `${monday}T00:00:00Z`
-      const timeMax = `${friday}T23:59:59Z`
+      // Use local midnight bounds so we don't miss events at the day edges
+      const timeMin = `${monday}T00:00:00`
+      const timeMax = `${friday}T23:59:59`
       const calEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
 
-      // Build a map of templateId → { calEventId, date, timeBlock }
-      const calMap = {}
+      // Store raw events so Calendar tab can render actual GCal state
+      setFetchedCalEvents(calEvents)
+
+      // Build templateId → { calEventId, date } — allow multiple events per templateId
+      // (same task on multiple days), store them all
+      const calMap = {} // templateId → array of { calEventId, date }
       for (const ev of calEvents) {
         const tId = ev.extendedProperties?.private?.cosaTemplateId
-        if (tId) {
-          calMap[tId] = {
-            calEventId: ev.id,
-            date: ev.start?.dateTime?.slice(0, 10) ?? ev.start?.date,
-          }
+        const evDate = ev.start?.dateTime?.slice(0, 10) ?? ev.start?.date
+        if (tId && evDate) {
+          if (!calMap[tId]) calMap[tId] = []
+          calMap[tId].push({ calEventId: ev.id, date: evDate })
         }
       }
 
-      // Build date → dayName lookup from planDays
+      // Build date → dayName lookup
       const dateToDay = {}
       for (const [dayName, dayData] of Object.entries(planDays)) {
         if (dayData?.date) dateToDay[dayData.date] = dayName
       }
 
-      // Diff: find deleted and moved tasks
+      // Diff: compare planDays tasks against live Google Calendar events
       const deleted = []
       const moved = []
       for (const [dayName, dayData] of Object.entries(planDays)) {
         for (const task of dayData?.tasks ?? []) {
-          const calInfo = calMap[task.templateId]
-          if (!calInfo) {
+          const calEntries = calMap[task.templateId]
+          if (!calEntries || calEntries.length === 0) {
+            // No matching event in calendar at all — was deleted
             deleted.push({ task, dayName, planDate: dayData.date })
-          } else if (calInfo.date && calInfo.date !== dayData.date) {
-            const newDayName = dateToDay[calInfo.date] ?? null
-            moved.push({ task, dayName, planDate: dayData.date, calDate: calInfo.date, newDayName })
+          } else {
+            // Check if there's an entry on the expected date
+            const onExpectedDate = calEntries.some((e) => e.date === dayData.date)
+            if (!onExpectedDate) {
+              // Event exists but on a different date — was moved
+              const calEntry = calEntries[0]
+              const newDayName = dateToDay[calEntry.date] ?? null
+              moved.push({ task, dayName, planDate: dayData.date, calDate: calEntry.date, newDayName })
+            }
           }
         }
       }
 
-      setCalendarDiff({ deleted, moved })
+      setCalendarDiff({ deleted, moved, total: calEvents.length })
 
-      // Apply changes to planDays so the grid reflects Google Calendar
+      // Apply changes to planDays so the Assign grid reflects what's in GCal
       if (deleted.length > 0 || moved.length > 0) {
         setPlanDays((prev) => {
           const next = {}
           for (const [dayName, dayData] of Object.entries(prev)) {
             next[dayName] = { ...dayData, tasks: [...(dayData?.tasks ?? [])] }
           }
-
-          // Remove deleted tasks from their day
           for (const { task, dayName } of deleted) {
             next[dayName].tasks = next[dayName].tasks.filter((t) => t.templateId !== task.templateId)
           }
-
-          // Move tasks to their new day (if the new date is within this week)
-          for (const { task, dayName, newDayName, calDate } of moved) {
-            // Remove from old day
+          for (const { task, dayName, newDayName } of moved) {
             next[dayName].tasks = next[dayName].tasks.filter((t) => t.templateId !== task.templateId)
-            // Add to new day if it's in the plan
             if (newDayName && next[newDayName]) {
               next[newDayName].tasks = [...next[newDayName].tasks, { ...task }]
             }
-            // If moved outside the week, task is dropped (returns to bin)
           }
-
           return next
         })
       }
@@ -810,6 +814,7 @@ export default function WeekPlanner({
           taskLibrary={taskLibrary}
           weekStartDate={weekStartDate}
           calendarDiff={calendarDiff}
+          fetchedCalEvents={fetchedCalEvents}
           syncingCalendar={syncingCalendar}
           onSync={handleSyncCalendar}
           onReviewInAssign={handleReviewInAssignTab}
@@ -898,35 +903,61 @@ function HealthBars({ allocations, expandedSubTracks, setExpandedSubTracks }) {
   )
 }
 
+// Reverse-map Google Calendar colorId → track color
+const GCAL_COLOR_TO_TRACK_COLOR = {
+  '10': TRACK_COLORS.advisors,   // Basil → Advisors green
+  '9':  TRACK_COLORS.jobSearch,  // Blueberry → Job Search blue
+  '6':  TRACK_COLORS.jobSearch,  // Tangerine → Networking (also job search)
+  '3':  TRACK_COLORS.ventures,   // Grape → Ventures purple
+}
+
 // ─── Calendar view sub-component ──────────────────────────────────────────────
 
-function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, syncingCalendar, onSync, onReviewInAssign, providerToken }) {
+function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, syncingCalendar, onSync, onReviewInAssign, providerToken }) {
   const GRID_START = 9   // 9:00am
   const GRID_END = 18    // 6:00pm
   const GRID_HOURS = GRID_END - GRID_START
+  const PX_PER_HOUR = 64
 
-  function taskTopPct(task) {
-    const startH = BLOCK_START_HOUR[task.timeBlock] ?? GRID_START
-    return ((startH - GRID_START) / GRID_HOURS) * 100
+  // Parse a GCal event into a renderable block
+  function parseCalEvent(ev) {
+    const dateTimeStr = ev.start?.dateTime ?? `${ev.start?.date}T09:00:00`
+    const endDateTimeStr = ev.end?.dateTime ?? `${ev.end?.date}T10:00:00`
+    const start = new Date(dateTimeStr)
+    const end = new Date(endDateTimeStr)
+    const startHour = start.getHours() + start.getMinutes() / 60
+    const durationMin = Math.round((end - start) / 60000)
+    const date = dateTimeStr.slice(0, 10)
+    const color = GCAL_COLOR_TO_TRACK_COLOR[ev.colorId] ?? '#64748b'
+    return { id: ev.id, name: ev.summary ?? '(no title)', startHour, durationMin, date, color }
   }
 
-  function taskHeightPct(task) {
-    const durationH = (task.estimateMinutes ?? 25) / 60
-    return (durationH / GRID_HOURS) * 100
+  // Build date → day column mapping
+  const dateToDay = {}
+  for (const [dayName, dayData] of Object.entries(planDays)) {
+    if (dayData?.date) dateToDay[dayData.date] = dayName
+  }
+  // Also compute dates for days that may not be in planDays yet
+  for (const dayName of DAY_NAMES) {
+    const date = planDays[dayName]?.date ?? getDayDate(weekStartDate, dayName)
+    if (!dateToDay[date]) dateToDay[date] = dayName
   }
 
-  // Build stacked offsets per block within a day to avoid full overlap
-  function buildOffsets(tasks) {
-    const blockOffsets = {}
-    const offsets = {}
-    for (const task of tasks) {
-      const b = task.timeBlock
-      blockOffsets[b] = (blockOffsets[b] ?? 0)
-      offsets[task.id ?? task.templateId] = blockOffsets[b]
-      blockOffsets[b] += task.estimateMinutes ?? 25
+  // When we have fetched events, group them by day column
+  const calEventsByDay = {}
+  if (fetchedCalEvents) {
+    for (const ev of fetchedCalEvents) {
+      const parsed = parseCalEvent(ev)
+      // Clamp to grid hours
+      if (parsed.startHour >= GRID_END || parsed.startHour + parsed.durationMin / 60 <= GRID_START) continue
+      const dayName = dateToDay[parsed.date]
+      if (!dayName) continue
+      if (!calEventsByDay[dayName]) calEventsByDay[dayName] = []
+      calEventsByDay[dayName].push(parsed)
     }
-    return offsets
   }
+
+  const usingLiveData = !!fetchedCalEvents
 
   return (
     <div>
@@ -935,7 +966,11 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, sync
         <div>
           <h2 className="text-sm font-semibold text-slate-700">Google Calendar Sync</h2>
           <p className="text-xs text-slate-500">
-            {providerToken ? 'Compare your plan against actual calendar events.' : 'Sign in with Google to enable calendar sync.'}
+            {!providerToken
+              ? 'Sign in with Google to enable calendar sync.'
+              : usingLiveData
+              ? `Showing live data — ${fetchedCalEvents.length} CoSA event${fetchedCalEvents.length !== 1 ? 's' : ''} found in Google Calendar.`
+              : 'Sync to see your actual Google Calendar events with real times.'}
           </p>
         </div>
         <button
@@ -953,7 +988,9 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, sync
       {calendarDiff && (calendarDiff.deleted.length > 0 || calendarDiff.moved.length > 0) ? (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-amber-800">Calendar Differences Found</h3>
+            <h3 className="text-sm font-semibold text-amber-800">
+              Changes detected — plan updated to match Google Calendar
+            </h3>
             <button
               type="button"
               onClick={onReviewInAssign}
@@ -965,29 +1002,40 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, sync
           {calendarDiff.deleted.map((d, i) => (
             <div key={i} className="mb-1 flex items-start gap-2 text-xs text-red-700">
               <span className="mt-0.5 shrink-0 h-2 w-2 rounded-full bg-red-500" />
-              <span><strong>{d.task.name}</strong> ({d.dayName}) — not found in Google Calendar</span>
+              <span><strong>{d.task.name}</strong> ({d.dayName}) — removed from Google Calendar, returned to bin</span>
             </div>
           ))}
           {calendarDiff.moved.map((m, i) => (
             <div key={i} className="mb-1 flex items-start gap-2 text-xs text-amber-700">
               <span className="mt-0.5 shrink-0 h-2 w-2 rounded-full bg-amber-500" />
-              <span><strong>{m.task.name}</strong> — plan: {m.planDate}, calendar: {m.calDate}</span>
+              <span><strong>{m.task.name}</strong> — moved from {m.planDate} to {m.calDate}{m.newDayName ? ` (${m.newDayName})` : ' (outside week)'}</span>
             </div>
           ))}
         </div>
       ) : calendarDiff ? (
         <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-          Calendar matches plan — no differences found.
+          {calendarDiff.total === 0
+            ? 'No CoSA events found in Google Calendar for this week. Have you published your plan?'
+            : 'Plan matches Google Calendar — no day changes detected.'}
         </div>
       ) : null}
 
-      {/* Time grid */}
+      {/* Time grid — live GCal events when synced, planDays fallback otherwise */}
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        {!usingLiveData && (
+          <div className="border-b border-slate-100 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+            Showing plan estimate — click <strong>Sync from Google Calendar</strong> to see actual event times
+          </div>
+        )}
         <div className="flex" style={{ minWidth: 700 }}>
           {/* Hour labels */}
           <div className="w-12 shrink-0 border-r border-slate-100 pt-8">
             {Array.from({ length: GRID_HOURS + 1 }, (_, i) => (
-              <div key={i} className="h-16 border-t border-slate-100 pr-1 text-right text-[10px] text-slate-400 leading-none -mt-2">
+              <div
+                key={i}
+                className="border-t border-slate-100 pr-1 text-right text-[10px] text-slate-400 leading-none"
+                style={{ height: PX_PER_HOUR, marginTop: i === 0 ? -8 : 0 }}
+              >
                 {i + GRID_START}:00
               </div>
             ))}
@@ -996,15 +1044,18 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, sync
           {/* Day columns */}
           {DAY_NAMES.map((dayName) => {
             const dayData = planDays[dayName]
-            const tasks = dayData?.tasks ?? []
-            const offsets = buildOffsets(tasks)
-            const gridHeight = GRID_HOURS * 64 // 64px per hour
+            const dayDate = dayData?.date ?? getDayDate(weekStartDate, dayName)
+            const gridHeight = GRID_HOURS * PX_PER_HOUR
+
+            // Use live GCal events if synced, otherwise fall back to planDays
+            const liveEvents = usingLiveData ? (calEventsByDay[dayName] ?? []) : null
+            const planTasks = dayData?.tasks ?? []
 
             return (
               <div key={dayName} className="flex-1 border-r border-slate-100 last:border-r-0">
                 <div className="border-b border-slate-200 p-2 text-center">
                   <p className="text-xs font-bold text-slate-700">{dayName.slice(0, 3)}</p>
-                  {dayData?.date && <p className="text-[10px] text-slate-400">{dayData.date}</p>}
+                  <p className="text-[10px] text-slate-400">{dayDate}</p>
                 </div>
                 <div className="relative" style={{ height: gridHeight }}>
                   {/* Hour lines */}
@@ -1012,35 +1063,49 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, sync
                     <div
                       key={i}
                       className="absolute left-0 right-0 border-t border-slate-100"
-                      style={{ top: `${(i / GRID_HOURS) * 100}%` }}
+                      style={{ top: i * PX_PER_HOUR }}
                     />
                   ))}
-                  {/* Task blocks */}
-                  {tasks.map((task) => {
-                    const track = normaliseTrack(task.track)
-                    const color = TRACK_COLORS[track] ?? '#94a3b8'
-                    const top = taskTopPct(task)
-                    const height = taskHeightPct(task)
-                    const id = task.id ?? task.templateId
-                    const lib = taskLibrary.find((t) => t.id === task.templateId)
 
-                    return (
-                      <div
-                        key={id}
-                        className="absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] text-white overflow-hidden"
-                        style={{
-                          top: `${top}%`,
-                          height: `${height}%`,
-                          backgroundColor: color,
-                          minHeight: 18,
-                        }}
-                        title={`${task.name} — ${task.estimateMinutes}m`}
-                      >
-                        <p className="font-medium truncate leading-tight">{task.name ?? lib?.name}</p>
-                        <p className="opacity-80">{task.estimateMinutes}m</p>
-                      </div>
-                    )
-                  })}
+                  {usingLiveData ? (
+                    // ── Live Google Calendar events with actual times ──
+                    liveEvents.map((ev) => {
+                      const topPx = Math.max(0, (ev.startHour - GRID_START) * PX_PER_HOUR)
+                      const heightPx = Math.max(18, (ev.durationMin / 60) * PX_PER_HOUR)
+                      return (
+                        <div
+                          key={ev.id}
+                          className="absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] text-white overflow-hidden shadow-sm"
+                          style={{ top: topPx, height: heightPx, backgroundColor: ev.color, minHeight: 18 }}
+                          title={`${ev.name} — ${ev.durationMin}m`}
+                        >
+                          <p className="font-medium truncate leading-tight">{ev.name}</p>
+                          {ev.durationMin >= 20 && <p className="opacity-80">{ev.durationMin}m</p>}
+                        </div>
+                      )
+                    })
+                  ) : (
+                    // ── Plan estimate (pre-sync) using block start positions ──
+                    planTasks.map((task) => {
+                      const startH = BLOCK_START_HOUR[task.timeBlock] ?? GRID_START
+                      const topPx = Math.max(0, (startH - GRID_START) * PX_PER_HOUR)
+                      const heightPx = Math.max(18, ((task.estimateMinutes ?? 25) / 60) * PX_PER_HOUR)
+                      const track = normaliseTrack(task.track)
+                      const color = TRACK_COLORS[track] ?? '#94a3b8'
+                      const lib = taskLibrary.find((t) => t.id === task.templateId)
+                      return (
+                        <div
+                          key={task.id ?? task.templateId}
+                          className="absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] text-white overflow-hidden opacity-70"
+                          style={{ top: topPx, height: heightPx, backgroundColor: color, minHeight: 18 }}
+                          title={`${task.name} — ${task.estimateMinutes}m (estimated position)`}
+                        >
+                          <p className="font-medium truncate leading-tight">{task.name ?? lib?.name}</p>
+                          {(task.estimateMinutes ?? 0) >= 20 && <p className="opacity-80">{task.estimateMinutes}m</p>}
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
               </div>
             )
