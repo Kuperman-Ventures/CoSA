@@ -430,7 +430,7 @@ const NAV_ITEMS = [
   { id: 'today', label: 'Today' },
   { id: 'taskLibrary', label: 'Task Library' },
   { id: 'weekPlanner', label: 'Calendar' },
-  { id: 'kpi', label: 'KPI Dashboard' },
+  { id: 'kpi', label: 'Weekly Review' },
   { id: 'settings', label: 'Settings' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
@@ -2288,15 +2288,25 @@ function App() {
     }
     const score = scoreConfig[weekScore]
 
-    const completionRateByTrack = Object.values(TRACKS).map((track) => {
-      const trackLog = completionLog.filter((e) => {
+    // Time This Week: hours logged per track from the completion log
+    const TRACK_HOUR_TARGETS = {
+      advisors:  16, // 960 min
+      networking: 3, // 180 min
+      jobSearch: 16, // 960 min
+      ventures:   8, // 480 min
+      cosaAdmin:  2, // 120 min
+    }
+    const timeByTrack = Object.values(TRACKS).map((track) => {
+      const entries = completionLog.filter((e) => {
         const d = new Date(e.completedAt)
         return d >= weekStart && d <= weekEnd && e.track === track.key
       })
-      const completed = trackLog.filter((e) => e.completionType === 'Done' || e.completionType === 'Done + Outcome').length
-      const total = trackLog.length
-      return { track, completed, total, rate: total > 0 ? Math.round((completed / total) * 100) : null }
-    })
+      const minutesLogged = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
+      const hoursLogged = minutesLogged / 60
+      const targetHours = TRACK_HOUR_TARGETS[track.key] ?? 0
+      const pct = targetHours > 0 ? Math.min(100, Math.round((hoursLogged / targetHours) * 100)) : 0
+      return { track, hoursLogged, targetHours, pct }
+    }).filter((t) => t.targetHours > 0)
 
     const weekStartStr = weekStart.toISOString().slice(0, 10)
     const savedReview = fridayReviews.find((r) => r.week_start === weekStartStr)
@@ -2313,6 +2323,7 @@ function App() {
             ← Prev
           </button>
           <div className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Weekly Review</p>
             <p className="text-sm font-semibold text-slate-900">{formatWeekLabel(weekStart, weekEnd)}</p>
             {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
           </div>
@@ -2334,6 +2345,32 @@ function App() {
           <p className={`mt-1 text-xs ${score.text} opacity-80`}>
             {kpisHit} of {weeklyKpis.length} weekly KPIs hit
           </p>
+        </article>
+
+        {/* Time This Week by Track */}
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
+          <div className="space-y-3">
+            {timeByTrack.map(({ track, hoursLogged, targetHours, pct }) => (
+              <div key={track.key}>
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-700">{track.label}</span>
+                  <span className={`font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}>
+                    {hoursLogged.toFixed(1)}h <span className="font-normal text-slate-400">/ {targetHours}h target</span>
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${pct}%`, backgroundColor: track.color }}
+                  />
+                </div>
+              </div>
+            ))}
+            {completionLog.filter((e) => { const d = new Date(e.completedAt); return d >= weekStart && d <= weekEnd }).length === 0 && (
+              <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
+            )}
+          </div>
         </article>
 
         {/* KPI scorecard by track group */}
@@ -2383,31 +2420,6 @@ function App() {
           )
         })}
 
-        {/* Completion rate by track */}
-        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold uppercase text-slate-500">Completion Rate by Track</h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {completionRateByTrack.map(({ track, completed, total, rate }) => (
-              <div key={track.key} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-center">
-                <p className="text-xs font-medium text-slate-500">{track.label}</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">{rate !== null ? `${rate}%` : '—'}</p>
-                <p className="text-xs text-slate-400">{completed} done / {total} total</p>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${rate ?? 0}%`, backgroundColor: track.color }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        {completionLog.length === 0 ? (
-          <p className="text-center text-sm text-slate-400">
-            Complete tasks to start building your KPI scorecard.
-          </p>
-        ) : null}
 
         {/* ── Friday Review ─────────────────────────────────────────────── */}
         <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
