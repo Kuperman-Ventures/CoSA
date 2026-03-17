@@ -1624,45 +1624,55 @@ function App() {
 
   function handleComplete() {
     if (!activeTask || !activeSession) return
+    handleCompleteTask(activeTask.id)
+  }
 
-    const current = sessions[activeTask.id]
-    if (!current) return
+  function handleCompleteTask(taskId) {
+    const task = todayTasks.find((t) => t.id === taskId)
+    const current = sessions[taskId]
+    if (!task || !current) return
 
     const pauseDelta =
       current.timerState === TIMER_STATES.paused && current.currentPauseStartedAtMs
         ? Math.floor((Date.now() - current.currentPauseStartedAtMs) / 1000)
         : 0
 
+    // If the timer was never started, credit the full estimate as elapsed
+    const elapsedSeconds = current.elapsedSeconds > 0
+      ? current.elapsedSeconds
+      : (current.estimateSeconds ?? task.estimateMinutes * 60)
+
     const now = new Date().toISOString()
 
     const nextSession = {
       ...current,
       timerState: TIMER_STATES.completed,
-      actualCompleted: completionInput.trim(),
-      pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
+      actualCompleted: current.timerState === TIMER_STATES.notStarted ? '(logged complete)' : (completionInput.trim() || ''),
+      elapsedSeconds,
+      pauseDurationSeconds: (current.pauseDurationSeconds ?? 0) + Math.max(0, pauseDelta),
       currentPauseStartedAtMs: null,
       completionLoggedAtISO: now,
     }
 
-    setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
+    setSessions((prev) => ({ ...prev, [taskId]: nextSession }))
 
     if (supabaseConfigured && session?.user?.id) {
-      upsertTimerSession(nextSession, activeTask, session.user.id)
+      upsertTimerSession(nextSession, task, session.user.id)
     }
 
     const logEntry = {
       id: current.sessionId ?? `log-${Date.now()}`,
-      taskName: activeTask.name,
-      track: activeTask.track,
-      kpiMapping: activeTask.kpiMapping ?? '',
+      taskName: task.name,
+      track: task.track,
+      kpiMapping: task.kpiMapping ?? '',
       completedAt: now,
       estimateSeconds: current.estimateSeconds,
-      elapsedSeconds: current.elapsedSeconds,
-      pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
+      elapsedSeconds,
+      pauseDurationSeconds: (current.pauseDurationSeconds ?? 0) + Math.max(0, pauseDelta),
       cancelledSeconds: 0,
     }
     setCompletionLog((prev) => [...prev, logEntry])
-    setStatusMessage('Task completed.')
+    setStatusMessage(`"${task.name}" marked complete.`)
   }
 
   async function handleSaveFridayReview() {
@@ -3001,27 +3011,37 @@ function App() {
                         const selected = task.id === activeTaskId
                         return (
                           <li key={task.id}>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTask(task.id)}
-                              className={`w-full rounded-md border px-2 py-2 text-left text-sm ${
-                                selected
-                                  ? 'border-slate-900 bg-slate-900 text-white'
-                                  : 'border-slate-200 bg-white hover:bg-slate-50'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="truncate">{task.name}</span>
-                                <span
-                                  className="h-2 w-2 shrink-0 rounded-full"
-                                  style={{ backgroundColor: group.track.color }}
-                                />
-                              </div>
-                              <div className="mt-1 flex items-center justify-between text-xs opacity-80">
-                                <span>{session?.timerState ?? 'Not Started'}</span>
-                                <span>{task.estimateMinutes}m</span>
-                              </div>
-                            </button>
+                            <div className="flex items-stretch gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setActiveTask(task.id)}
+                                className={`flex-1 rounded-md border px-2 py-2 text-left text-sm ${
+                                  selected
+                                    ? 'border-slate-900 bg-slate-900 text-white'
+                                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate">{task.name}</span>
+                                  <span
+                                    className="h-2 w-2 shrink-0 rounded-full"
+                                    style={{ backgroundColor: group.track.color }}
+                                  />
+                                </div>
+                                <div className="mt-1 flex items-center justify-between text-xs opacity-80">
+                                  <span>{session?.timerState ?? 'Not Started'}</span>
+                                  <span>{task.estimateMinutes}m</span>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCompleteTask(task.id)}
+                                title="Mark complete"
+                                className="rounded-md border border-slate-200 bg-white px-2 text-green-600 hover:bg-green-50 hover:border-green-300 text-base"
+                              >
+                                ✓
+                              </button>
+                            </div>
                           </li>
                         )
                       })}
