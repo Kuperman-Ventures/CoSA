@@ -25,6 +25,7 @@ const TRACK_COLOR_IDS = {
   networking: '6',  // Tangerine (orange)
   jobSearch:  '9',  // Blueberry (blue)
   ventures:   '3',  // Grape (purple)
+  cosaAdmin:  '7',  // Peacock (teal/cyan)
 }
 
 const BASE_URL = 'https://www.googleapis.com/calendar/v3/calendars'

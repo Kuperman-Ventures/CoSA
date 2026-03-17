@@ -16,21 +16,24 @@ import { createWeekPlanEvents, fetchCoSACalendarEvents, fetchPersonalCalendarEve
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
 const TRACK_LABELS = {
-  advisors:  'Kuperman Advisors',
-  jobSearch: 'Job Search',
-  ventures:  'Kuperman Ventures',
+  advisors:   'Kuperman Advisors',
+  jobSearch:  'Job Search',
+  ventures:   'Kuperman Ventures',
+  cosaAdmin:  'CoSA Administration',
 }
 
 const TRACK_COLORS = {
-  advisors:  '#1E6B3C',
-  jobSearch: '#2E75B6',
-  ventures:  '#9B6BAE',
+  advisors:   '#1E6B3C',
+  jobSearch:  '#2E75B6',
+  ventures:   '#9B6BAE',
+  cosaAdmin:  '#0891b2',
 }
 
 const TRACK_BG = {
-  advisors:  'bg-emerald-50 border-emerald-200',
-  jobSearch: 'bg-blue-50 border-blue-200',
-  ventures:  'bg-purple-50 border-purple-200',
+  advisors:   'bg-emerald-50 border-emerald-200',
+  jobSearch:  'bg-blue-50 border-blue-200',
+  ventures:   'bg-purple-50 border-purple-200',
+  cosaAdmin:  'bg-cyan-50 border-cyan-200',
 }
 
 const SUB_TRACK_TARGETS = {
@@ -45,6 +48,10 @@ const SUB_TRACK_TARGETS = {
   ventures: {
     weekly: 480,
     subTracks: { 'Alpha': 144, 'Growth': 120, 'Product': 72, 'Research': 48, 'Subscription': 48, 'Build': 72 },
+  },
+  cosaAdmin: {
+    weekly: 120,
+    subTracks: { 'Friday Review': 120 },
   },
 }
 
@@ -82,6 +89,7 @@ function getDayDate(weekStartDateStr, dayName) {
 function normaliseTrack(raw) {
   if (!raw) return null
   if (raw === 'networking') return 'jobSearch'
+  if (raw === 'CoSA Administration' || raw === 'cosaAdmin') return 'cosaAdmin'
   return raw
 }
 
@@ -313,7 +321,7 @@ export default function WeekPlanner({
   // ── Allocation computation — draft plan ──────────────────────────────────
 
   const allocations = useMemo(() => {
-    const trackTotals = { advisors: 0, jobSearch: 0, ventures: 0 }
+    const trackTotals = { advisors: 0, jobSearch: 0, ventures: 0, cosaAdmin: 0 }
     const subTrackTotals = {}
     for (const dayData of Object.values(planDays)) {
       for (const task of dayData?.tasks ?? []) {
@@ -338,7 +346,7 @@ export default function WeekPlanner({
     const hasTaggedData = Object.keys(eventTags).length > 0
     if (!hasCoSAData && !hasTaggedData) return null
 
-    const trackTotals = { advisors: 0, jobSearch: 0, ventures: 0 }
+    const trackTotals = { advisors: 0, jobSearch: 0, ventures: 0, cosaAdmin: 0 }
     const subTrackTotals = {}
 
     // CoSA calendar events (from sync)
@@ -1117,7 +1125,7 @@ export default function WeekPlanner({
               </button>
             </div>
             <p className="mb-3 text-xs text-slate-500">
-              Assign this event to a track so it counts toward your weekly allocation.
+              This event was placed on your calendar directly. Assign it to a track so it counts toward your weekly allocation.
             </p>
             <div className="space-y-3">
               <div>
@@ -1389,8 +1397,8 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
             {!providerToken
               ? 'Sign in with Google to enable calendar sync.'
               : usingLiveData
-              ? `Showing live data — ${fetchedCalEvents.length} CoSA event${fetchedCalEvents.length !== 1 ? 's' : ''} + ${fetchedPersonalEvents?.length ?? 0} personal event${(fetchedPersonalEvents?.length ?? 0) !== 1 ? 's' : ''} found. Click personal events to assign a track.`
-              : 'Sync to see your CoSA tasks and personal calendar events with real times.'}
+              ? `Showing live data — ${fetchedCalEvents.length} CoSA event${fetchedCalEvents.length !== 1 ? 's' : ''} + ${fetchedPersonalEvents?.length ?? 0} direct calendar event${(fetchedPersonalEvents?.length ?? 0) !== 1 ? 's' : ''} found. Click direct events to assign a track.`
+              : 'Sync to see your CoSA tasks and directly-placed calendar events with real times.'}
           </p>
         </div>
         <button
@@ -1529,7 +1537,7 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
                             <p className="text-[9px] font-medium text-slate-600 truncate leading-tight">{ev.name}</p>
                             {ev.durationMin >= 20 && (
                               <p className="text-[9px] text-slate-400">
-                                {ev.durationMin}m{tag ? ` · ${tag.subTrack ?? tag.track}` : ' · + assign'}
+                                {ev.durationMin}m{tag ? ` · ${tag.subTrack ?? tag.track}` : ' · tap to assign'}
                               </p>
                             )}
                           </button>

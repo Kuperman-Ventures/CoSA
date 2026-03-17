@@ -78,6 +78,12 @@ const TRACKS = {
     color: '#9B6BAE',
     priority: 3,
   },
+  cosaAdmin: {
+    key: 'cosaAdmin',
+    label: 'CoSA Administration',
+    color: '#0891b2',
+    priority: 4,
+  },
 }
 
 const TIMER_STATES = {
@@ -98,6 +104,7 @@ const TRACK_SUB_TRACKS = {
   advisors:  ['Business Development', 'Materials', 'Content', 'Meetings'],
   jobSearch: ['Networking', 'Searching', 'Applications', 'L&D', 'Boards', 'Admin', 'Other'],
   ventures:  ['Alpha', 'Growth', 'Product', 'Research', 'Subscription', 'Build'],
+  cosaAdmin: ['Friday Review'],
 }
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
