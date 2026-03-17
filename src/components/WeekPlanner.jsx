@@ -9,7 +9,7 @@ import {
 } from '../lib/supabaseSync'
 import {
   createCalendarEventAtTime,
-  patchCalendarEventTime,
+  updateCalendarEventAtTime,
   deleteCalendarEvent,
   fetchCoSACalendarEvents,
   fetchPersonalCalendarEvents,
@@ -273,7 +273,7 @@ function LibrarySidebar({ taskLibrary, onDragStart, collapsedTracks, setCollapse
 
 // ─── Calendar Event Block ─────────────────────────────────────────────────────
 
-function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick }) {
+function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick, onEdit }) {
   const priv = ev.extendedProperties?.private ?? {}
   const track = isPersonal ? tag?.track : priv.cosaTrack
   const color = TRACK_COLORS[track] ?? (isPersonal ? '#94a3b8' : '#64748b')
@@ -285,8 +285,9 @@ function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick }) {
   return (
     <div
       className={`absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] overflow-hidden group
-        ${isPersonal ? 'border border-dashed border-slate-300 bg-slate-50' : 'border-l-2 bg-white shadow-sm'}`}
+        ${isPersonal ? 'border border-dashed border-slate-300 bg-slate-50' : 'border-l-2 bg-white shadow-sm cursor-pointer hover:brightness-95'}`}
       style={{ top, height, borderColor: isPersonal ? undefined : color }}
+      onClick={!isPersonal ? (e) => { e.stopPropagation(); onEdit?.(ev) } : undefined}
     >
       <div className="flex items-start justify-between gap-0.5">
         <span className={`leading-tight font-medium ${isPersonal ? 'text-slate-500' : 'text-slate-700'} truncate`}>
@@ -303,20 +304,13 @@ function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick }) {
               <Tag size={9} />
             </button>
           )}
-          {!isPersonal && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onDelete?.(ev.id) }}
-              className="rounded p-0.5 hover:bg-red-100 text-slate-400 hover:text-red-500"
-              title="Delete event"
-            >
-              <X size={9} />
-            </button>
-          )}
         </div>
       </div>
       {height >= 32 && (
         <div className="text-slate-400 leading-none">{minsToTimeStr(startMins)} · {dur}m</div>
+      )}
+      {!isPersonal && priv.cosaSubTrack && (
+        <div className="truncate text-[9px] text-slate-400">{priv.cosaSubTrack}</div>
       )}
       {isPersonal && tag && (
         <div className="text-[9px]" style={{ color: TRACK_COLORS[tag.track] }}>
@@ -435,9 +429,130 @@ function LogBehindModal({ date, defaultStartMins, onSave, onClose }) {
   )
 }
 
+// ─── Edit Event Modal (CoSA events) ──────────────────────────────────────────
+
+function EditEventModal({ ev, onSave, onDelete, onClose }) {
+  const priv = ev.extendedProperties?.private ?? {}
+  const startMinsInit = isoToMinutes(ev.start?.dateTime ?? '')
+  const dur = eventDurationMins(ev)
+
+  const [name, setName]           = useState(ev.summary ?? '')
+  const [track, setTrack]         = useState(priv.cosaTrack ?? 'advisors')
+  const [subTrack, setSubTrack]   = useState(priv.cosaSubTrack ?? '')
+  const [startMins, setStartMins] = useState(startMinsInit)
+  const [durationMins, setDurationMins] = useState(dur || 30)
+  const [saving, setSaving]       = useState(false)
+
+  const dateStr = ev.start?.dateTime?.slice(0, 10) ?? ''
+
+  function toTimeInput(mins) {
+    const h = String(Math.floor(mins / 60)).padStart(2, '0')
+    const m = String(mins % 60).padStart(2, '0')
+    return `${h}:${m}`
+  }
+  function fromTimeInput(str) {
+    const [h, m] = str.split(':').map(Number)
+    return h * 60 + (m || 0)
+  }
+
+  async function handleSave() {
+    if (!name.trim()) return
+    setSaving(true)
+    const startISO = buildISO(dateStr, startMins)
+    const endISO   = buildISO(dateStr, startMins + durationMins)
+    await onSave(ev.id, { name: name.trim(), track, subTrack: subTrack || null, startISO, endISO })
+    setSaving(false)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-80 rounded-xl bg-white p-5 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Edit Calendar Event</h3>
+          <button type="button" onClick={onClose} className="rounded p-1 hover:bg-slate-100">
+            <X size={14} className="text-slate-400" />
+          </button>
+        </div>
+
+        <label className="mb-1 block text-xs font-medium text-slate-700">Event name</label>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          className="mb-3 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+        />
+
+        <label className="mb-1 block text-xs font-medium text-slate-700">Track</label>
+        <select
+          value={track}
+          onChange={(e) => { setTrack(e.target.value); setSubTrack('') }}
+          className="mb-3 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+        >
+          {Object.entries(TRACK_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+
+        <label className="mb-1 block text-xs font-medium text-slate-700">Sub-track</label>
+        <select
+          value={subTrack}
+          onChange={(e) => setSubTrack(e.target.value)}
+          className="mb-3 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+        >
+          <option value="">— none —</option>
+          {(TRACK_SUB_TRACKS[track] ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+
+        <div className="mb-4 grid grid-cols-2 gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">Start time</label>
+            <input
+              type="time"
+              value={toTimeInput(startMins)}
+              onChange={(e) => setStartMins(fromTimeInput(e.target.value))}
+              className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">Duration (min)</label>
+            <input
+              type="number"
+              min={5}
+              max={480}
+              value={durationMins}
+              onChange={(e) => setDurationMins(Number(e.target.value))}
+              className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => onDelete(ev.id)}
+            className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
+          >
+            Delete
+          </button>
+          <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-200 py-2 text-sm hover:bg-slate-50">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!name.trim() || saving}
+            onClick={handleSave}
+            className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Time Grid ────────────────────────────────────────────────────────────────
 
-function TimeGrid({ weekDates, weekEvents, personalEvents, calendarTags, draggingTask, onDropLibraryTask, onDeleteEvent, onTagEvent, onLogBehind }) {
+function TimeGrid({ weekDates, weekEvents, personalEvents, calendarTags, draggingTask, onDropLibraryTask, onDeleteEvent, onTagEvent, onEditEvent, onLogBehind }) {
   const TOTAL_HOURS = GRID_END_HOUR - GRID_START_HOUR
   const gridHeight  = TOTAL_HOURS * PX_PER_HOUR
   const hours = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => GRID_START_HOUR + i)
@@ -547,7 +662,7 @@ function TimeGrid({ weekDates, weekEvents, personalEvents, calendarTags, draggin
                   ev={ev}
                   isPersonal={false}
                   tag={null}
-                  onDelete={onDeleteEvent}
+                  onEdit={onEditEvent}
                 />
               ))}
             </div>
@@ -572,6 +687,7 @@ export default function WeekPlanner({
   const [loading, setLoading]             = useState(false)
   const [draggingTask, setDraggingTask]   = useState(null)
   const [tagModal, setTagModal]           = useState(null)
+  const [editModal, setEditModal]         = useState(null)
   const [logModal, setLogModal]           = useState(null)
   const [collapsedTracks, setCollapsedTracks] = useState({})
   const [error, setError]                 = useState('')
@@ -642,6 +758,20 @@ export default function WeekPlanner({
     if (!providerToken) return
     await deleteCalendarEvent(eventId, providerToken)
     setWeekEvents((prev) => prev.filter((e) => e.id !== eventId))
+    setEditModal(null)
+  }
+
+  // ── Edit a CoSA event ─────────────────────────────────────────────────────
+  async function handleSaveEdit(eventId, { name, track, subTrack, startISO, endISO }) {
+    if (!providerToken) return
+    const updated = await updateCalendarEventAtTime(
+      eventId, name, track, startISO, endISO, providerToken,
+      { subTrack: subTrack ?? '' },
+    )
+    if (updated) {
+      setWeekEvents((prev) => prev.map((e) => e.id === eventId ? updated : e))
+    }
+    setEditModal(null)
   }
 
   // ── Tag a personal event ──────────────────────────────────────────────────
@@ -743,6 +873,7 @@ export default function WeekPlanner({
               draggingTask={draggingTask}
               onDropLibraryTask={handleDropLibraryTask}
               onDeleteEvent={handleDeleteEvent}
+              onEditEvent={setEditModal}
               onTagEvent={handleOpenTag}
               onLogBehind={handleLogBehind}
             />
@@ -767,6 +898,14 @@ export default function WeekPlanner({
           defaultStartMins={logModal.startMins}
           onSave={handleSaveLog}
           onClose={() => setLogModal(null)}
+        />
+      )}
+      {editModal && (
+        <EditEventModal
+          ev={editModal}
+          onSave={handleSaveEdit}
+          onDelete={handleDeleteEvent}
+          onClose={() => setEditModal(null)}
         />
       )}
     </div>
