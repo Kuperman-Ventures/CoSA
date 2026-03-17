@@ -1036,14 +1036,29 @@ function App() {
   }
 
   const tasksByTrack = useMemo(() => {
+    // 1. Deduplicate: prefer the task with a calendarEventId; fallback key = name+duration
+    const seen = new Map()
+    const deduped = []
+    for (const t of todayTasks) {
+      const key = t.calendarEventId ?? `${t.name}__${t.estimateMinutes}`
+      if (!seen.has(key)) {
+        seen.set(key, true)
+        deduped.push(t)
+      }
+    }
+    // 2. Filter out completed/cancelled
+    const active = deduped.filter((t) => {
+      const s = sessions[t.id]
+      return s?.timerState !== TIMER_STATES.completed && s?.timerState !== TIMER_STATES.cancelled
+    })
     const trackOrder = Object.values(TRACKS).sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
     return trackOrder
       .map((track) => ({
         track,
-        tasks: todayTasks.filter((t) => t.track === track.key),
+        tasks: active.filter((t) => t.track === track.key),
       }))
       .filter((g) => g.tasks.length > 0)
-  }, [todayTasks])
+  }, [todayTasks, sessions])
   const filteredTaskLibrary = useMemo(() => {
     if (libraryFilter === 'All') return taskLibrary
     return taskLibrary.filter((task) => task.status === libraryFilter)
