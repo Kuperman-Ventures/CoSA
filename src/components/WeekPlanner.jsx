@@ -264,6 +264,7 @@ export default function WeekPlanner({
   rescheduleQueue,
   supabaseConfigured,
   onTriggerReplan,
+  onPublishComplete,
 }) {
   const [activeTab, setActiveTab] = useState('assign')
   const [planDays, setPlanDays] = useState(() => weekPlan?.days ?? {})
@@ -581,7 +582,7 @@ export default function WeekPlanner({
       setWeekPlan(updatedPlan)
       setPlanDays(updatedDays)
 
-      // Replace today tasks for each future weekday
+      // Replace today tasks for each present/future weekday
       const today = getTodayDateString()
       for (const [dayName, dayData] of Object.entries(updatedDays)) {
         if (!dayData?.date || dayData.date < today) continue
@@ -591,6 +592,9 @@ export default function WeekPlanner({
           dayData.date,
         )
       }
+
+      // Notify App.jsx so the Today sidebar queue refreshes from the plan
+      onPublishComplete?.(updatedPlan)
 
       setMessage(providerToken ? 'Published to Google Calendar.' : 'Published (no calendar token).')
     } catch (err) {

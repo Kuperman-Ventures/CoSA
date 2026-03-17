@@ -1170,6 +1170,7 @@ function App() {
   const [sessions, setSessions] = useState(bootstrap.sessions)
   const [definitionInput, setDefinitionInput] = useState('')
   const [completionInput, setCompletionInput] = useState('')
+  const [timerActionPending, setTimerActionPending] = useState(null) // 'start'|'pause'|'complete'|'cancel'|'partial'
   const [outcomeSelection, setOutcomeSelection] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -2020,6 +2021,12 @@ function App() {
     setCompletionInput(selectedSession.actualCompleted ?? '')
   }
 
+  function withTimerFeedback(key, fn) {
+    setTimerActionPending(key)
+    setTimeout(() => setTimerActionPending(null), 500)
+    fn()
+  }
+
   function handleStart() {
     if (!activeTask || !activeSession) return
     const isVenturesEncore =
@@ -2566,6 +2573,30 @@ function App() {
     if (weekPlan && session?.provider_token) {
       handleReplan()
     }
+  }
+
+  // Called by WeekPlanner after a successful publish.
+  // Refreshes today's queue from the newly published plan so the Today
+  // sidebar immediately reflects the plan — without disrupting an active timer.
+  function handlePublishComplete(updatedPlan) {
+    const todayStr = getTodayDateString()
+    const todayDayName = DAY_NAMES[new Date(todayStr + 'T12:00:00').getDay()]
+    const planDay = updatedPlan?.days?.[todayDayName]
+    if (!planDay || planDay.date !== todayStr || (planDay.tasks?.length ?? 0) === 0) return
+
+    // Don't disrupt a session that's actively running or paused
+    const hasActiveTimer = Object.values(sessions).some(
+      (s) => s.timerState === TIMER_STATES.running || s.timerState === TIMER_STATES.paused,
+    )
+    if (hasActiveTimer) return
+
+    const planSnapshot = planDay.tasks.map((planTask, index) =>
+      planTaskToTodayTask(planTask, taskLibrary, todayDayName, updatedPlan.id, index),
+    )
+    setTodayTasks(planSnapshot)
+    setQueueDate(todayStr)
+    setSessions(buildSessionsFromTodayTasks(planSnapshot))
+    if (planSnapshot.length > 0) setActiveTaskId(planSnapshot[0].id)
   }
 
   async function handleReplan() {
@@ -4749,16 +4780,25 @@ function App() {
           <div className="mb-4 grid gap-2 sm:grid-cols-4">
             <button
               type="button"
-              className="flex items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
-              onClick={handleStart}
+              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
+                timerActionPending === 'start'
+                  ? 'scale-95 bg-emerald-700 ring-2 ring-emerald-300'
+                  : 'bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300'
+              }`}
+              onClick={() => withTimerFeedback('start', handleStart)}
               disabled={isCompleted || isCancelled}
             >
-              <Play size={16} /> Start / Resume
+              <Play size={16} />
+              {timerActionPending === 'start' ? 'Starting…' : 'Start / Resume'}
             </button>
             <button
               type="button"
-              className="flex items-center justify-center gap-1 rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-amber-200"
-              onClick={handlePause}
+              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
+                timerActionPending === 'pause'
+                  ? 'scale-95 bg-amber-600 ring-2 ring-amber-300'
+                  : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-200'
+              }`}
+              onClick={() => withTimerFeedback('pause', handlePause)}
               disabled={
                 isCompleted ||
                 isCancelled ||
@@ -4766,33 +4806,48 @@ function App() {
                   activeSession.timerState !== TIMER_STATES.overrun)
               }
             >
-              <Pause size={16} /> Pause
+              <Pause size={16} />
+              {timerActionPending === 'pause' ? 'Pausing…' : 'Pause'}
             </button>
             <button
               type="button"
-              className="flex items-center justify-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-blue-300"
-              onClick={() => handleComplete(false)}
+              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
+                timerActionPending === 'complete'
+                  ? 'scale-95 bg-blue-700 ring-2 ring-blue-300'
+                  : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300'
+              }`}
+              onClick={() => withTimerFeedback('complete', () => handleComplete(false))}
               disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
             >
-              <SquareCheck size={16} /> Complete
+              <SquareCheck size={16} />
+              {timerActionPending === 'complete' ? 'Saving…' : 'Complete'}
             </button>
             <button
               type="button"
-              className="flex items-center justify-center gap-1 rounded-md bg-rose-600 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-rose-300"
-              onClick={handleCancel}
+              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
+                timerActionPending === 'cancel'
+                  ? 'scale-95 bg-rose-700 ring-2 ring-rose-300'
+                  : 'bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300'
+              }`}
+              onClick={() => withTimerFeedback('cancel', handleCancel)}
               disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
             >
-              <StopCircle size={16} /> Cancel
+              <StopCircle size={16} />
+              {timerActionPending === 'cancel' ? 'Cancelling…' : 'Cancel'}
             </button>
           </div>
           <div className="mb-4">
             <button
               type="button"
-              className="flex w-full items-center justify-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => handleComplete(true)}
+              className={`flex w-full items-center justify-center gap-1 rounded-md border px-3 py-2 text-sm font-medium transition-all duration-75 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 ${
+                timerActionPending === 'partial'
+                  ? 'scale-95 border-amber-400 bg-amber-100 text-amber-900 ring-2 ring-amber-300'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+              }`}
+              onClick={() => withTimerFeedback('partial', () => handleComplete(true))}
               disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
             >
-              Mark Partial — done for now, reschedule remainder
+              {timerActionPending === 'partial' ? 'Saving partial…' : 'Mark Partial — done for now, reschedule remainder'}
             </button>
           </div>
 
@@ -5031,6 +5086,7 @@ function App() {
           rescheduleQueue={rescheduleQueue}
           supabaseConfigured={supabaseConfigured}
           onTriggerReplan={handleReplan}
+          onPublishComplete={handlePublishComplete}
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
