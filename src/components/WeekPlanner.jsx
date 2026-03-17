@@ -9,7 +9,7 @@ import {
   loadCalendarEventTags,
   upsertCalendarEventTag,
 } from '../lib/supabaseSync'
-import { createWeekPlanEvents, fetchCoSACalendarEvents, fetchPersonalCalendarEvents, BLOCK_CAPACITY_MINUTES, createCalendarEventAtTime, deleteCalendarEvent } from '../lib/googleCalendar'
+import { createWeekPlanEvents, fetchCoSACalendarEvents, fetchPersonalCalendarEvents, BLOCK_CAPACITY_MINUTES, createCalendarEventAtTime, updateCalendarEventAtTime, deleteCalendarEvent } from '../lib/googleCalendar'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -307,9 +307,10 @@ export default function WeekPlanner({
   const [tagModalTrack, setTagModalTrack] = useState('')
   const [tagModalSubTrack, setTagModalSubTrack] = useState('')
   const [tagModalSaving, setTagModalSaving] = useState(false)
-  // Create calendar event modal
+  // Create / edit calendar event modal
   const [createEventModal, setCreateEventModal] = useState(null) // { date, startTime, endTime }
   const [createEventForm, setCreateEventForm] = useState({ title: '', track: 'advisors', subTrack: '', addToLibrary: false })
+  const [editingEventId, setEditingEventId] = useState(null)    // non-null → edit mode
   const [creatingEvent, setCreatingEvent] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null) // gcalEventId pending deletion
 
@@ -908,7 +909,7 @@ export default function WeekPlanner({
     return 'Encore OS'
   }
 
-  async function handleCreateCalendarEvent() {
+  async function handleSaveCalendarEvent() {
     const { title, track, subTrack, addToLibrary } = createEventForm
     const { date, startTime, endTime } = createEventModal ?? {}
     if (!providerToken || !title.trim() || !date) return
@@ -916,45 +917,89 @@ export default function WeekPlanner({
     try {
       const startISO = `${date}T${startTime}:00`
       const endISO   = `${date}T${endTime}:00`
+      const extras   = { ...(subTrack ? { subTrack } : {}) }
 
-      let templateId = null
-      if (addToLibrary && onAddLibraryTask) {
-        const durationMin = Math.max(5, Math.round((new Date(endISO) - new Date(startISO)) / 60000))
-        const newLibTask = {
-          id: `lib-${Date.now()}`,
-          name: title.trim(),
-          track,
-          subTrack: subTrack || null,
-          timeBlock: guessTimeBlock(startTime),
-          defaultTimeEstimate: durationMin,
-          status: 'Active',
-          completionType: 'Done',
-          frequency: 'Weekly',
-          requiresDefinitionOfDone: false,
-          kpiMapping: '',
-          subtasks: [],
-          outcomePrompt: '',
-          daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+      if (editingEventId) {
+        // ── Update existing event ──────────────────────────────────────────
+        const updatedEv = await updateCalendarEventAtTime(
+          editingEventId, title.trim(), track, startISO, endISO, providerToken, extras
+        )
+        if (updatedEv) {
+          setFetchedCalEvents((prev) => prev?.map((e) => e.id === editingEventId ? updatedEv : e) ?? prev)
         }
-        onAddLibraryTask(newLibTask)
-        templateId = newLibTask.id
+      } else {
+        // ── Create new event ───────────────────────────────────────────────
+        let templateId = null
+        if (addToLibrary && onAddLibraryTask) {
+          const durationMin = Math.max(5, Math.round((new Date(endISO) - new Date(startISO)) / 60000))
+          const newLibTask = {
+            id: `lib-${Date.now()}`,
+            name: title.trim(),
+            track,
+            subTrack: subTrack || null,
+            timeBlock: guessTimeBlock(startTime),
+            defaultTimeEstimate: durationMin,
+            status: 'Active',
+            completionType: 'Done',
+            frequency: 'Weekly',
+            requiresDefinitionOfDone: false,
+            kpiMapping: '',
+            subtasks: [],
+            outcomePrompt: '',
+            daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+          }
+          onAddLibraryTask(newLibTask)
+          templateId = newLibTask.id
+        }
+        const event = await createCalendarEventAtTime(
+          title.trim(), track, startISO, endISO, providerToken,
+          { ...(templateId ? { templateId } : {}), ...extras }
+        )
+        if (event) {
+          setFetchedCalEvents((prev) => (prev ? [...prev, event] : [event]))
+        }
       }
 
-      const event = await createCalendarEventAtTime(
-        title.trim(), track, startISO, endISO, providerToken,
-        { ...(templateId ? { templateId } : {}), ...(subTrack ? { subTrack } : {}) }
-      )
-      if (event) {
-        setFetchedCalEvents((prev) => (prev ? [...prev, event] : [event]))
-      }
       setCreateEventModal(null)
+      setEditingEventId(null)
       setCreateEventForm({ title: '', track: 'advisors', subTrack: '', addToLibrary: false })
     } catch (err) {
-      console.error('[handleCreateCalendarEvent]', err)
-      setMessage(`Failed to create event: ${err.message}`)
+      console.error('[handleSaveCalendarEvent]', err)
+      setMessage(`Failed to ${editingEventId ? 'update' : 'create'} event: ${err.message}`)
     } finally {
       setCreatingEvent(false)
     }
+  }
+
+  // Open the modal pre-filled with an existing CoSA event's data for editing
+  function handleOpenEditModal(eventId) {
+    const rawEv = fetchedCalEvents?.find((e) => e.id === eventId)
+    if (!rawEv) return
+    const priv = rawEv.extendedProperties?.private ?? {}
+    const templateId = priv.cosaTemplateId
+    let track    = priv.cosaTrack ?? 'advisors'
+    let subTrack = priv.cosaSubTrack ?? ''
+    if (templateId) {
+      const lib = taskLibrary.find((t) => t.id === templateId)
+      if (lib) {
+        track    = lib.track ?? track
+        subTrack = lib.subTrack ?? subTrack
+      }
+    }
+    const startISO = rawEv.start?.dateTime ?? ''
+    const endISO   = rawEv.end?.dateTime   ?? ''
+    setEditingEventId(eventId)
+    setCreateEventModal({
+      date:      startISO.slice(0, 10),
+      startTime: startISO.slice(11, 16),
+      endTime:   endISO.slice(11, 16),
+    })
+    setCreateEventForm({
+      title:        rawEv.summary ?? '',
+      track:        normaliseTrack(track) ?? 'advisors',
+      subTrack:     subTrack ?? '',
+      addToLibrary: false,
+    })
   }
 
   async function handleDeleteCalendarEvent(eventId) {
@@ -1279,9 +1324,11 @@ export default function WeekPlanner({
           onReviewInAssign={handleReviewInAssignTab}
           providerToken={providerToken}
           onCreateEvent={(params) => {
+            setEditingEventId(null)
             setCreateEventModal(params)
             setCreateEventForm({ title: '', track: 'advisors', subTrack: '', addToLibrary: false })
           }}
+          onEditEvent={handleOpenEditModal}
           onDeleteEvent={(id) => setDeleteConfirmId(id)}
           deleteConfirmId={deleteConfirmId}
           onDeleteConfirm={handleDeleteCalendarEvent}
@@ -1294,10 +1341,12 @@ export default function WeekPlanner({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white shadow-xl p-6">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-base font-semibold text-slate-800">New Calendar Event</h3>
+              <h3 className="text-base font-semibold text-slate-800">
+                {editingEventId ? 'Edit Event' : 'New Calendar Event'}
+              </h3>
               <button
                 type="button"
-                onClick={() => setCreateEventModal(null)}
+                onClick={() => { setCreateEventModal(null); setEditingEventId(null) }}
                 className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
               >
                 <X size={16} />
@@ -1396,18 +1445,20 @@ export default function WeekPlanner({
             <div className="mt-6 flex gap-2 justify-end">
               <button
                 type="button"
-                onClick={() => setCreateEventModal(null)}
+                onClick={() => { setCreateEventModal(null); setEditingEventId(null) }}
                 className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleCreateCalendarEvent}
+                onClick={handleSaveCalendarEvent}
                 disabled={creatingEvent || !createEventForm.title.trim()}
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                {creatingEvent ? 'Creating…' : 'Create Event'}
+                {creatingEvent
+                  ? (editingEventId ? 'Saving…' : 'Creating…')
+                  : (editingEventId ? 'Save Changes' : 'Create Event')}
               </button>
             </div>
           </div>
@@ -1636,7 +1687,7 @@ function layoutOverlappingEvents(events) {
 
 // ─── Calendar view sub-component ──────────────────────────────────────────────
 
-function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, fetchedPersonalEvents, eventTags, onTagEvent, syncingCalendar, onSync, onReviewInAssign, providerToken, onCreateEvent, onDeleteEvent, deleteConfirmId, onDeleteConfirm, onDeleteCancel }) {
+function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, fetchedPersonalEvents, eventTags, onTagEvent, syncingCalendar, onSync, onReviewInAssign, providerToken, onCreateEvent, onEditEvent, onDeleteEvent, deleteConfirmId, onDeleteConfirm, onDeleteCancel }) {
   const GRID_START = 9   // 9:00am
   const GRID_END = 18    // 6:00pm
   const GRID_HOURS = GRID_END - GRID_START
@@ -1890,6 +1941,10 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
                       return (
                         <div
                           key={ev.id}
+                          role={onEditEvent ? 'button' : undefined}
+                          tabIndex={onEditEvent ? 0 : undefined}
+                          onClick={() => !isConfirming && onEditEvent?.(ev.id)}
+                          onKeyDown={(e) => e.key === 'Enter' && !isConfirming && onEditEvent?.(ev.id)}
                           className="absolute rounded px-1 py-0.5 text-[10px] text-white overflow-hidden shadow-sm group"
                           style={{
                             top: topPx,
@@ -1898,8 +1953,9 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
                             left: `calc(${leftPct}% + 2px)`,
                             width: `calc(${colW}% - 4px)`,
                             backgroundColor: isConfirming ? '#ef4444' : ev.color,
+                            cursor: onEditEvent && !isConfirming ? 'pointer' : 'default',
                           }}
-                          title={`${ev.name} — ${ev.durationMin}m`}
+                          title={onEditEvent && !isConfirming ? `${ev.name} — ${ev.durationMin}m · click to edit` : `${ev.name} — ${ev.durationMin}m`}
                         >
                           {isConfirming ? (
                             <div className="flex items-center gap-1 h-full">

@@ -148,6 +148,32 @@ export async function deleteCalendarEvent(eventId, providerToken) {
 }
 
 /**
+ * Patch an existing CoSA calendar event with explicit start/end ISO datetimes.
+ * Stores cosaTrack/cosaSubTrack in extendedProperties so allocations work without a templateId.
+ * Returns the full updated GCal event object, or null on failure.
+ */
+export async function updateCalendarEventAtTime(eventId, title, track, startISO, endISO, providerToken, extras = {}) {
+  if (!providerToken || !eventId) return null
+  const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const body = {
+    summary:  title,
+    colorId:  TRACK_COLOR_IDS[track] ?? '1',
+    start: { dateTime: startISO, timeZone: userTz },
+    end:   { dateTime: endISO,   timeZone: userTz },
+    extendedProperties: {
+      private: {
+        cosaTag:   'cosa-event',
+        cosaTrack: track,
+        ...(extras.templateId ? { cosaTemplateId: extras.templateId } : {}),
+        ...(extras.subTrack   ? { cosaSubTrack:   extras.subTrack }   : {}),
+      },
+    },
+  }
+  const data = await gcalFetch(`/${eventId}`, 'PATCH', providerToken, body)
+  return data ?? null
+}
+
+/**
  * Create a CoSA calendar event with explicit start/end ISO datetimes.
  * Use this when the user sets the exact time (unlike createCalendarEvent which
  * derives times from a task's timeBlock).
