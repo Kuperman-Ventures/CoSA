@@ -1188,6 +1188,16 @@ function App() {
   const [statusMessage, setStatusMessage] = useState('')
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [session, setSession] = useState(null)
+  // gcalToken persists Google's provider_token across Supabase session refreshes.
+  // Supabase only captures provider_token at OAuth time; after its own JWT refreshes
+  // (~1 h) it returns provider_token: null. We cache it ourselves with a 55-min window.
+  const [gcalToken, setGcalToken] = useState(() => {
+    try {
+      const cached = localStorage.getItem('cosa.gcal.token')
+      const expiry = parseInt(localStorage.getItem('cosa.gcal.tokenExpiry') || '0')
+      return cached && Date.now() < expiry ? cached : null
+    } catch { return null }
+  })
   const [authBusy, setAuthBusy] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
   const [libraryMessage, setLibraryMessage] = useState('')
@@ -1335,14 +1345,31 @@ function App() {
 
     let isMounted = true
 
+    const cacheGcalToken = (token) => {
+      if (!token) return
+      try {
+        localStorage.setItem('cosa.gcal.token', token)
+        localStorage.setItem('cosa.gcal.tokenExpiry', String(Date.now() + 55 * 60 * 1000))
+      } catch { /* ignore */ }
+      setGcalToken(token)
+    }
+
     const hydrateSession = async () => {
-      const { data, error } = await supabase.auth.getSession()
+      let { data, error } = await supabase.auth.getSession()
       if (!isMounted) return
       if (error) {
         setAuthMessage(`Unable to load session: ${error.message}`)
         return
       }
+      // If signed in but provider_token missing, try a session refresh —
+      // newer Supabase versions restore it from the stored provider_refresh_token.
+      if (data.session && !data.session.provider_token) {
+        const { data: refreshed } = await supabase.auth.refreshSession()
+        if (!isMounted) return
+        if (refreshed?.session) data = refreshed
+      }
       setSession(data.session ?? null)
+      if (data.session?.provider_token) cacheGcalToken(data.session.provider_token)
     }
 
     hydrateSession()
@@ -1351,6 +1378,7 @@ function App() {
       if (!isMounted) return
       setSession(newSession)
       setAuthMessage('')
+      if (newSession?.provider_token) cacheGcalToken(newSession.provider_token)
     })
 
     return () => {
@@ -1358,6 +1386,16 @@ function App() {
       data.subscription.unsubscribe()
     }
   }, [supabaseConfigured])
+
+  // Keep gcalToken up-to-date when session.provider_token changes (e.g. after OAuth redirect).
+  useEffect(() => {
+    if (!session?.provider_token) return
+    try {
+      localStorage.setItem('cosa.gcal.token', session.provider_token)
+      localStorage.setItem('cosa.gcal.tokenExpiry', String(Date.now() + 55 * 60 * 1000))
+    } catch { /* ignore */ }
+    setGcalToken(session.provider_token)
+  }, [session?.provider_token])
 
   async function handleGoogleLogin() {
     if (!supabaseConfigured || !supabase) {
@@ -1372,6 +1410,10 @@ function App() {
       options: {
         redirectTo: window.location.origin,
         scopes: 'https://www.googleapis.com/auth/calendar.events',
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
       },
     })
 
@@ -1388,6 +1430,11 @@ function App() {
       setAuthMessage(`Sign out failed: ${error.message}`)
       return
     }
+    try {
+      localStorage.removeItem('cosa.gcal.token')
+      localStorage.removeItem('cosa.gcal.tokenExpiry')
+    } catch { /* ignore */ }
+    setGcalToken(null)
     setSession(null)
   }
 
@@ -1673,7 +1720,9 @@ function App() {
               let snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
 
               // Create calendar events for auto-deployed tasks
-              const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
+              const cached = localStorage.getItem('cosa.gcal.token')
+              const expiry = parseInt(localStorage.getItem('cosa.gcal.tokenExpiry') || '0')
+              const providerToken = cached && Date.now() < expiry ? cached : null
               if (providerToken) {
                 const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
                 if (Object.keys(eventIdMap).length > 0) {
@@ -1999,7 +2048,7 @@ function App() {
 
     // Create Google Calendar events (if Calendar scope granted)
     let finalSnapshot = snapshot
-    const providerToken = session?.provider_token
+    const providerToken = gcalToken
     if (providerToken) {
       const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, deployTargetDate)
       if (Object.keys(eventIdMap).length > 0) {
@@ -2345,8 +2394,8 @@ function App() {
 
     // Move the calendar event to the suggested date
     const matchedTask = todayTasks.find((t) => t.name === item.taskName)
-    if (matchedTask?.calendarEventId && session?.provider_token && item.suggestedDate) {
-      moveCalendarEvent(matchedTask.calendarEventId, matchedTask, session.provider_token, item.suggestedDate)
+    if (matchedTask?.calendarEventId && gcalToken && item.suggestedDate) {
+      moveCalendarEvent(matchedTask.calendarEventId, matchedTask, gcalToken, item.suggestedDate)
     }
 
     setDeferredTasks((prev) => [...prev, { ...item, status: 'confirmed', confirmedAt: new Date().toISOString() }])
@@ -2550,7 +2599,7 @@ function App() {
     setWeekPlanMessage('')
 
     let updatedDays = weekPlan.days
-    const providerToken = session?.provider_token
+    const providerToken = gcalToken
 
     if (providerToken) {
       updatedDays = await createWeekPlanEvents(weekPlan.days, providerToken, weekPlan.id)
@@ -2593,7 +2642,7 @@ function App() {
 
   function handleReplanWeekFromToday() {
     setActiveScreen('weekPlanner')
-    if (weekPlan && session?.provider_token) {
+    if (weekPlan && gcalToken) {
       handleReplan()
     }
   }
@@ -2627,7 +2676,7 @@ function App() {
     setReplanLoading(true)
     setWeekPlanMessage('')
 
-    const providerToken = session?.provider_token
+    const providerToken = gcalToken
     if (!providerToken) {
       setWeekPlanMessage('Calendar sync is required for Replan.')
       setReplanLoading(false)
@@ -4708,7 +4757,7 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs sm:text-sm">
-            {session?.provider_token ? (
+            {gcalToken ? (
               <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 font-medium">
                 📅 Calendar sync on
               </span>
