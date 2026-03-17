@@ -1,24 +1,6 @@
 const CALENDAR_ID =
   'c_f733c89ebd8fa8294dfb9b29147e64acc78eae845b47ea1271ddb7844e191716@group.calendar.google.com'
 
-// Minutes from midnight when each block starts
-const BLOCK_START_MINUTES = {
-  'BD':        9 * 60 + 30,   // 9:30am
-  'Networking': 11 * 60,      // 11:00am
-  'Job Search': 13 * 60,      // 1:00pm
-  'Encore OS':  14 * 60,      // 2:00pm
-  'Friday':     14 * 60,      // 2:00pm
-}
-
-// Capacity (minutes) for each block
-export const BLOCK_CAPACITY_MINUTES = {
-  'BD':         90,   // 9:30–11:00am
-  'Networking': 60,   // 11:00am–12:00pm
-  'Job Search': 60,   // 1:00–2:00pm
-  'Encore OS':  120,  // 2:00–4:00pm
-  'Friday':     120,  // 2:00–4:00pm
-}
-
 // Google Calendar colorId values that best match track colors
 const TRACK_COLOR_IDS = {
   advisors:   '10', // Basil (dark green)
@@ -26,6 +8,23 @@ const TRACK_COLOR_IDS = {
   jobSearch:  '9',  // Blueberry (blue)
   ventures:   '3',  // Grape (purple)
   cosaAdmin:  '7',  // Peacock (teal/cyan)
+}
+
+// ── Legacy block-based constants (kept for backward compat with existing plan events) ──
+export const BLOCK_CAPACITY_MINUTES = {
+  'BD':         90,
+  'Networking': 60,
+  'Job Search': 60,
+  'Encore OS':  120,
+  'Friday':     120,
+}
+
+const BLOCK_START_MINUTES = {
+  'BD':         9 * 60 + 30,
+  'Networking': 11 * 60,
+  'Job Search': 13 * 60,
+  'Encore OS':  14 * 60,
+  'Friday':     14 * 60,
 }
 
 const BASE_URL = 'https://www.googleapis.com/calendar/v3/calendars'
@@ -174,40 +173,6 @@ export async function updateCalendarEventAtTime(eventId, title, track, startISO,
 }
 
 /**
- * Create a CoSA calendar event with explicit start/end ISO datetimes.
- * Use this when the user sets the exact time (unlike createCalendarEvent which
- * derives times from a task's timeBlock).
- *
- * @param {string} title - Event summary / title
- * @param {string} track - Normalised track key (e.g. 'advisors', 'jobSearch')
- * @param {string} startISO - ISO datetime string, e.g. "2026-03-16T10:00:00"
- * @param {string} endISO   - ISO datetime string, e.g. "2026-03-16T11:00:00"
- * @param {string} providerToken - Google OAuth bearer token
- * @param {object} [extras] - Optional { templateId } stored in extendedProperties
- * @returns {Promise<object|null>} Full GCal event object returned by the API, or null on failure
- */
-export async function createCalendarEventAtTime(title, track, startISO, endISO, providerToken, extras = {}) {
-  if (!providerToken) return null
-  const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone
-  const body = {
-    summary: title,
-    colorId: TRACK_COLOR_IDS[track] ?? '1',
-    start: { dateTime: startISO, timeZone: userTz },
-    end:   { dateTime: endISO,   timeZone: userTz },
-    extendedProperties: {
-      private: {
-        cosaTag:    'cosa-event',
-        cosaTrack:  track,
-        ...(extras.templateId ? { cosaTemplateId: extras.templateId }   : {}),
-        ...(extras.subTrack   ? { cosaSubTrack:   extras.subTrack }     : {}),
-      },
-    },
-  }
-  const data = await gcalFetch('', 'POST', providerToken, body)
-  return data ?? null
-}
-
-/**
  * Create events for every task in a snapshot, grouped by block for sequential timing.
  * Returns a map of { [taskId]: calendarEventId }.
  */
@@ -293,6 +258,55 @@ export async function createWeekPlanEvents(planDays, providerToken, planId) {
   }
 
   return updatedDays
+}
+
+/**
+ * Create a calendar event at an exact start/end ISO datetime.
+ * Stores track, subTrack, and optional templateId in extendedProperties
+ * so the CalendarView can compute health bars without a DB query.
+ * Returns the Google Calendar event object, or null on failure.
+ */
+export async function createCalendarEventAtTime({
+  name,
+  track,
+  subTrack,
+  templateId,
+  startISO,
+  endISO,
+  providerToken,
+}) {
+  if (!providerToken) return null
+  const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const body = {
+    summary:  name,
+    colorId:  TRACK_COLOR_IDS[track] ?? '1',
+    start:    { dateTime: startISO, timeZone: userTz },
+    end:      { dateTime: endISO,   timeZone: userTz },
+    extendedProperties: {
+      private: {
+        cosaTag:     'cosa-event',
+        cosaTrack:   track    ?? '',
+        cosaSubTrack: subTrack ?? '',
+        ...(templateId ? { cosaTemplateId: templateId } : {}),
+      },
+    },
+  }
+  const data = await gcalFetch('', 'POST', providerToken, body)
+  return data ?? null
+}
+
+/**
+ * Move/resize an existing CoSA event to new exact start/end times.
+ * Preserves all extended properties (track, subTrack, templateId).
+ */
+export async function patchCalendarEventTime(eventId, startISO, endISO, providerToken) {
+  if (!providerToken || !eventId) return null
+  const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const data = await gcalFetch(`/${eventId}`, 'PATCH', providerToken, {
+    start: { dateTime: startISO, timeZone: userTz },
+    end:   { dateTime: endISO,   timeZone: userTz },
+  })
+  return data ?? null
 }
 
 /**

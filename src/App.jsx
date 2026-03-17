@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import WeekPlanner from './components/WeekPlanner'
-import { Pause, Play, SquareCheck, StopCircle, GripVertical, Sparkles, AlertTriangle, Clock, Settings, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react'
+import { Pause, Play, SquareCheck, StopCircle, GripVertical, AlertTriangle, Clock, Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   DndContext,
   closestCenter,
@@ -27,31 +27,14 @@ import {
   upsertTimerSession,
   loadTimerSessions,
   loadTodayTimerSessions,
-  syncRescheduleQueue,
-  loadRescheduleQueue,
-  updateRescheduleItem,
   upsertFridayReview,
   loadFridayReviews,
-  upsertWeeklyPlan,
-  loadCurrentWeekPlan,
-  updatePlanAfterPublish,
   loadUserPreferences,
   upsertUserPreferences,
   upsertQuickLogEntry,
   loadQuickLogEntries,
-  loadPendingProposals,
-  updateProposalStatus,
-  saveApiKeyHash,
-  loadApiKeyHash,
 } from './lib/supabaseSync'
-import {
-  createEventsForSnapshot,
-  moveCalendarEvent,
-  createWeekPlanEvents,
-  fetchCoSACalendarEvents,
-  fetchAllCalendarEvents,
-  BLOCK_CAPACITY_MINUTES,
-} from './lib/googleCalendar'
+import { createEventsForSnapshot } from './lib/googleCalendar'
 
 const TRACKS = {
   advisors: {
@@ -92,13 +75,11 @@ const TIMER_STATES = {
   paused: 'Paused',
   completed: 'Completed',
   cancelled: 'Cancelled',
-  overrun: 'Overrun',
 }
 
-const FREQUENCIES = ['Daily', 'Weekly', 'Monthly', 'As scheduled']
-const COMPLETION_TYPES = ['Done', 'Done + Outcome', 'Partial']
 const LIBRARY_STATUSES = ['Active', 'Paused', 'Archived']
 const TIME_BLOCK_ORDER = ['BD', 'Networking', 'Job Search', 'Encore OS', 'Friday']
+const ALL_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 // Sub-tracks per track — kept in sync with WeekPlanner SUB_TRACK_TARGETS
 const TRACK_SUB_TRACKS = {
   advisors:  ['Business Development', 'Materials', 'Content', 'Meetings'],
@@ -106,9 +87,7 @@ const TRACK_SUB_TRACKS = {
   ventures:  ['Alpha', 'Growth', 'Product', 'Research', 'Subscription', 'Build'],
   cosaAdmin: ['Friday Review'],
 }
-const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const ALL_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
 const INITIAL_TASK_LIBRARY = [
   // ─── KUPERMAN ADVISORS — BD Block ─────────────────────────────────────────
@@ -116,603 +95,342 @@ const INITIAL_TASK_LIBRARY = [
     id: 'lib-v2-advisors-1',
     name: 'ICP Research',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Outreach messages sent',
-    subtasks: 'Identify 3 companies that fit your ICP profile\nResearch each: funding stage, team size, growth signals\nNote the right human contact at each company\nAdd to pipeline tracker with notes',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday', 'Tuesday'],
   },
   {
     id: 'lib-v2-advisors-2',
     name: 'ICP Contact Research',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 25,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Outreach messages sent',
-    subtasks: 'Pull up 3 target contacts from your pipeline\nResearch each on LinkedIn: recent activity, shared connections, pain points\nIdentify personalisation angle for outreach\nNote findings in tracker',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday', 'Tuesday'],
   },
   {
     id: 'lib-v2-advisors-3',
     name: 'Deep Research',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 45,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Companies researched',
-    subtasks: 'Select one high-priority prospect or sector\nResearch deeply: competitor landscape, recent news, pain points\nSynthesize into one positioning insight\nDocument and share if relevant',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Wednesday', 'Thursday'],
   },
   {
     id: 'lib-v2-advisors-4',
     name: 'Outreach Emails',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Outreach messages sent',
-    subtasks: 'Write personalised outreach to 3 contacts from research list\nSubject line: specific, not generic\nBody: one insight relevant to them, one clear ask\nSend and log in tracker immediately',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did any of these outreach emails generate a reply or booked call?',
-    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   {
     id: 'lib-v2-advisors-5',
     name: 'Apollo Sequences',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Outreach messages sent',
-    subtasks: 'Open Apollo — review replies and sequence activity\nRespond to any replies (move to manual outreach if promising)\nEnrol 5 new contacts into active sequence\nNote sequence performance: open rate, reply rate',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Wednesday'],
   },
   {
     id: 'lib-v2-advisors-6',
     name: 'Materials Refinement',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Materials',
     defaultTimeEstimate: 45,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Case study progress',
-    subtasks: 'Review one key asset: one-pager, case study, or email template\nIdentify the weakest section based on recent feedback\nRewrite or sharpen that section\nSave new version and note the change',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-v2-advisors-7',
     name: 'LinkedIn Content',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Content',
     defaultTimeEstimate: 45,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'LinkedIn comments posted',
-    subtasks: 'Identify one insight or perspective from this week\nDraft post (150–300 words) — specific, not generic\nReview: does it speak to your ICP\'s real problem?\nSchedule or publish\nEngage with 3 comments in the first hour',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-v2-advisors-8',
     name: 'Connective Meeting Prep',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Meetings',
     defaultTimeEstimate: 20,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Connective attendance',
-    subtasks: "Review this week's Connective agenda or attendee list\nIdentify 2 people to prioritise connecting with\nPrepare one sentence on what you're working on and what you're looking for\nSet goal for the meeting: one connection, one lead, or one referral",
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Wednesday'],
   },
   {
     id: 'lib-v2-advisors-9',
     name: 'Discovery Call',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Meetings',
     defaultTimeEstimate: 60,
-    frequency: 'As scheduled',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Discovery calls held',
-    subtasks: "Review prospect's LinkedIn and website before call\nPrepare 3 diagnostic questions\nConduct call — listen more than you pitch\nSend follow-up within 2 hours of call ending\nUpdate pipeline tracker: call held, next action noted",
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did this discovery call result in a next step or booked follow-up?',
-    daysOfWeek: ['Tuesday', 'Wednesday', 'Thursday'],
   },
   {
     id: 'lib-v2-advisors-10',
     name: 'Follow-Up Review',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 20,
-    frequency: 'Daily',
-    completionType: 'Done',
     kpiMapping: 'Outreach messages sent',
-    subtasks: "Open pipeline tracker\nReview all contacts in 'Contacted' or 'Replied' status\nSend follow-up to anyone who hasn't responded in 3–5 days\nUpdate tracker status for each contact reviewed",
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
   },
   {
     id: 'lib-v2-advisors-11',
     name: 'Proposals',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 60,
-    frequency: 'As scheduled',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Discovery calls held',
-    subtasks: 'Review call notes and agreed scope\nDraft proposal: problem, approach, deliverables, timeline, fee\nSelf-review: does this feel like a fair trade for both sides?\nSend proposal and note follow-up date',
     status: 'Paused',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did the prospect respond positively to the proposal?',
-    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   {
     id: 'lib-v2-advisors-12',
     name: 'Agreements',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 45,
-    frequency: 'As scheduled',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Discovery calls held',
-    subtasks: 'Review agreed terms from proposal\nPrepare or review agreement document\nSend for signature\nLog in pipeline tracker: agreement sent, expected close date',
     status: 'Paused',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Was the agreement signed?',
-    daysOfWeek: ['Wednesday'],
   },
   {
     id: 'lib-v2-advisors-13',
     name: 'Follow Up on Responses',
     track: TRACKS.advisors.key,
-    timeBlock: 'BD',
     subTrack: 'Business Development',
     defaultTimeEstimate: 25,
-    frequency: 'Daily',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Outreach messages sent',
-    subtasks: 'Check all inboxes for responses to outreach\nRespond to every reply within the same business day\nFor warm replies: propose a call time immediately\nLog outcome in pipeline tracker',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did any responses lead to a booked call or meaningful next step?',
-    daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday'],
   },
   // ─── JOB SEARCH — Job Search Block ───────────────────────────────────────
   {
     id: 'lib-v2-jobsearch-1',
     name: 'Network Follow-Ups',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Networking',
     defaultTimeEstimate: 20,
-    frequency: 'Daily',
-    completionType: 'Done',
     kpiMapping: 'Recruiter touchpoints',
-    subtasks: 'Review networking tracker — who needs a follow-up today?\nSend follow-up to 2–3 contacts: short, specific, value-first\nNote any replies received and update tracker status\nFlag anyone who has gone cold',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday'],
   },
   {
     id: 'lib-v2-jobsearch-2',
     name: 'Warm Reconnect Outreach',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Networking',
     defaultTimeEstimate: 15,
-    frequency: 'Weekly',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Warm reconnects sent',
-    subtasks: "Identify one person you've lost touch with\nSend reconnect message: 'been too long, would love to catch up for 20 min'\nLog in networking tracker: name, date, channel",
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did this reconnect lead to a scheduled call or meaningful reply?',
-    daysOfWeek: ['Monday', 'Wednesday'],
   },
   {
     id: 'lib-v2-jobsearch-3',
     name: 'Cold Outreach',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Networking',
     defaultTimeEstimate: 25,
-    frequency: 'Weekly',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Outreach messages sent',
-    subtasks: 'Select 3 targets from research list who you have no existing connection with\nWrite personalised cold message for each — specific to their work\nSend via LinkedIn or email\nLog all three in tracker',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did any cold outreach generate a positive reply?',
-    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   {
     id: 'lib-v2-jobsearch-4',
     name: 'Industry Reading & L&D',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'L&D',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Completion Rate',
-    subtasks: 'Read one industry article, newsletter, or report relevant to your target roles\nNote one insight you can reference in an interview or conversation\nOptional: share insight as a LinkedIn comment or post',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday', 'Wednesday'],
   },
   {
     id: 'lib-v2-jobsearch-5',
     name: 'Target Company List Review',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Searching',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Companies researched',
-    subtasks: 'Open target company list\nReview status of each: any new openings? Any news? Any warm contacts?\nAdd 2–3 new companies that fit your criteria\nPrioritise list: top 5 to focus on this week',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-v2-jobsearch-6',
     name: 'Job Listing Review',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Searching',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Applications submitted',
-    subtasks: 'Search LinkedIn, Indeed, and exec-specific boards for new CMO/SVP/VP roles\nReview 5–10 listings — does the role, company, and comp fit?\nFlag 1–2 to apply to this week\nAdd flagged roles to tracker with deadline and contact',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Tuesday', 'Thursday'],
   },
   {
     id: 'lib-v2-jobsearch-7',
     name: 'Tailored Application',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Applications',
     defaultTimeEstimate: 60,
-    frequency: 'Weekly',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Applications submitted',
-    subtasks: 'Select one researched role to apply to today\nPull up job description — identify top 3 requirements\nTailor resume summary to mirror those requirements (1–2 changes only)\nWrite cover note — specific to this company and role\nSubmit application\nAttempt warm introduction alongside application\nLog in tracker: applied, contact identified, follow-up date set',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did you secure a warm introduction alongside this application?',
-    daysOfWeek: ['Wednesday'],
   },
   {
     id: 'lib-v2-jobsearch-8',
     name: 'Update EncoreOS Tracker',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Admin',
     defaultTimeEstimate: 15,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Completion Rate',
-    subtasks: 'Open EncoreOS job search tracker\nUpdate status on all active applications\nMark any that have gone cold or were rejected\nNote next action for anything still live',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Friday'],
   },
   {
     id: 'lib-v2-jobsearch-9',
     name: 'Networking Meeting or Event',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Networking',
     defaultTimeEstimate: 60,
-    frequency: 'As scheduled',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Coffee chats held',
-    subtasks: 'Prep: review attendee list or person\'s background beforehand\nAttend meeting or event\nMake at least 2 meaningful connections\nFollow up with each new contact within 24 hours\nLog in networking tracker: name, date, outcome',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did this meeting or event generate a meaningful lead or connection?',
-    daysOfWeek: ['Tuesday', 'Wednesday', 'Thursday'],
   },
   {
     id: 'lib-v2-jobsearch-10',
     name: 'Resume Customisation',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Applications',
     defaultTimeEstimate: 45,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Applications submitted',
-    subtasks: 'Pull up the master resume\nSelect one target role to tailor for\nAdjust summary, top 3 bullets to mirror JD language\nSave as versioned file: Resume_JasonKuperman_[Company]_[Date]',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Thursday'],
   },
   {
     id: 'lib-v2-jobsearch-11',
     name: 'Board Research',
     track: TRACKS.jobSearch.key,
-    timeBlock: 'Job Search',
     subTrack: 'Boards',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Companies researched',
-    subtasks: 'Research 2 companies looking for board advisors or fractional CMO board seats\nIdentify the decision-maker or existing board members\nNote fit and how to get an introduction\nAdd to tracker',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday'],
   },
   // ─── KUPERMAN VENTURES — Encore OS Block ─────────────────────────────────
   {
     id: 'lib-v2-ventures-1',
     name: 'Alpha Tester Outreach',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Alpha',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Tester touchpoints',
-    subtasks: "Draft personal message to each active alpha tester\nAsk a specific question: 'When you last logged in, what were you trying to do? Did it work?'\nSend messages\nLog responses in feedback tracker as they come in",
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday'],
   },
   {
     id: 'lib-v2-ventures-2',
     name: 'Alpha Growth Outreach',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Growth',
     defaultTimeEstimate: 25,
-    frequency: 'Weekly',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Tester touchpoints',
-    subtasks: 'Identify 3 potential new alpha testers: founders, executives, or operators\nPersonalise outreach for each — why EncoreOS is relevant to them specifically\nSend invitations\nLog in tracker: sent, replied, onboarded',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'Did any outreach result in a new alpha tester signing up?',
-    daysOfWeek: ['Tuesday'],
   },
   {
     id: 'lib-v2-ventures-3',
     name: 'Roadmap Review',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Product',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Things shipped',
-    subtasks: 'Open product roadmap or priority list\nReview what was shipped last week\nReprioritise based on tester feedback\nSet the single most important thing to build or fix this week',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Wednesday'],
   },
   {
     id: 'lib-v2-ventures-4',
     name: 'Feature Research',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Research',
     defaultTimeEstimate: 25,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Things shipped',
-    subtasks: 'Select one planned feature from the backlog\nResearch how competitors or analogous products handle it\nDocument 2–3 approaches with pros/cons\nMake a recommendation for implementation',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Wednesday', 'Thursday'],
   },
   {
     id: 'lib-v2-ventures-5',
     name: 'Subscription Research',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Subscription',
     defaultTimeEstimate: 25,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Things shipped',
-    subtasks: 'Research subscription models used by comparable B2B SaaS or productivity tools\nNote pricing tiers, trial structures, and onboarding flows\nIdentify one insight to inform EncoreOS pricing or packaging strategy\nDocument findings',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Thursday'],
   },
   {
     id: 'lib-v2-ventures-6',
     name: 'Cursor Build Session',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Build',
     defaultTimeEstimate: 90,
-    frequency: 'Weekly',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Things shipped',
-    subtasks: 'BEFORE OPENING CURSOR: write definition of done in the app\nOpen Cursor\nBuild only the defined item\nTest the fix before closing\nClose Cursor at end of session regardless of status\nLog: done / not done / what\'s left',
     status: 'Active',
-    requiresDefinitionOfDone: true,
-    outcomePrompt: 'Did this session ship a meaningful improvement?',
-    daysOfWeek: ['Wednesday', 'Thursday'],
   },
   {
     id: 'lib-v2-ventures-7',
     name: 'New User Targeting',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Growth',
     defaultTimeEstimate: 30,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Tester touchpoints',
-    subtasks: 'Identify one new user segment or persona worth targeting\nFind 5 people in that segment on LinkedIn or Slack communities\nDraft a targeting hypothesis: why would this person find EncoreOS valuable?\nAdd to growth tracker with outreach plan',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday', 'Tuesday'],
   },
   // ─── MARC WHITMAN — Temporary Tasks ──────────────────────────────────────
   {
     id: 'lib-ventures-marc-prep-20260315',
     name: 'Marc Whitman — Meeting Prep',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Growth',
     defaultTimeEstimate: 30,
-    frequency: 'As scheduled',
-    completionType: 'Done',
     kpiMapping: 'Tester touchpoints',
-    subtasks: 'Review previous conversation notes with Marc\nPrepare agenda: what do you want to cover?\nIdentify one specific ask or next step to close the meeting on',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
   },
   {
     id: 'lib-ventures-marc-debrief-20260315',
     name: 'Marc Whitman — Debrief',
     track: TRACKS.ventures.key,
-    timeBlock: 'Encore OS',
     subTrack: 'Growth',
     defaultTimeEstimate: 20,
-    frequency: 'As scheduled',
-    completionType: 'Done + Outcome',
     kpiMapping: 'Tester touchpoints',
-    subtasks: 'Write summary of what was discussed\nNote any commitments made — yours and Marc\'s\nCapture next action and date\nUpdate CRM or tracker',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: 'What was the agreed next step with Marc?',
-    daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
   },
   // ─── FRIDAY REVIEW Block ──────────────────────────────────────────────────
   {
     id: 'lib-friday-1',
     name: 'Score the Week',
     track: TRACKS.advisors.key,
-    timeBlock: 'Friday',
     defaultTimeEstimate: 20,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Completion Rate',
-    subtasks: 'Open KPI Dashboard — review auto-generated completion data\nFill in manual KPIs: discovery calls held, coffee chats, applications submitted\nMark each KPI: hit or missed\nNote overall week score: green (7+ KPIs hit) / yellow (4–6) / red (3 or fewer)',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Friday'],
   },
   {
     id: 'lib-friday-2',
     name: 'Three Questions',
     track: TRACKS.advisors.key,
-    timeBlock: 'Friday',
     defaultTimeEstimate: 15,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Completion Rate',
-    subtasks: 'Write answer to Q1: What actually got in the way? (Be specific)\nWrite answer to Q2: What is ONE thing I am doing differently next week?\nWrite answer to Q3: What is ONE thing I did well this week?',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Friday'],
   },
   {
     id: 'lib-friday-3',
     name: 'Plan Next Week',
     track: TRACKS.advisors.key,
-    timeBlock: 'Friday',
     defaultTimeEstimate: 20,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Completion Rate',
-    subtasks: 'Review all three pipeline trackers: what needs follow-up Monday?\nCheck calendar: any calls, Connective events, or conflicts?\nSet Monday intention: one sentence on the most important thing next week\nPopulate next week\'s Today view from Task Library',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Friday'],
   },
   {
     id: 'lib-friday-4',
     name: 'Clean Up',
     track: TRACKS.advisors.key,
-    timeBlock: 'Friday',
     defaultTimeEstimate: 5,
-    frequency: 'Weekly',
-    completionType: 'Done',
     kpiMapping: 'Completion Rate',
-    subtasks: 'Close all open browser tabs\nClear desktop\nWrite Monday morning first task on a sticky note',
     status: 'Active',
-    requiresDefinitionOfDone: false,
-    outcomePrompt: '',
-    daysOfWeek: ['Friday'],
   },
 ]
 
 const NAV_ITEMS = [
   { id: 'today', label: 'Today' },
   { id: 'taskLibrary', label: 'Task Library' },
-  { id: 'reschedule', label: 'Reschedule' },
-  { id: 'weekPlanner', label: 'Week Planner' },
+  { id: 'weekPlanner', label: 'Calendar' },
   { id: 'kpi', label: 'KPI Dashboard' },
-  { id: 'analytics', label: 'Analytics' },
   { id: 'settings', label: 'Settings' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
@@ -986,38 +704,21 @@ function mapLibraryTaskToTodayTask(task, deploymentId, index) {
     templateId: task.id,
     name: task.name,
     track: task.track,
-    timeBlock: task.timeBlock,
     estimateMinutes: task.defaultTimeEstimate,
-    completionType: task.completionType,
-    outcomePrompt: task.outcomePrompt,
-    requiresDefinitionOfDone: Boolean(task.requiresDefinitionOfDone),
-    subtasks: task.subtasks
-      ? task.subtasks.split('\n').map((s) => s.trim()).filter(Boolean)
-      : [],
     kpiMapping: task.kpiMapping ?? '',
   }
 }
 
 // Maps a Week Ahead plan task → today_task_instance shape.
-// Plan estimates win; library fills in subtasks, completion type, and other metadata.
 function planTaskToTodayTask(planTask, library, dayName, planId, index) {
   const libTask = library.find((t) => t.id === planTask.templateId)
-  const subtasks = libTask?.subtasks
-    ? libTask.subtasks.split('\n').map((s) => s.trim()).filter(Boolean)
-    : []
   return {
     id: `today-plan-${planId ?? 'x'}-${dayName}-${index}`,
     templateId: planTask.templateId ?? null,
     name: planTask.name ?? '',
     track: planTask.track ?? 'advisors',
-    timeBlock: planTask.timeBlock ?? 'BD',
     estimateMinutes: planTask.estimateMinutes ?? libTask?.defaultTimeEstimate ?? 25,
-    completionType: libTask?.completionType ?? 'Done',
-    outcomePrompt: libTask?.outcomePrompt ?? '',
-    requiresDefinitionOfDone: Boolean(libTask?.requiresDefinitionOfDone),
-    subtasks,
     kpiMapping: planTask.kpiMapping ?? libTask?.kpiMapping ?? '',
-    frequency: libTask?.frequency ?? 'Weekly',
     calendarEventId: planTask.gcalEventId ?? null,
   }
 }
@@ -1070,19 +771,10 @@ function validateLibraryTask(task) {
   const errors = []
   if (!task.name?.trim()) errors.push('Name is required.')
   if (!Object.values(TRACKS).some((track) => track.key === task.track)) errors.push('Track is required.')
-  if (!TIME_BLOCK_ORDER.includes(task.timeBlock)) errors.push('Time block is required.')
-  if (task.daysOfWeek !== undefined && task.daysOfWeek.length === 0) errors.push('Select at least one day.')
   if (!Number.isFinite(Number(task.defaultTimeEstimate)) || Number(task.defaultTimeEstimate) < 5) {
     errors.push('Default time estimate must be at least 5 minutes.')
   }
-  if (!FREQUENCIES.includes(task.frequency)) errors.push('Frequency is required.')
-  if (!COMPLETION_TYPES.includes(task.completionType)) errors.push('Completion type is required.')
-  if (!task.kpiMapping?.trim()) errors.push('KPI mapping is required.')
-  if (!task.subtasks?.trim()) errors.push('Subtasks are required.')
   if (!LIBRARY_STATUSES.includes(task.status)) errors.push('Status is required.')
-  if (task.completionType === 'Done + Outcome' && !task.outcomePrompt?.trim()) {
-    errors.push('Outcome prompt is required for Done + Outcome tasks.')
-  }
   return errors
 }
 
@@ -1106,12 +798,10 @@ function getInitialSession(task) {
     currentPauseStartedAtMs: null,
     cancelledSeconds: 0,
     startedAtISO: null,
-    completionType: null,
     definitionOfDone: '',
     actualCompleted: '',
     outcomeAchieved: null,
     completionLoggedAtISO: null,
-    subtaskChecks: Array.isArray(task.subtasks) ? task.subtasks.map(() => false) : [],
   }
 }
 
@@ -1169,8 +859,6 @@ function App() {
       sessions: sessionState,
       activeTaskId: persisted?.activeTaskId ?? today[0]?.id ?? null,
       lastDeploymentAt: persisted?.lastDeploymentAt ?? new Date().toISOString(),
-      rescheduleQueue: Array.isArray(persisted?.rescheduleQueue) ? persisted.rescheduleQueue : [],
-      deferredTasks: Array.isArray(persisted?.deferredTasks) ? persisted.deferredTasks : [],
       queueDate: persisted?.queueDate ?? getDeployTargetDate(),
     }
   }, [])
@@ -1181,23 +869,10 @@ function App() {
   const [todayTasks, setTodayTasks] = useState(bootstrap.todayTasks)
   const [activeTaskId, setActiveTaskId] = useState(bootstrap.activeTaskId)
   const [sessions, setSessions] = useState(bootstrap.sessions)
-  const [definitionInput, setDefinitionInput] = useState('')
   const [completionInput, setCompletionInput] = useState('')
-  const [timerActionPending, setTimerActionPending] = useState(null) // 'start'|'pause'|'complete'|'cancel'|'partial'
-  const [outcomeSelection, setOutcomeSelection] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [session, setSession] = useState(null)
-  // gcalToken persists Google's provider_token across Supabase session refreshes.
-  // Supabase only captures provider_token at OAuth time; after its own JWT refreshes
-  // (~1 h) it returns provider_token: null. We cache it ourselves with a 55-min window.
-  const [gcalToken, setGcalToken] = useState(() => {
-    try {
-      const cached = localStorage.getItem('cosa.gcal.token')
-      const expiry = parseInt(localStorage.getItem('cosa.gcal.tokenExpiry') || '0')
-      return cached && Date.now() < expiry ? cached : null
-    } catch { return null }
-  })
   const [authBusy, setAuthBusy] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
   const [libraryMessage, setLibraryMessage] = useState('')
@@ -1206,24 +881,11 @@ function App() {
   const [libraryFilter, setLibraryFilter] = useState('All')
   const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
   const [archiveConfirmId, setArchiveConfirmId] = useState(null)
-  const [rescheduleQueue, setRescheduleQueue] = useState(bootstrap.rescheduleQueue)
-  const [deferredTasks, setDeferredTasks] = useState(bootstrap.deferredTasks)
-  const [aiSuggestion, setAiSuggestion] = useState({ loading: false, text: '', error: '' })
-  const overrunNotifiedRef = useRef(new Set())
   const [completionLog, setCompletionLog] = useState(() => loadCompletionLog())
   const [weekOffset, setWeekOffset] = useState(0)
-  const [analyticsWeekOffset, setAnalyticsWeekOffset] = useState(0)
   const [fridayReviews, setFridayReviews] = useState([])
   const [reviewDraft, setReviewDraft] = useState({ q1: '', q2: '', q3: '', mondayIntention: '' })
   const [reviewSaving, setReviewSaving] = useState(false)
-  const [showVenturesModal, setShowVenturesModal] = useState(false)
-  const [venturesModalData, setVenturesModalData] = useState(null)
-  const [weekPlan, setWeekPlan] = useState(null)
-  const [weekPlanLoading, setWeekPlanLoading] = useState(false)
-  const [weekPlanMessage, setWeekPlanMessage] = useState('')
-  const [replanLoading, setReplanLoading] = useState(false)
-  const [showAiRationale, setShowAiRationale] = useState(false)
-  const [replanChoices, setReplanChoices] = useState({}) // taskKey → dayName | 'drop'
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
   const [clearedDates, setClearedDates] = useState(() => {
@@ -1240,14 +902,6 @@ function App() {
   const [showClearDayModal, setShowClearDayModal] = useState(false)
   const [clearFrom, setClearFrom] = useState(getTodayDateString())
   const [clearTo, setClearTo] = useState(getTodayDateString())
-  const [pendingProposals, setPendingProposals] = useState([])
-  // proposalId -> Record<actionIndex, 'approved' | 'rejected'>
-  const [actionStatuses, setActionStatuses] = useState({})
-  const [apiKeyHash, setApiKeyHash] = useState(null)
-  const [apiKeyInput, setApiKeyInput] = useState('')
-  const [apiKeyRevealed, setApiKeyRevealed] = useState(false)
-  const [apiKeySaving, setApiKeySaving] = useState(false)
-  const [apiKeyMessage, setApiKeyMessage] = useState('')
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1269,12 +923,7 @@ function App() {
 
   useEffect(() => {
     if (!activeSession) return
-    if (
-      activeSession.timerState !== TIMER_STATES.running &&
-      activeSession.timerState !== TIMER_STATES.overrun
-    ) {
-      return
-    }
+    if (activeSession.timerState !== TIMER_STATES.running) return
 
     const tick = window.setInterval(() => {
       setSessions((prev) => {
@@ -1288,43 +937,14 @@ function App() {
         }
 
         const nextElapsed = current.elapsedSeconds + 1
-        const nextRemaining = current.remainingSeconds - 1
-        const didOverrun = current.timerState === TIMER_STATES.running && nextRemaining <= 0
-
-        const overrunSeconds = nextElapsed - current.estimateSeconds
-        if (
-          current.timerState === TIMER_STATES.overrun &&
-          overrunSeconds === 5 * 60 &&
-          !overrunNotifiedRef.current.has(activeTask.id)
-        ) {
-          overrunNotifiedRef.current.add(activeTask.id)
-          const overrunItem = {
-            id: `rq-${Date.now()}`,
-            taskName: activeTask.name,
-            track: activeTask.track,
-            timeBlock: activeTask.timeBlock,
-            reason: 'overrun',
-            remainingMinutes: null,
-            status: 'pending',
-            suggestedDate: getTomorrowDateString(),
-            suggestedTimeBlock: activeTask.timeBlock,
-          }
-          setRescheduleQueue((q) => {
-            if (q.some((item) => item.taskName === activeTask.name && item.reason === 'overrun')) return q
-            if (supabaseConfigured && session?.user?.id) {
-              syncRescheduleQueue([overrunItem], session.user.id)
-            }
-            return [...q, overrunItem]
-          })
-        }
+        const nextRemaining = Math.max(0, current.remainingSeconds - 1)
 
         return {
           ...prev,
           [activeTask.id]: {
             ...current,
             elapsedSeconds: nextElapsed,
-            remainingSeconds: didOverrun ? 0 : Math.max(0, nextRemaining),
-            timerState: didOverrun ? TIMER_STATES.overrun : current.timerState,
+            remainingSeconds: nextRemaining,
           },
         }
       })
@@ -1345,31 +965,14 @@ function App() {
 
     let isMounted = true
 
-    const cacheGcalToken = (token) => {
-      if (!token) return
-      try {
-        localStorage.setItem('cosa.gcal.token', token)
-        localStorage.setItem('cosa.gcal.tokenExpiry', String(Date.now() + 55 * 60 * 1000))
-      } catch { /* ignore */ }
-      setGcalToken(token)
-    }
-
     const hydrateSession = async () => {
-      let { data, error } = await supabase.auth.getSession()
+      const { data, error } = await supabase.auth.getSession()
       if (!isMounted) return
       if (error) {
         setAuthMessage(`Unable to load session: ${error.message}`)
         return
       }
-      // If signed in but provider_token missing, try a session refresh —
-      // newer Supabase versions restore it from the stored provider_refresh_token.
-      if (data.session && !data.session.provider_token) {
-        const { data: refreshed } = await supabase.auth.refreshSession()
-        if (!isMounted) return
-        if (refreshed?.session) data = refreshed
-      }
       setSession(data.session ?? null)
-      if (data.session?.provider_token) cacheGcalToken(data.session.provider_token)
     }
 
     hydrateSession()
@@ -1378,7 +981,6 @@ function App() {
       if (!isMounted) return
       setSession(newSession)
       setAuthMessage('')
-      if (newSession?.provider_token) cacheGcalToken(newSession.provider_token)
     })
 
     return () => {
@@ -1386,16 +988,6 @@ function App() {
       data.subscription.unsubscribe()
     }
   }, [supabaseConfigured])
-
-  // Keep gcalToken up-to-date when session.provider_token changes (e.g. after OAuth redirect).
-  useEffect(() => {
-    if (!session?.provider_token) return
-    try {
-      localStorage.setItem('cosa.gcal.token', session.provider_token)
-      localStorage.setItem('cosa.gcal.tokenExpiry', String(Date.now() + 55 * 60 * 1000))
-    } catch { /* ignore */ }
-    setGcalToken(session.provider_token)
-  }, [session?.provider_token])
 
   async function handleGoogleLogin() {
     if (!supabaseConfigured || !supabase) {
@@ -1410,10 +1002,6 @@ function App() {
       options: {
         redirectTo: window.location.origin,
         scopes: 'https://www.googleapis.com/auth/calendar.events',
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
       },
     })
 
@@ -1430,11 +1018,6 @@ function App() {
       setAuthMessage(`Sign out failed: ${error.message}`)
       return
     }
-    try {
-      localStorage.removeItem('cosa.gcal.token')
-      localStorage.removeItem('cosa.gcal.tokenExpiry')
-    } catch { /* ignore */ }
-    setGcalToken(null)
     setSession(null)
   }
 
@@ -1512,7 +1095,7 @@ function App() {
   }
 
   const previewScrollBase = todayPreviewDate ?? getTodayDateString()
-  const weekScrollStart = weekPlan?.weekStartDate ?? getWeekStartDateStr()
+  const weekScrollStart = getWeekStartDateStr()
   const weekScrollEnd = (() => {
     const d = new Date(weekScrollStart + 'T12:00:00')
     d.setDate(d.getDate() + 4)
@@ -1542,9 +1125,7 @@ function App() {
     setTodayPreviewDate(next)
   }
 
-  const previewTasks = todayPreviewDate
-    ? (Object.values(weekPlan?.days ?? {}).find((d) => d.date === todayPreviewDate)?.tasks ?? [])
-    : null
+  const previewTasks = null
 
   const kpiSummary = useMemo(() => {
     const { start: ws, end: we } = getWeekBounds(weekOffset)
@@ -1576,11 +1157,9 @@ function App() {
       sessions,
       activeTaskId,
       lastDeploymentAt,
-      rescheduleQueue,
-      deferredTasks,
       queueDate,
     })
-  }, [activeTaskId, deferredTasks, lastDeploymentAt, queueDate, rescheduleQueue, sessions, taskLibrary, todayTasks])
+  }, [activeTaskId, lastDeploymentAt, queueDate, sessions, taskLibrary, todayTasks])
 
   useEffect(() => {
     saveCompletionLog(completionLog)
@@ -1605,49 +1184,12 @@ function App() {
         upsertTaskTemplates(taskLibrary, userId)
       }
 
-      // 2. Weekly plan — load first so it can take priority over today_task_instances
-      //    when the plan is published/replanned and covers the target date.
-      const nowForPlan = new Date()
-      const isWeekend = nowForPlan.getDay() === 0 || nowForPlan.getDay() === 6
-      const planWeekStart = isWeekend || nowForPlan.getDay() === 5
-        ? getNextMondayStr()
-        : getWeekStartDateStr()
-      const loadedPlan = await loadCurrentWeekPlan(planWeekStart, userId)
-      if (loadedPlan) setWeekPlan(loadedPlan)
-
-      const planIsActive =
-        loadedPlan?.status === 'published' || loadedPlan?.status === 'replanned'
-      const targetDayName = DAY_NAMES[new Date(targetStr + 'T12:00:00').getDay()]
-      const planDayData  = planIsActive ? (loadedPlan?.days?.[targetDayName] ?? null) : null
-      const planHasTargetTasks = (planDayData?.tasks?.length ?? 0) > 0
-
-      // 3. Today tasks
-      //
-      //    WEEKEND (targetStr > todayStr): plan is always authoritative — sync plan
-      //    tasks into today_task_instances and load them. This fixes stale library
-      //    tasks that may have been written before the plan was published.
-      //
-      //    WEEKDAY (targetStr === todayStr): load today_task_instances first to
-      //    preserve any in-progress work; fall back to plan if table is empty;
-      //    fall back to 9am auto-deploy if no plan.
-
-      if (planHasTargetTasks && targetStr > todayStr) {
-        // Weekend → next weekday: plan wins, always.
-        const planSnapshot = planDayData.tasks.map((planTask, index) =>
-          planTaskToTodayTask(planTask, activeLibrary, targetDayName, loadedPlan.id, index)
-        )
-        await replaceTodayTasks(planSnapshot, userId, targetStr)
-        setTodayTasks(planSnapshot)
-        setQueueDate(targetStr)
-        setSessions(buildSessionsFromTodayTasks(planSnapshot))
-        setActiveTaskId(planSnapshot[0]?.id ?? null)
-      } else {
-        // Weekday path: check today_task_instances first
+      // 2. Today tasks — load from Supabase, fall back to 9am auto-deploy
+      {
         const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
         if (remoteTodayTasks && remoteTodayTasks.length > 0) {
           setTodayTasks(remoteTodayTasks)
           setQueueDate(targetStr)
-          // Ensure every task has a session before any render fires.
           setSessions((prev) => {
             const next = { ...prev }
             remoteTodayTasks.forEach((task) => {
@@ -1655,10 +1197,6 @@ function App() {
             })
             return next
           })
-          // Load timer session state from Supabase so progress is restored even
-          // when localStorage is stale or the user signs in on another device.
-          // This is done AFTER the initial setSessions so the render is never
-          // caught with todayTasks updated but sessions missing entries.
           const taskIds = remoteTodayTasks.map((t) => t.id)
           const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
           if (remoteTimerSessions) {
@@ -1670,34 +1208,17 @@ function App() {
                 const hasProgress =
                   remoteSession.timerState !== 'notStarted' || remoteSession.elapsedSeconds > 0
                 if (hasProgress) {
-                  // Preserve subtaskChecks from local state; everything else comes from Supabase.
-                  const existing = next[taskId] ?? {}
-                  next[taskId] = {
-                    ...existing,
-                    ...remoteSession,
-                    subtaskChecks: existing.subtaskChecks ?? [],
-                  }
+                  next[taskId] = { ...(next[taskId] ?? {}), ...remoteSession }
                 }
               })
               return next
             })
           }
-          // Load user preferences (cleared dates)
           const prefs = await loadUserPreferences(userId)
           if (prefs?.cleared_dates) {
             setClearedDates(prefs.cleared_dates)
             window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
           }
-        } else if (planHasTargetTasks) {
-          // No today_task_instances yet — seed from plan
-          const planSnapshot = planDayData.tasks.map((planTask, index) =>
-            planTaskToTodayTask(planTask, activeLibrary, targetDayName, loadedPlan.id, index)
-          )
-          await replaceTodayTasks(planSnapshot, userId, targetStr)
-          setTodayTasks(planSnapshot)
-          setQueueDate(targetStr)
-          setSessions(buildSessionsFromTodayTasks(planSnapshot))
-          setActiveTaskId(planSnapshot[0]?.id ?? null)
         } else {
           // No plan and no existing tasks — check for 9am auto-population (weekdays only)
           const nowDate = new Date()
@@ -1720,9 +1241,7 @@ function App() {
               let snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
 
               // Create calendar events for auto-deployed tasks
-              const cached = localStorage.getItem('cosa.gcal.token')
-              const expiry = parseInt(localStorage.getItem('cosa.gcal.tokenExpiry') || '0')
-              const providerToken = cached && Date.now() < expiry ? cached : null
+              const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
               if (providerToken) {
                 const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
                 if (Object.keys(eventIdMap).length > 0) {
@@ -1751,45 +1270,20 @@ function App() {
         setCompletionLog(remoteSessions)
       }
 
-      // 5. Reschedule queue
-      const remoteQueue = await loadRescheduleQueue(userId)
-      if (remoteQueue && remoteQueue.length > 0) {
-        setRescheduleQueue(remoteQueue)
-      }
-
-      // 6. Friday reviews
+      // 5. Friday reviews
       const reviews = await loadFridayReviews(userId)
       setFridayReviews(reviews)
 
-      // Weekly plan already loaded in step 2 above — no re-fetch needed.
-
-      // 7. Quick log entries for this week (for Analytics display)
+      // 4. Quick log entries for this week (for KPI display)
       const { start: qlStart, end: qlEnd } = getWeekBounds(0)
       const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
       if (qlEntries.length > 0) setQuickLogEntries(qlEntries)
 
-      // 8. Pending AI task proposals
-      const proposals = await loadPendingProposals()
-      setPendingProposals(proposals)
-
-      // 9. API key hash (for Settings Connected status)
-      const storedHash = await loadApiKeyHash(userId)
-      if (storedHash) setApiKeyHash(storedHash)
     }
 
     doSync()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id, supabaseConfigured])
-
-  // ── Poll for new AI task proposals every 60 seconds while signed in ─────────
-  useEffect(() => {
-    if (!supabaseConfigured || !supabase || !session?.user?.id) return
-    const interval = setInterval(async () => {
-      const proposals = await loadPendingProposals()
-      setPendingProposals(proposals)
-    }, 60_000)
-    return () => clearInterval(interval)
-  }, [session, supabaseConfigured])
 
   // ── Sync task library edits to Supabase (debounced 500ms) ────────────────
   useEffect(() => {
@@ -1830,168 +1324,6 @@ function App() {
     setArchiveConfirmId(null)
   }
 
-  // ── AI Task Proposal handlers ─────────────────────────────────────────────
-
-  function applyProposalAction(library, action) {
-    const { taskData } = action
-    switch (action.action) {
-      case 'add': {
-        const newTask = {
-          id: taskData.id ?? `lib-${Date.now()}`,
-          name: taskData.name ?? '',
-          track: taskData.track ?? 'advisors',
-          timeBlock: taskData.timeBlock ?? 'BD',
-          defaultTimeEstimate: taskData.defaultTimeEstimate ?? 25,
-          frequency: taskData.frequency ?? 'Weekly',
-          completionType: taskData.completionType ?? 'Done',
-          kpiMapping: taskData.kpiMapping ?? '',
-          subtasks: taskData.subtasks ?? '',
-          outcomePrompt: taskData.outcomePrompt ?? '',
-          status: taskData.status ?? 'Active',
-          requiresDefinitionOfDone: Boolean(taskData.requiresDefinitionOfDone),
-          daysOfWeek: taskData.daysOfWeek ?? ALL_WEEKDAYS,
-        }
-        return [...library, newTask]
-      }
-      case 'modify': {
-        return library.map((t) =>
-          t.id === taskData.taskId ? { ...t, ...taskData } : t,
-        )
-      }
-      case 'pause': {
-        return library.map((t) =>
-          t.id === taskData.taskId ? { ...t, status: 'Paused' } : t,
-        )
-      }
-      case 'activate': {
-        return library.map((t) =>
-          t.id === taskData.taskId ? { ...t, status: 'Active' } : t,
-        )
-      }
-      case 'reorder': {
-        return library.map((t) =>
-          t.id === taskData.taskId ? { ...t, daysOfWeek: taskData.daysOfWeek } : t,
-        )
-      }
-      default:
-        return library
-    }
-  }
-
-  async function handleApproveAction(proposal, actionIndex) {
-    const individualAction = proposal.proposal_data.proposals[actionIndex]
-    if (!individualAction) return
-
-    // Validate 'add' proposals before applying
-    if (individualAction.action === 'add') {
-      const errors = validateLibraryTask({
-        ...individualAction.taskData,
-        defaultTimeEstimate: individualAction.taskData.defaultTimeEstimate ?? 0,
-      })
-      if (errors.length > 0) {
-        setActionStatuses((prev) => ({
-          ...prev,
-          [proposal.id]: {
-            ...(prev[proposal.id] ?? {}),
-            [actionIndex]: `error:${errors.join(' ')}`,
-          },
-        }))
-        return
-      }
-    }
-
-    // Apply the action
-    setTaskLibrary((prev) => {
-      const updated = applyProposalAction(prev, individualAction)
-      if (supabaseConfigured && session?.user?.id) {
-        upsertTaskTemplates(updated, session.user.id)
-      }
-      return updated
-    })
-
-    // Mark this action as approved
-    const totalActions = proposal.proposal_data.proposals.length
-    const prevStatuses = actionStatuses[proposal.id] ?? {}
-    const updatedStatuses = { ...prevStatuses, [actionIndex]: 'approved' }
-    const resolvedCount = Object.keys(updatedStatuses).filter(
-      (k) => updatedStatuses[k] === 'approved' || updatedStatuses[k] === 'rejected',
-    ).length
-
-    setActionStatuses((prev) => ({
-      ...prev,
-      [proposal.id]: updatedStatuses,
-    }))
-
-    if (resolvedCount >= totalActions) {
-      await updateProposalStatus(proposal.id, 'approved')
-      setPendingProposals((prev) => prev.filter((p) => p.id !== proposal.id))
-      setActionStatuses((prev) => { const next = { ...prev }; delete next[proposal.id]; return next })
-    }
-  }
-
-  async function handleRejectAction(proposal, actionIndex) {
-    const totalActions = proposal.proposal_data.proposals.length
-    const prevStatuses = actionStatuses[proposal.id] ?? {}
-    const updatedStatuses = { ...prevStatuses, [actionIndex]: 'rejected' }
-    const resolvedCount = Object.keys(updatedStatuses).filter(
-      (k) => updatedStatuses[k] === 'approved' || updatedStatuses[k] === 'rejected',
-    ).length
-
-    setActionStatuses((prev) => ({
-      ...prev,
-      [proposal.id]: updatedStatuses,
-    }))
-
-    if (resolvedCount >= totalActions) {
-      await updateProposalStatus(proposal.id, 'rejected')
-      setPendingProposals((prev) => prev.filter((p) => p.id !== proposal.id))
-      setActionStatuses((prev) => { const next = { ...prev }; delete next[proposal.id]; return next })
-    }
-  }
-
-  async function handleApproveAllProposals(proposal) {
-    let updatedLibrary = taskLibrary
-    for (const action of proposal.proposal_data.proposals) {
-      updatedLibrary = applyProposalAction(updatedLibrary, action)
-    }
-    setTaskLibrary(updatedLibrary)
-    if (supabaseConfigured && session?.user?.id) {
-      upsertTaskTemplates(updatedLibrary, session.user.id)
-    }
-    await updateProposalStatus(proposal.id, 'approved')
-    setPendingProposals((prev) => prev.filter((p) => p.id !== proposal.id))
-    setActionStatuses((prev) => { const next = { ...prev }; delete next[proposal.id]; return next })
-  }
-
-  async function handleRejectProposalBatch(proposalId) {
-    await updateProposalStatus(proposalId, 'rejected')
-    setPendingProposals((prev) => prev.filter((p) => p.id !== proposalId))
-    setActionStatuses((prev) => { const next = { ...prev }; delete next[proposalId]; return next })
-  }
-
-  // ── Settings — AI Integration ─────────────────────────────────────────────
-
-  async function hashKey(key) {
-    const encoder = new TextEncoder()
-    const data = encoder.encode(key)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
-  }
-
-  async function handleSaveApiKey() {
-    if (!apiKeyInput.trim() || !session?.user?.id) return
-    setApiKeySaving(true)
-    setApiKeyMessage('')
-    const hash = await hashKey(apiKeyInput.trim())
-    await saveApiKeyHash(hash, session.user.id)
-    setApiKeyHash(hash)
-    setApiKeyInput('')
-    setApiKeyRevealed(false)
-    setApiKeyMessage('API key saved successfully.')
-    setApiKeySaving(false)
-  }
-
   // ─────────────────────────────────────────────────────────────────────────
 
   function createLibraryTask() {
@@ -2000,19 +1332,14 @@ function App() {
       id: nextId,
       name: 'New Task',
       track: TRACKS.advisors.key,
-      timeBlock: 'BD',
+      subTrack: null,
       defaultTimeEstimate: 25,
-      frequency: 'Weekly',
-      completionType: 'Done',
       kpiMapping: '',
-      subtasks: '',
       status: 'Active',
-      requiresDefinitionOfDone: false,
-      outcomePrompt: '',
     }
     setTaskLibrary((prev) => [nextTask, ...prev])
     setSelectedLibraryTaskId(nextId)
-    setLibraryMessage('New task created. Complete all fields before your next deployment.')
+    setLibraryMessage('New task created.')
   }
 
   async function deployLibraryToToday() {
@@ -2048,7 +1375,7 @@ function App() {
 
     // Create Google Calendar events (if Calendar scope granted)
     let finalSnapshot = snapshot
-    const providerToken = gcalToken
+    const providerToken = session?.provider_token
     if (providerToken) {
       const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, deployTargetDate)
       if (Object.keys(eventIdMap).length > 0) {
@@ -2093,25 +1420,8 @@ function App() {
     setCompletionInput(selectedSession.actualCompleted ?? '')
   }
 
-  function withTimerFeedback(key, fn) {
-    setTimerActionPending(key)
-    setTimeout(() => setTimerActionPending(null), 500)
-    fn()
-  }
-
   function handleStart() {
     if (!activeTask || !activeSession) return
-    const isVenturesEncore =
-      activeTask.track === TRACKS.ventures.key &&
-      activeTask.timeBlock === 'Encore OS' &&
-      activeTask.requiresDefinitionOfDone
-    const inputWords = wordsCount(definitionInput)
-
-    if (isVenturesEncore && inputWords < 10) {
-      setStatusMessage('Definition of done is required (minimum 10 words) before starting.')
-      return
-    }
-
     setStatusMessage('')
     const current = sessions[activeTask.id]
     if (!current) return
@@ -2122,14 +1432,10 @@ function App() {
 
     const nextSession = {
       ...current,
-      timerState:
-        current.remainingSeconds === 0 || current.timerState === TIMER_STATES.overrun
-          ? TIMER_STATES.overrun
-          : TIMER_STATES.running,
+      timerState: TIMER_STATES.running,
       pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
       currentPauseStartedAtMs: null,
       startedAtISO: current.startedAtISO ?? new Date().toISOString(),
-      definitionOfDone: isVenturesEncore ? definitionInput.trim() : current.definitionOfDone,
     }
 
     setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
@@ -2140,12 +1446,7 @@ function App() {
 
   function handlePause() {
     if (!activeTask || !activeSession) return
-    if (
-      activeSession.timerState !== TIMER_STATES.running &&
-      activeSession.timerState !== TIMER_STATES.overrun
-    ) {
-      return
-    }
+    if (activeSession.timerState !== TIMER_STATES.running) return
 
     const current = sessions[activeTask.id]
     if (!current) return
@@ -2181,7 +1482,6 @@ function App() {
       pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
       currentPauseStartedAtMs: null,
       completionLoggedAtISO: now,
-      completionType: 'Cancelled',
     }
 
     setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
@@ -2195,7 +1495,6 @@ function App() {
       taskName: activeTask.name,
       track: activeTask.track,
       kpiMapping: activeTask.kpiMapping ?? '',
-      completionType: 'Cancelled',
       outcomeAchieved: null,
       definitionOfDoneUsed: false,
       completedAt: now,
@@ -2207,42 +1506,11 @@ function App() {
     }
     setCompletionLog((prev) => [...prev, logEntry])
 
-    const remainingMins = Math.ceil(current.remainingSeconds / 60)
-    const newQueueItem = {
-      id: `rq-${Date.now()}`,
-      taskName: activeTask.name,
-      track: activeTask.track,
-      timeBlock: activeTask.timeBlock,
-      reason: 'cancelled',
-      remainingMinutes: remainingMins,
-      status: 'pending',
-      suggestedDate: getTomorrowDateString(),
-      suggestedTimeBlock: activeTask.timeBlock,
-    }
-    setRescheduleQueue((q) => {
-      if (q.some((item) => item.taskName === activeTask.name && item.reason === 'cancelled')) return q
-      if (supabaseConfigured && session?.user?.id) {
-        syncRescheduleQueue([newQueueItem], session.user.id)
-      }
-      return [...q, newQueueItem]
-    })
-    setStatusMessage('Task cancelled. Remaining time logged — see Reschedule tab.')
+    setStatusMessage('Task cancelled.')
   }
 
-  function handleComplete(forcePartial = false) {
+  function handleComplete() {
     if (!activeTask || !activeSession) return
-
-    const isPartial = forcePartial || activeTask.completionType === 'Partial'
-
-    if (!isPartial && activeTask.completionType === 'Done + Outcome' && outcomeSelection === null) {
-      setStatusMessage('Select an outcome result before completing this task.')
-      return
-    }
-
-    if (!completionInput.trim()) {
-      setStatusMessage('Add a quick note for what was actually completed.')
-      return
-    }
 
     const current = sessions[activeTask.id]
     if (!current) return
@@ -2253,17 +1521,14 @@ function App() {
         : 0
 
     const now = new Date().toISOString()
-    const finalCompletionType = isPartial ? 'Partial' : activeTask.completionType
 
     const nextSession = {
       ...current,
       timerState: TIMER_STATES.completed,
       actualCompleted: completionInput.trim(),
-      outcomeAchieved: isPartial ? null : outcomeSelection,
       pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
       currentPauseStartedAtMs: null,
       completionLoggedAtISO: now,
-      completionType: finalCompletionType,
     }
 
     setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
@@ -2272,53 +1537,19 @@ function App() {
       upsertTimerSession(nextSession, activeTask, session.user.id)
     }
 
-    // Show ventures blocking modal
-    if (activeTask.track === TRACKS.ventures.key && current.definitionOfDone?.trim()) {
-      setVenturesModalData({ session: nextSession, task: activeTask })
-      setShowVenturesModal(true)
-    }
-
     const logEntry = {
       id: current.sessionId ?? `log-${Date.now()}`,
       taskName: activeTask.name,
       track: activeTask.track,
       kpiMapping: activeTask.kpiMapping ?? '',
-      completionType: finalCompletionType,
-      outcomeAchieved: isPartial ? null : outcomeSelection,
-      definitionOfDoneUsed: Boolean(current.definitionOfDone?.trim()),
       completedAt: now,
       estimateSeconds: current.estimateSeconds,
       elapsedSeconds: current.elapsedSeconds,
-      pauseCount: current.pauseCount,
       pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
       cancelledSeconds: 0,
     }
     setCompletionLog((prev) => [...prev, logEntry])
-
-    if (isPartial) {
-      const remainingMins = Math.ceil(current.remainingSeconds / 60)
-      const newQueueItem = {
-        id: `rq-${Date.now()}`,
-        taskName: activeTask.name,
-        track: activeTask.track,
-        timeBlock: activeTask.timeBlock,
-        reason: 'partial',
-        remainingMinutes: remainingMins,
-        status: 'pending',
-        suggestedDate: getTomorrowDateString(),
-        suggestedTimeBlock: activeTask.timeBlock,
-      }
-      setRescheduleQueue((q) => {
-        if (q.some((item) => item.taskName === activeTask.name && item.reason === 'partial')) return q
-        if (supabaseConfigured && session?.user?.id) {
-          syncRescheduleQueue([newQueueItem], session.user.id)
-        }
-        return [...q, newQueueItem]
-      })
-      setStatusMessage('Marked as partial. Remaining work added to Reschedule tab.')
-    } else {
-      setStatusMessage('Task completed and KPI data captured.')
-    }
+    setStatusMessage('Task completed.')
   }
 
   async function handleSaveFridayReview() {
@@ -2388,62 +1619,6 @@ function App() {
     win.print()
   }
 
-  function handleConfirmReschedule(queueId) {
-    const item = rescheduleQueue.find((q) => q.id === queueId)
-    if (!item) return
-
-    // Move the calendar event to the suggested date
-    const matchedTask = todayTasks.find((t) => t.name === item.taskName)
-    if (matchedTask?.calendarEventId && gcalToken && item.suggestedDate) {
-      moveCalendarEvent(matchedTask.calendarEventId, matchedTask, gcalToken, item.suggestedDate)
-    }
-
-    setDeferredTasks((prev) => [...prev, { ...item, status: 'confirmed', confirmedAt: new Date().toISOString() }])
-    setRescheduleQueue((prev) => prev.filter((q) => q.id !== queueId))
-    if (supabaseConfigured && session?.user?.id) {
-      updateRescheduleItem(queueId, 'confirmed', session.user.id)
-    }
-  }
-
-  function handleDismissReschedule(queueId) {
-    setRescheduleQueue((prev) => prev.filter((q) => q.id !== queueId))
-    if (supabaseConfigured && session?.user?.id) {
-      updateRescheduleItem(queueId, 'dismissed', session.user.id)
-    }
-  }
-
-  function handleClearDeferred() {
-    setDeferredTasks([])
-  }
-
-  async function handleFetchAiSuggestion() {
-    const pendingItems = rescheduleQueue.filter((q) => q.status === 'pending')
-    const remaining = todayTasks.filter((t) => {
-      const s = sessions[t.id]
-      return s && s.timerState === TIMER_STATES.notStarted
-    })
-
-    if (pendingItems.length === 0 && remaining.length === 0) return
-
-    setAiSuggestion({ loading: true, text: '', error: '' })
-    try {
-      const res = await fetch('/api/suggest-reschedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rescheduleQueue: pendingItems,
-          remainingTasks: remaining,
-          todayDate: getTodayDateString(),
-        }),
-      })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setAiSuggestion({ loading: false, text: data.suggestion, error: '' })
-    } catch (err) {
-      setAiSuggestion({ loading: false, text: '', error: err.message })
-    }
-  }
-
   // ── Clear Day handlers ────────────────────────────────────────────────────
 
   async function handleConfirmClearDay() {
@@ -2489,12 +1664,7 @@ function App() {
       ? getNextMondayStr()
       : getWeekStartDateStr()
 
-    const pendingDeferred = rescheduleQueue.filter((item) => item.status === 'pending')
-
     try {
-      // Generate plan deterministically from daysOfWeek routing — instant, no API call needed.
-      // On Mon–Thu: only generate remaining days of the current week (today onward).
-      // On Fri/weekend: generate full Mon–Fri of next week.
       const ALL_PLAN_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
       const planDayNames = (isWeekend || isFridayGen)
         ? ALL_PLAN_DAYS
@@ -2502,69 +1672,40 @@ function App() {
       const hydratedDays = {}
 
       for (const dayName of planDayNames) {
-        // Tasks assigned to this day, sorted by time block order
         const dayTasks = taskLibrary
           .filter((t) => t.status === 'Active')
           .filter((t) => (t.daysOfWeek ?? ALL_WEEKDAYS).includes(dayName))
           .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
           .map((t) => ({
-            templateId: t.id,
+            templateId:      t.id,
             name:            t.name,
             track:           t.track,
-            timeBlock:       t.timeBlock,
             estimateMinutes: t.defaultTimeEstimate ?? 25,
             gcalEventId:     null,
             status:          'planned',
-            isDeferred:      false,
           }))
-
-        // Prepend any deferred items that match this day's time blocks
-        const deferredForDay = pendingDeferred
-          .filter((item) => {
-            const lib = taskLibrary.find((t) => t.name === item.taskName)
-            return lib && (lib.daysOfWeek ?? ALL_WEEKDAYS).includes(dayName)
-          })
-          .map((item) => {
-            const lib = taskLibrary.find((t) => t.name === item.taskName)
-            return {
-              templateId:      lib?.id ?? '',
-              name:            item.taskName,
-              track:           lib?.track ?? 'advisors',
-              timeBlock:       lib?.timeBlock ?? 'BD',
-              estimateMinutes: lib?.defaultTimeEstimate ?? 25,
-              gcalEventId:     null,
-              status:          'planned',
-              isDeferred:      true,
-            }
-          })
 
         hydratedDays[dayName] = {
           date:  getDayDate(planWeekStartDate, dayName),
-          tasks: [...deferredForDay, ...dayTasks],
+          tasks: dayTasks,
         }
       }
 
-      // Build structured rationale for the initial draft plan
       const totalTasks = Object.values(hydratedDays).reduce((n, d) => n + d.tasks.length, 0)
-      const deferredCount = pendingDeferred.length
       const dayRange = planDayNames.length === 5
         ? `week of ${planWeekStartDate}`
         : `${planDayNames[0]}–Friday of week of ${planWeekStartDate}`
       const aiRationale = JSON.stringify({
-        summary: `${totalTasks} tasks scheduled for ${dayRange} using your day-of-week routing.`,
-        deferred: deferredCount > 0
-          ? pendingDeferred.map((i) => i.taskName)
-          : [],
-        note: 'Review the plan, remove tasks if needed, then click Publish to Calendar.',
+        summary: `${totalTasks} tasks scheduled for ${dayRange}.`,
+        note: 'Review the plan, adjust as needed, then click Publish to Calendar.',
       })
 
       const newPlan = {
-        status:          'draft',
-        weekStartDate:   planWeekStartDate,
-        generatedAt:     new Date().toISOString(),
+        status:        'draft',
+        weekStartDate: planWeekStartDate,
+        generatedAt:   new Date().toISOString(),
         aiRationale,
-        deferredItems:   pendingDeferred.map((i) => i.taskName),
-        days:            hydratedDays,
+        days:          hydratedDays,
       }
 
       const planId = session?.user?.id
@@ -2593,393 +1734,8 @@ function App() {
     })
   }
 
-  async function handlePublishWeekPlan() {
-    if (!weekPlan) return
-    setWeekPlanLoading(true)
-    setWeekPlanMessage('')
-
-    let updatedDays = weekPlan.days
-    const providerToken = gcalToken
-
-    if (providerToken) {
-      updatedDays = await createWeekPlanEvents(weekPlan.days, providerToken, weekPlan.id)
-    }
-
-    const publishedPlan = { ...weekPlan, status: 'published', days: updatedDays }
-
-    if (session?.user?.id) {
-      if (weekPlan.id) {
-        await updatePlanAfterPublish(weekPlan.id, publishedPlan, session.user.id)
-      } else {
-        const newId = await upsertWeeklyPlan(publishedPlan, weekPlan.weekStartDate, session.user.id)
-        publishedPlan.id = newId
-        // Also persist the new ID back so future saves use it
-        setWeekPlan((prev) => ({ ...prev, id: newId }))
-      }
-    }
-
-    // Sync each day's plan tasks into today_task_instances so the Today queue
-    // reflects the Week Ahead plan (with Replan-adjusted estimates) when each day arrives.
-    // Only write future dates — past days are historical and should not be overwritten.
-    if (session?.user?.id) {
-      const todayStr = getTodayDateString()
-      for (const [dayName, dayData] of Object.entries(updatedDays)) {
-        if (!dayData?.date || !dayData.tasks?.length) continue
-        if (dayData.date < todayStr) continue  // skip past days
-        const snapshot = dayData.tasks.map((planTask, index) =>
-          planTaskToTodayTask(planTask, taskLibrary, dayName, publishedPlan.id, index)
-        )
-        replaceTodayTasks(snapshot, session.user.id, dayData.date)
-      }
-    }
-
-    setWeekPlan(publishedPlan)
-    setWeekPlanMessage(
-      providerToken ? 'Plan published to Google Calendar.' : 'Plan saved. Enable calendar sync to publish events.',
-    )
-    setWeekPlanLoading(false)
-  }
-
   function handleReplanWeekFromToday() {
     setActiveScreen('weekPlanner')
-    if (weekPlan && gcalToken) {
-      handleReplan()
-    }
-  }
-
-  // Called by WeekPlanner after a successful publish.
-  // Refreshes today's queue from the newly published plan so the Today
-  // sidebar immediately reflects the plan — without disrupting an active timer.
-  function handlePublishComplete(updatedPlan) {
-    const todayStr = getTodayDateString()
-    const todayDayName = DAY_NAMES[new Date(todayStr + 'T12:00:00').getDay()]
-    const planDay = updatedPlan?.days?.[todayDayName]
-    if (!planDay || planDay.date !== todayStr || (planDay.tasks?.length ?? 0) === 0) return
-
-    // Don't disrupt a session that's actively running or paused
-    const hasActiveTimer = Object.values(sessions).some(
-      (s) => s.timerState === TIMER_STATES.running || s.timerState === TIMER_STATES.paused,
-    )
-    if (hasActiveTimer) return
-
-    const planSnapshot = planDay.tasks.map((planTask, index) =>
-      planTaskToTodayTask(planTask, taskLibrary, todayDayName, updatedPlan.id, index),
-    )
-    setTodayTasks(planSnapshot)
-    setQueueDate(todayStr)
-    setSessions(buildSessionsFromTodayTasks(planSnapshot))
-    if (planSnapshot.length > 0) setActiveTaskId(planSnapshot[0].id)
-  }
-
-  async function handleReplan() {
-    if (!weekPlan) return
-    setReplanLoading(true)
-    setWeekPlanMessage('')
-
-    const providerToken = gcalToken
-    if (!providerToken) {
-      setWeekPlanMessage('Calendar sync is required for Replan.')
-      setReplanLoading(false)
-      return
-    }
-
-    setKpiCreditVotes({})
-
-    try {
-      const weekStart = weekPlan.weekStartDate
-      const weekEnd = getDayDate(weekStart, 'Friday')
-      const todayStr = new Date().toISOString().split('T')[0]
-      // Only fetch remaining days so we diff what's still live, not completed past days.
-      const rangeStart = todayStr > weekStart ? todayStr : weekStart
-      const timeMin = `${rangeStart}T00:00:00Z`
-      const timeMax = `${weekEnd}T23:59:59Z`
-
-      const [calendarEvents, allCalendarEvents] = await Promise.all([
-        fetchCoSACalendarEvents(providerToken, timeMin, timeMax),
-        fetchAllCalendarEvents(providerToken, timeMin, timeMax),
-      ])
-      // Personal events = everything that is NOT a CoSA-tagged event
-      const personalEvents = allCalendarEvents.filter(
-        (e) => e.extendedProperties?.private?.cosaTag !== 'cosa-event'
-      )
-      const DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-
-      // If the plan week hasn't started yet, ALL days are remaining.
-      // Only slice by today's day-of-week when we're inside the plan week.
-      let remainingDays
-      if (weekStart > todayStr) {
-        remainingDays = DAY_ORDER
-      } else {
-        const todayName = DAY_NAMES[new Date().getDay()]
-        const todayDayIndex = DAY_ORDER.indexOf(todayName)
-        remainingDays = todayDayIndex >= 0 ? DAY_ORDER.slice(todayDayIndex) : DAY_ORDER
-      }
-
-      // Build templateId → daysOfWeek lookup from the task library
-      const daysOfWeekMap = Object.fromEntries(
-        taskLibrary.map((t) => [t.id, t.daysOfWeek ?? ALL_WEEKDAYS])
-      )
-
-      // Build two parallel lookups from live calendar events:
-      //  1. by date::cosaTemplateId  (preferred — set on events published with fixed code)
-      //  2. by date::normalizedTitle (fallback — for old events missing the metadata tag)
-      const calendarPresent = new Set()       // date::templateId keys
-      const calendarPresentByTitle = new Set() // date::title keys
-      const calendarDurations = {}            // date::templateId → actual minutes
-      const calendarDurationsByTitle = {}     // date::title → actual minutes
-
-      for (const event of calendarEvents ?? []) {
-        const templateId = event.extendedProperties?.private?.cosaTemplateId
-        const dateStr = (event.start?.dateTime ?? event.start?.date ?? '').split('T')[0]
-        const title = (event.summary ?? '').toLowerCase().trim()
-
-        if (!dateStr) continue
-
-        const actualMins = (event.start?.dateTime && event.end?.dateTime)
-          ? Math.round((new Date(event.end.dateTime) - new Date(event.start.dateTime)) / 60000)
-          : null
-        const validMins = actualMins && actualMins > 0 && actualMins <= 480 ? actualMins : null
-
-        if (templateId) {
-          const key = `${dateStr}::${templateId}`
-          calendarPresent.add(key)
-          if (validMins) calendarDurations[key] = validMins
-        }
-        if (title) {
-          const titleKey = `${dateStr}::${title}`
-          calendarPresentByTitle.add(titleKey)
-          if (validMins) calendarDurationsByTitle[titleKey] = validMins
-        }
-      }
-
-      // Helper: check if a task is in the calendar on a given date,
-      // using templateId first and event title as a fallback.
-      const taskInCalendar = (date, task) => {
-        const idKey = `${date}::${task.templateId}`
-        const titleKey = `${date}::${(task.name ?? '').toLowerCase().trim()}`
-        return calendarPresent.has(idKey) || calendarPresentByTitle.has(titleKey)
-      }
-      const getDuration = (date, task) => {
-        const idKey = `${date}::${task.templateId}`
-        const titleKey = `${date}::${(task.name ?? '').toLowerCase().trim()}`
-        return calendarDurations[idKey] ?? calendarDurationsByTitle[titleKey] ?? null
-      }
-
-      // Find tasks whose (planned date + identity) is missing from the live calendar.
-      // A task moved to a different day in GCal is treated as "deleted" from its planned day.
-      const deletedTasks = []
-      for (const [dayName, dayData] of Object.entries(weekPlan.days ?? {})) {
-        if (!remainingDays.includes(dayName)) continue
-        for (const task of dayData?.tasks ?? []) {
-          if (!taskInCalendar(dayData.date, task)) {
-            deletedTasks.push({ ...task, day: dayName })
-          }
-        }
-      }
-
-      // Start from the current published plan for remaining days, keeping only
-      // tasks still present in the calendar on their planned day.
-      const hydratedDays = {}
-      for (const day of remainingDays) {
-        const existing = weekPlan.days?.[day] ?? { date: getDayDate(weekStart, day), tasks: [] }
-        const survivingTasks = (existing.tasks ?? [])
-          .filter((t) => taskInCalendar(existing.date, t))
-          .map((t) => {
-            const actual = getDuration(existing.date, t)
-            return actual && actual !== t.estimateMinutes
-              ? { ...t, estimateMinutes: actual }
-              : t
-          })
-        hydratedDays[day] = { ...existing, tasks: survivingTasks }
-      }
-
-      // Separate deleted tasks into:
-      // - MOVES: task disappeared from its day but appears on another remaining day → auto-confirm
-      // - PENDING: genuinely removed → ask the user what to do
-      const confirmedMoves = []
-      const pendingDecisions = []
-
-      for (const task of deletedTasks) {
-        const movedToDay = remainingDays.find((d) => {
-          const dayDate = weekPlan.days?.[d]?.date
-          return d !== task.day && dayDate && taskInCalendar(dayDate, task)
-        })
-        if (movedToDay) {
-          // Auto-confirm the move — add to surviving days
-          const alreadyThere = hydratedDays[movedToDay].tasks.some(
-            (t) => t.templateId === task.templateId
-          )
-          if (!alreadyThere) {
-            const actual = getDuration(weekPlan.days?.[movedToDay]?.date, task)
-            hydratedDays[movedToDay].tasks = [
-              ...hydratedDays[movedToDay].tasks,
-              { ...task, gcalEventId: null, status: 'planned', estimateMinutes: actual ?? task.estimateMinutes },
-            ]
-          }
-          confirmedMoves.push({ task, fromDay: task.day, toDay: movedToDay })
-        } else {
-          // Needs a human decision
-          const allowed = daysOfWeekMap[task.templateId] ?? ALL_WEEKDAYS
-          const suggestedDay = remainingDays.find((d) => allowed.includes(d)) ?? remainingDays[0]
-          pendingDecisions.push({ task, originalDay: task.day, suggestedDay })
-        }
-      }
-
-      // Detect KPI credit candidates: personal events that occupied the same time block
-      // on the same day as a deleted CoSA task → prompt the user to credit the KPI.
-      const BLOCK_HOURS = {
-        'BD':         [9.5, 11],
-        'Networking': [11,  12],
-        'Job Search': [13,  14],
-        'Encore OS':  [14,  16],
-        'Friday':     [14,  16],
-      }
-      for (const pd of pendingDecisions) {
-        const taskDate = weekPlan.days?.[pd.originalDay]?.date
-        if (!taskDate) continue
-        const [blockStart, blockEnd] = BLOCK_HOURS[pd.task.timeBlock] ?? [0, 24]
-        const replacement = personalEvents.find((e) => {
-          const eventDate = (e.start?.dateTime ?? e.start?.date ?? '').split('T')[0]
-          if (eventDate !== taskDate) return false
-          if (!e.start?.dateTime) return false
-          const d = new Date(e.start.dateTime)
-          const hour = d.getHours() + d.getMinutes() / 60
-          return hour >= blockStart && hour < blockEnd
-        })
-        if (replacement) {
-          const libTask = taskLibrary.find((t) => t.id === pd.task.templateId)
-          pd.kpiCreditCandidate = {
-            replacedBy: replacement.summary ?? 'a personal event',
-            kpiMapping: libTask?.kpiMapping ?? '',
-          }
-        }
-      }
-
-      // Re-sort surviving tasks by time block
-      for (const day of remainingDays) {
-        hydratedDays[day].tasks = hydratedDays[day].tasks.sort(
-          (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock)
-        )
-      }
-
-      // Detect resized tasks
-      const libraryEstimates = Object.fromEntries(taskLibrary.map((t) => [t.id, t.defaultTimeEstimate ?? 25]))
-      const resizedItems = []
-      for (const day of remainingDays) {
-        const dayDate = weekPlan.days?.[day]?.date
-        if (!dayDate) continue
-        for (const task of weekPlan.days[day]?.tasks ?? []) {
-          const actual = getDuration(dayDate, task)
-          const baseline = libraryEstimates[task.templateId] ?? task.estimateMinutes
-          if (actual && actual !== baseline) {
-            resizedItems.push({ name: task.name, from: baseline, to: actual })
-          }
-        }
-      }
-
-      // Initialise user choices — default each pending task to its suggested day
-      const initialChoices = {}
-      for (const pd of pendingDecisions) {
-        initialChoices[pd.task.templateId] = pd.suggestedDay ?? remainingDays[0]
-      }
-      setReplanChoices(initialChoices)
-
-      const replanPlan = {
-        ...weekPlan,
-        status: 'reviewing',
-        survivingDays: hydratedDays,
-        confirmedMoves,
-        pendingDecisions,
-        resizedItems,
-        remainingDays,
-      }
-      setWeekPlan(replanPlan)
-      setShowAiRationale(true)
-    } catch (err) {
-      setWeekPlanMessage(`Replan failed: ${err.message ?? 'Unknown error'}`)
-    } finally {
-      setReplanLoading(false)
-    }
-  }
-
-  async function handleApplyReplan() {
-    if (!weekPlan) return
-    setWeekPlanLoading(true)
-    setWeekPlanMessage('')
-
-    // Build final days from surviving tasks + user choices for pending decisions.
-    // We do NOT touch Google Calendar — the user has already made their changes there.
-    // We just update CoSA's internal plan so Today populates correctly through the week.
-    const finalDays = { ...(weekPlan.survivingDays ?? weekPlan.days) }
-
-    for (const pd of weekPlan.pendingDecisions ?? []) {
-      const choice = replanChoices[pd.task.templateId]
-      if (!choice || choice === 'drop') continue
-      const targetDay = choice
-      if (!finalDays[targetDay]) {
-        finalDays[targetDay] = { date: weekPlan.days?.[targetDay]?.date ?? '', tasks: [] }
-      }
-      const alreadyThere = finalDays[targetDay].tasks.some(
-        (t) => t.templateId === pd.task.templateId
-      )
-      if (!alreadyThere) {
-        finalDays[targetDay].tasks = [
-          ...finalDays[targetDay].tasks,
-          { ...pd.task, gcalEventId: null, status: 'planned' },
-        ]
-      }
-    }
-
-    // Re-sort each day by time block
-    for (const day of Object.keys(finalDays)) {
-      finalDays[day].tasks = (finalDays[day].tasks ?? []).sort(
-        (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock)
-      )
-    }
-
-    const appliedPlan = { ...weekPlan, status: 'replanned', days: finalDays }
-
-    // Create Quick Log entries for tasks the user credited toward a KPI.
-    if (session?.user?.id) {
-      for (const pd of weekPlan.pendingDecisions ?? []) {
-        if (!pd.kpiCreditCandidate || kpiCreditVotes[pd.task.templateId] !== true) continue
-        const libTask = taskLibrary.find((t) => t.id === pd.task.templateId)
-        await upsertQuickLogEntry({
-          who: 'Self',
-          activityType: 'KPI Credit — Calendar Replacement',
-          durationMinutes: pd.task.estimateMinutes ?? null,
-          kpiCredits: libTask?.kpiMapping ? [libTask.kpiMapping] : [],
-          note: `${pd.task.name} replaced by: ${pd.kpiCreditCandidate.replacedBy}`,
-        }, session.user.id)
-      }
-    }
-
-    if (session?.user?.id) {
-      if (weekPlan.id) {
-        await updatePlanAfterPublish(weekPlan.id, appliedPlan, session.user.id)
-      } else {
-        const newId = await upsertWeeklyPlan(appliedPlan, weekPlan.weekStartDate, session.user.id)
-        appliedPlan.id = newId
-      }
-    }
-
-    // Sync updated plan days into today_task_instances so Today queue reflects replan changes.
-    // Only write future dates — past days are historical.
-    if (session?.user?.id) {
-      const todayStr = getTodayDateString()
-      for (const [dayName, dayData] of Object.entries(finalDays)) {
-        if (!dayData?.date || !dayData.tasks?.length) continue
-        if (dayData.date < todayStr) continue  // skip past days
-        const snapshot = dayData.tasks.map((planTask, index) =>
-          planTaskToTodayTask(planTask, taskLibrary, dayName, appliedPlan.id, index)
-        )
-        replaceTodayTasks(snapshot, session.user.id, dayData.date)
-      }
-    }
-
-    setWeekPlan(appliedPlan)
-    setWeekPlanMessage('Plan updated — Today will reflect your changes as the week unfolds.')
-    setWeekPlanLoading(false)
   }
 
   // ─── Quick Log ────────────────────────────────────────────────────────────
@@ -3014,7 +1770,6 @@ function App() {
         taskName: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
         track,
         kpiMapping: trackKpis[0] ?? '',
-        completionType: 'Done',
         outcomeAchieved: true,
         definitionOfDoneUsed: false,
         completedAt: now,
@@ -3101,20 +1856,6 @@ function App() {
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  function handleToggleSubtask(index) {
-    if (!activeTask) return
-    setSessions((prev) => {
-      const current = prev[activeTask.id]
-      if (!current) return prev
-      const updated = [...(current.subtaskChecks ?? [])]
-      updated[index] = !updated[index]
-      return {
-        ...prev,
-        [activeTask.id]: { ...current, subtaskChecks: updated },
-      }
-    })
-  }
-
   if (supabaseConfigured && !session) {
     return (
       <main className="mx-auto flex min-h-screen max-w-5xl items-center justify-center bg-slate-50 p-4 text-slate-900">
@@ -3141,226 +1882,13 @@ function App() {
   const trackMeta = hasActiveTodayTask ? getTrackMeta(activeTask.track) : null
   const isCompleted = hasActiveTodayTask && activeSession.timerState === TIMER_STATES.completed
   const isCancelled = hasActiveTodayTask && activeSession.timerState === TIMER_STATES.cancelled
-  const isOverrun = hasActiveTodayTask && activeSession.timerState === TIMER_STATES.overrun
-  const remainingOrOverrun = isOverrun
-    ? formatDuration(activeSession.elapsedSeconds - activeSession.estimateSeconds)
-    : formatDuration(activeSession?.remainingSeconds ?? 0)
-  const timerLabel = isOverrun ? 'Overrun' : 'Remaining'
-
-  const runningTimeSeconds = activeSession?.elapsedSeconds ?? 0
-  const timeSavedSeconds = Math.max(0, (activeSession?.estimateSeconds ?? 0) - runningTimeSeconds)
-  const overrunSeconds = Math.max(0, runningTimeSeconds - (activeSession?.estimateSeconds ?? 0))
-  const livePauseSeconds = activeSession?.currentPauseStartedAtMs
-    ? Math.floor((nowMs - activeSession.currentPauseStartedAtMs) / 1000)
-    : 0
-  const pauseDurationSeconds = (activeSession?.pauseDurationSeconds ?? 0) + Math.max(0, livePauseSeconds)
-  const definitionWords = wordsCount(definitionInput)
   const activeScreenLabel = NAV_ITEMS.find((item) => item.id === activeScreen)?.label ?? 'Today'
 
-  function renderProposalsPanel() {
-    if (pendingProposals.length === 0) return null
 
-    const ACTION_LABELS = {
-      add: 'Add',
-      modify: 'Modify',
-      pause: 'Pause',
-      activate: 'Activate',
-      reorder: 'Reorder',
-    }
-    const ACTION_COLORS = {
-      add: 'bg-emerald-100 text-emerald-800',
-      modify: 'bg-blue-100 text-blue-800',
-      pause: 'bg-amber-100 text-amber-800',
-      activate: 'bg-indigo-100 text-indigo-800',
-      reorder: 'bg-slate-100 text-slate-700',
-    }
-
-    return (
-      <div className="mx-4 mt-4 space-y-4">
-        {pendingProposals.map((proposal) => {
-          const { proposals: actions, sessionContext } = proposal.proposal_data ?? {}
-          const statuses = actionStatuses[proposal.id] ?? {}
-          const unresolved = (actions ?? []).filter(
-            (_, i) => statuses[i] !== 'approved' && statuses[i] !== 'rejected' && !String(statuses[i] ?? '').startsWith('error:'),
-          )
-
-          return (
-            <div key={proposal.id} className="rounded-xl border-l-4 border-indigo-500 bg-white shadow-sm">
-              {/* Header */}
-              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-800">
-                    Proposals from Claude
-                    <span className="ml-2 rounded-full bg-indigo-600 px-2 py-0.5 text-[11px] font-bold text-white">
-                      {unresolved.length} pending
-                    </span>
-                  </p>
-                  {sessionContext ? (
-                    <p className="mt-0.5 text-xs text-slate-500">{sessionContext}</p>
-                  ) : null}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleApproveAllProposals(proposal)}
-                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
-                  >
-                    Approve All
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRejectProposalBatch(proposal.id)}
-                    className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-100"
-                  >
-                    Reject All
-                  </button>
-                </div>
-              </div>
-
-              {/* Action cards */}
-              <ul className="divide-y divide-slate-100">
-                {(actions ?? []).map((action, i) => {
-                  const status = statuses[i]
-                  const isError = String(status ?? '').startsWith('error:')
-                  const errorMsg = isError ? String(status).slice(6) : ''
-                  const isDone = status === 'approved' || status === 'rejected'
-                  const track = action.taskData?.track
-                  const trackMeta = track ? getTrackMeta(track) : null
-
-                  return (
-                    <li key={i} className={`px-4 py-3 ${isDone ? 'opacity-40' : ''}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          {/* Action badge + task name */}
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ACTION_COLORS[action.action] ?? 'bg-slate-100 text-slate-700'}`}>
-                              {ACTION_LABELS[action.action] ?? action.action}
-                            </span>
-                            {trackMeta ? (
-                              <span
-                                className="h-2 w-2 shrink-0 rounded-full"
-                                style={{ backgroundColor: trackMeta.color }}
-                              />
-                            ) : null}
-                            <span className="truncate text-sm font-medium text-slate-900">
-                              {action.taskData?.name ?? action.taskData?.taskId ?? '—'}
-                            </span>
-                          </div>
-
-                          {/* Rationale */}
-                          {action.rationale ? (
-                            <p className="mt-1 text-xs text-slate-500">{action.rationale}</p>
-                          ) : null}
-
-                          {/* Add card details */}
-                          {action.action === 'add' && action.taskData ? (
-                            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-slate-600 sm:grid-cols-4">
-                              <span><span className="font-medium">Track:</span> {trackMeta?.label ?? action.taskData.track}</span>
-                              <span><span className="font-medium">Block:</span> {action.taskData.timeBlock}</span>
-                              <span><span className="font-medium">Days:</span> {(action.taskData.daysOfWeek ?? []).join(', ')}</span>
-                              <span><span className="font-medium">Est:</span> {action.taskData.defaultTimeEstimate}m</span>
-                              {action.taskData.subtasks ? (
-                                <span className="col-span-2 sm:col-span-4">
-                                  <span className="font-medium">Subtasks:</span>{' '}
-                                  {action.taskData.subtasks.split('\n').filter(Boolean).join(' · ')}
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : null}
-
-                          {/* Modify card: show changed fields */}
-                          {action.action === 'modify' && action.taskData ? (
-                            <div className="mt-1 text-xs text-slate-500">
-                              {Object.entries(action.taskData)
-                                .filter(([k]) => k !== 'taskId')
-                                .map(([k, v]) => {
-                                  const existing = taskLibrary.find((t) => t.id === action.taskData.taskId)
-                                  const before = existing ? existing[k] : '—'
-                                  return (
-                                    <span key={k} className="mr-3">
-                                      <span className="font-medium">{k}:</span>{' '}
-                                      <span className="line-through text-rose-400">{String(before)}</span>
-                                      {' → '}
-                                      <span className="text-emerald-600">{String(v)}</span>
-                                    </span>
-                                  )
-                                })}
-                            </div>
-                          ) : null}
-
-                          {/* Pause/Activate card */}
-                          {(action.action === 'pause' || action.action === 'activate') ? (
-                            <p className="mt-1 text-xs text-slate-500">
-                              Status:{' '}
-                              <span className="font-medium text-slate-700">
-                                {action.action === 'pause' ? 'Active → Paused' : 'Paused → Active'}
-                              </span>
-                            </p>
-                          ) : null}
-
-                          {/* Reorder card */}
-                          {action.action === 'reorder' && action.taskData?.daysOfWeek ? (
-                            <p className="mt-1 text-xs text-slate-500">
-                              New days: <span className="font-medium text-slate-700">{action.taskData.daysOfWeek.join(', ')}</span>
-                            </p>
-                          ) : null}
-
-                          {/* Validation error */}
-                          {isError ? (
-                            <p className="mt-1 text-xs font-medium text-rose-600">{errorMsg}</p>
-                          ) : null}
-
-                          {/* Resolved status */}
-                          {isDone ? (
-                            <p className={`mt-1 text-xs font-semibold ${status === 'approved' ? 'text-emerald-600' : 'text-slate-400'}`}>
-                              {status === 'approved' ? '✓ Approved' : '✕ Rejected'}
-                            </p>
-                          ) : null}
-                        </div>
-
-                        {/* Approve / Reject buttons */}
-                        {!isDone && !isError ? (
-                          <div className="flex shrink-0 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleApproveAction(proposal, i)}
-                              className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRejectAction(proposal, i)}
-                              className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        ) : isError ? (
-                          <button
-                            type="button"
-                            onClick={() => handleRejectAction(proposal, i)}
-                            className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                          >
-                            Dismiss
-                          </button>
-                        ) : null}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
 
   function renderTaskLibrary() {
     return (
       <>
-      {renderProposalsPanel()}
       <section className="grid gap-4 p-4 lg:grid-cols-[340px_1fr]">
         <aside className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 space-y-2">
@@ -3397,7 +1925,7 @@ function App() {
               </p>
             ) : (() => {
               // Group by track in display order
-              const trackOrder = [TRACKS.advisors.key, TRACKS.jobSearch.key, TRACKS.ventures.key, TRACKS.cosaAdmin.key, TRACKS.networking.key]
+              const trackOrder = [TRACKS.advisors.key, TRACKS.jobSearch.key, TRACKS.ventures.key]
               const grouped = {}
               for (const tk of trackOrder) grouped[tk] = []
               for (const task of filteredTaskLibrary) {
@@ -3633,85 +2161,11 @@ function App() {
                 />
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-slate-600">Frequency</span>
-                <select
-                  value={selectedLibraryTask.frequency}
-                  onChange={(event) =>
-                    updateLibraryTask(selectedLibraryTask.id, 'frequency', event.target.value)
-                  }
-                  className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
-                >
-                  {FREQUENCIES.map((frequency) => (
-                    <option key={frequency} value={frequency}>
-                      {frequency}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="text-sm">
-                <span className="mb-1 block text-slate-600">Days of Week</span>
-                <div className="flex gap-1">
-                  {DAYS_OF_WEEK.map((day) => {
-                    const abbrev = day.slice(0, 3)
-                    const selected = (selectedLibraryTask.daysOfWeek ?? ALL_WEEKDAYS).includes(day)
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() => {
-                          const current = selectedLibraryTask.daysOfWeek ?? ALL_WEEKDAYS
-                          const next = selected
-                            ? current.filter((d) => d !== day)
-                            : [...current, day]
-                          updateLibraryTask(selectedLibraryTask.id, 'daysOfWeek', next)
-                        }}
-                        className={`flex-1 rounded py-1.5 text-xs font-medium transition-colors ${
-                          selected
-                            ? 'bg-blue-600 text-white'
-                            : 'border border-slate-300 bg-white text-slate-500 hover:border-blue-400 hover:text-blue-600'
-                        }`}
-                      >
-                        {abbrev}
-                      </button>
-                    )
-                  })}
-                </div>
-                {(selectedLibraryTask.daysOfWeek ?? ALL_WEEKDAYS).length === 0 && (
-                  <p className="mt-1 text-xs text-red-500">Select at least one day.</p>
-                )}
-              </div>
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">Completion Type</span>
-                <select
-                  value={selectedLibraryTask.completionType}
-                  onChange={(event) =>
-                    updateLibraryTask(selectedLibraryTask.id, 'completionType', event.target.value)
-                  }
-                  className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
-                >
-                  {COMPLETION_TYPES.map((completionType) => (
-                    <option key={completionType} value={completionType}>
-                      {completionType}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm">
                 <span className="mb-1 block text-slate-600">KPI Mapping</span>
                 <input
                   value={selectedLibraryTask.kpiMapping}
                   onChange={(event) =>
                     updateLibraryTask(selectedLibraryTask.id, 'kpiMapping', event.target.value)
-                  }
-                  className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
-                />
-              </label>
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">Outcome Prompt (optional)</span>
-                <input
-                  value={selectedLibraryTask.outcomePrompt ?? ''}
-                  onChange={(event) =>
-                    updateLibraryTask(selectedLibraryTask.id, 'outcomePrompt', event.target.value)
                   }
                   className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
                 />
@@ -3750,31 +2204,6 @@ function App() {
                 <p className="mt-1 text-xs text-slate-500">
                   {getStatusBehavior(selectedLibraryTask.status)}
                 </p>
-              </label>
-              <label className="text-sm sm:col-span-2">
-                <span className="mb-1 block text-slate-600">Subtasks (one per line)</span>
-                <textarea
-                  rows={4}
-                  value={selectedLibraryTask.subtasks}
-                  onChange={(event) =>
-                    updateLibraryTask(selectedLibraryTask.id, 'subtasks', event.target.value)
-                  }
-                  className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
-                />
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={Boolean(selectedLibraryTask.requiresDefinitionOfDone)}
-                  onChange={(event) =>
-                    updateLibraryTask(
-                      selectedLibraryTask.id,
-                      'requiresDefinitionOfDone',
-                      event.target.checked,
-                    )
-                  }
-                />
-                Require 10-word definition of done before timer start
               </label>
               {(libraryValidationMap[selectedLibraryTask.id] ?? []).length > 0 ? (
                 <div className="sm:col-span-2 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
@@ -3835,327 +2264,12 @@ function App() {
   }
 
   function renderSettingsScreen() {
-    const isConnected = Boolean(apiKeyHash)
     const isSignedIn = Boolean(session?.user?.id)
 
     return (
       <section className="mx-auto max-w-2xl p-4 space-y-6">
         <h2 className="text-base font-semibold text-slate-800">Settings</h2>
 
-        {/* ── AI Integration ───────────────────────────────────────────── */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-5 py-4">
-            <h3 className="text-sm font-semibold text-slate-800">AI Integration</h3>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Allow Claude to propose Task Library changes directly into CoSA.
-            </p>
-          </div>
-
-          <div className="space-y-4 px-5 py-4">
-            {/* Status indicator */}
-            <div className="flex items-center gap-2">
-              <span
-                className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-amber-400'}`}
-              />
-              <span className={`text-sm font-medium ${isConnected ? 'text-emerald-700' : 'text-amber-700'}`}>
-                {isConnected ? 'Connected' : 'Not configured'}
-              </span>
-            </div>
-
-            {/* Key input */}
-            {isSignedIn ? (
-              <div className="space-y-2">
-                <label className="block text-xs font-medium text-slate-700" htmlFor="api-key-input">
-                  CoSA Proposal API Key
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      id="api-key-input"
-                      type={apiKeyRevealed ? 'text' : 'password'}
-                      value={apiKeyInput}
-                      onChange={(e) => setApiKeyInput(e.target.value)}
-                      placeholder={isConnected ? 'Paste new key to replace…' : 'Paste your API key…'}
-                      className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-3 pr-9 text-sm outline-none ring-indigo-300 focus:ring-2"
-                      onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setApiKeyRevealed((v) => !v)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                      aria-label={apiKeyRevealed ? 'Hide key' : 'Reveal key'}
-                    >
-                      {apiKeyRevealed
-                        ? <EyeOff className="h-4 w-4" />
-                        : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleSaveApiKey}
-                    disabled={!apiKeyInput.trim() || apiKeySaving}
-                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
-                  >
-                    {apiKeySaving ? 'Saving…' : 'Save'}
-                  </button>
-                </div>
-                <p className="text-[11px] leading-relaxed text-slate-500">
-                  This key allows Claude to submit Task Library proposals directly to CoSA.
-                  Generate a key in Vercel and paste it here once — it never needs to be shared in chat.
-                  The key is hashed before storage and never appears in the database in plaintext.
-                </p>
-                {apiKeyMessage ? (
-                  <p className="text-xs font-medium text-emerald-600">{apiKeyMessage}</p>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-500">Sign in to configure AI integration.</p>
-            )}
-          </div>
-        </div>
-      </section>
-    )
-  }
-
-  function renderAnalyticsScreen() {
-    const { start: weekStart, end: weekEnd } = getWeekBounds(analyticsWeekOffset)
-    const { start: prevStart, end: prevEnd } = getWeekBounds(analyticsWeekOffset - 1)
-    const isCurrentWeek = analyticsWeekOffset === 0
-
-    const current = calcMetrics(completionLog, weekStart, weekEnd)
-    const previous = calcMetrics(completionLog, prevStart, prevEnd)
-
-    function trendArrow(curr, prev, lowerIsBetter = false) {
-      if (prev === null || curr === null) return { arrow: '—', color: 'text-slate-400', diff: null }
-      const diff = curr - prev
-      if (diff === 0) return { arrow: '→', color: 'text-slate-400', diff: 0 }
-      const isGood = lowerIsBetter ? diff < 0 : diff > 0
-      return {
-        arrow: diff > 0 ? '↑' : '↓',
-        color: isGood ? 'text-emerald-600' : 'text-rose-600',
-        diff,
-      }
-    }
-
-    const metrics = [
-      {
-        id: 'time-saved',
-        label: 'Time Saved',
-        value: formatDuration(current.timeSavedSeconds),
-        rawValue: current.timeSavedSeconds,
-        prevRaw: previous.timeSavedSeconds,
-        desc: 'Estimate minus actual on completed tasks',
-        lowerIsBetter: false,
-        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
-      },
-      {
-        id: 'overrun',
-        label: 'Overrun Time',
-        value: formatDuration(current.overrunSeconds),
-        rawValue: current.overrunSeconds,
-        prevRaw: previous.overrunSeconds,
-        desc: 'Time spent beyond estimate',
-        lowerIsBetter: true,
-        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
-      },
-      {
-        id: 'pause-count',
-        label: 'Pause Count',
-        value: String(current.pauseCount),
-        rawValue: current.pauseCount,
-        prevRaw: previous.pauseCount,
-        desc: 'Times you paused a running timer',
-        lowerIsBetter: true,
-        diffFn: (d) => `${Math.abs(d)} vs last week`,
-      },
-      {
-        id: 'pause-duration',
-        label: 'Pause Duration',
-        value: formatDuration(current.pauseDurationSeconds),
-        rawValue: current.pauseDurationSeconds,
-        prevRaw: previous.pauseDurationSeconds,
-        desc: 'Total time spent paused',
-        lowerIsBetter: true,
-        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
-      },
-      {
-        id: 'cancelled',
-        label: 'Cancelled Time',
-        value: formatDuration(current.cancelledSeconds),
-        rawValue: current.cancelledSeconds,
-        prevRaw: previous.cancelledSeconds,
-        desc: 'Time committed but not delivered',
-        lowerIsBetter: true,
-        diffFn: (d) => `${formatDuration(Math.abs(d))} vs last week`,
-      },
-      {
-        id: 'completion-rate',
-        label: 'Completion Rate',
-        value: current.completionRate !== null ? `${current.completionRate}%` : '—',
-        rawValue: current.completionRate,
-        prevRaw: previous.completionRate,
-        desc: `${current.completedCount} done / ${current.total} total`,
-        lowerIsBetter: false,
-        diffFn: (d) => `${Math.abs(d)}% vs last week`,
-      },
-    ]
-
-    // 4-week trend (current week + 3 prior)
-    const trendWeeks = [0, -1, -2, -3].map((o) => {
-      const off = analyticsWeekOffset + o
-      const { start, end } = getWeekBounds(off)
-      const m = calcMetrics(completionLog, start, end)
-      return { label: formatWeekLabel(start, end), off, m, start, end }
-    })
-
-    // Track breakdown for current week
-    const trackBreakdown = Object.values(TRACKS).map((track) => ({
-      track,
-      metrics: calcMetrics(completionLog, weekStart, weekEnd, track.key),
-    }))
-
-    return (
-      <section className="space-y-4 p-4">
-        {/* Week navigation */}
-        <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <button
-            type="button"
-            onClick={() => setAnalyticsWeekOffset((o) => o - 1)}
-            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
-          >
-            ← Prev
-          </button>
-          <div className="text-center">
-            <p className="text-sm font-semibold text-slate-900">{formatWeekLabel(weekStart, weekEnd)}</p>
-            {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
-          </div>
-          <button
-            type="button"
-            onClick={() => setAnalyticsWeekOffset((o) => Math.min(0, o + 1))}
-            disabled={isCurrentWeek}
-            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-30"
-          >
-            Next →
-          </button>
-        </div>
-
-        {/* Six metric cards */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {metrics.map((m) => {
-            const trend = trendArrow(m.rawValue, m.prevRaw, m.lowerIsBetter)
-            return (
-              <article key={m.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs font-semibold uppercase text-slate-500">{m.label}</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-slate-900">{m.value}</p>
-                <p className="mt-0.5 text-xs text-slate-400">{m.desc}</p>
-                {trend.diff !== null ? (
-                  <p className={`mt-2 text-xs font-medium ${trend.color}`}>
-                    {trend.arrow} {m.diffFn(trend.diff)}
-                  </p>
-                ) : (
-                  <p className="mt-2 text-xs text-slate-300">No prior week data</p>
-                )}
-              </article>
-            )
-          })}
-        </div>
-
-        {/* 4-week trend table */}
-        <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
-          <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold uppercase text-slate-500">4-Week Trend</h2>
-          </div>
-          <table className="w-full min-w-[620px] text-xs">
-            <thead>
-              <tr className="border-b border-slate-100 text-left text-slate-500">
-                <th className="px-4 py-2 font-medium">Week</th>
-                <th className="px-3 py-2 text-center font-medium">Saved</th>
-                <th className="px-3 py-2 text-center font-medium">Overrun</th>
-                <th className="px-3 py-2 text-center font-medium">Pauses</th>
-                <th className="px-3 py-2 text-center font-medium">Pause Time</th>
-                <th className="px-3 py-2 text-center font-medium">Cancelled</th>
-                <th className="px-3 py-2 text-center font-medium">Done %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trendWeeks.map(({ label, off, m }) => {
-                const isCurrent = off === analyticsWeekOffset
-                return (
-                  <tr
-                    key={off}
-                    className={`border-b border-slate-50 last:border-0 ${isCurrent ? 'bg-slate-50 font-semibold' : ''}`}
-                  >
-                    <td className="px-4 py-2.5 text-slate-700 whitespace-nowrap">{label}</td>
-                    <td className="px-3 py-2.5 text-center text-emerald-700">{formatDuration(m.timeSavedSeconds)}</td>
-                    <td className="px-3 py-2.5 text-center text-rose-700">{formatDuration(m.overrunSeconds)}</td>
-                    <td className="px-3 py-2.5 text-center text-slate-700">{m.pauseCount}</td>
-                    <td className="px-3 py-2.5 text-center text-slate-700">{formatDuration(m.pauseDurationSeconds)}</td>
-                    <td className="px-3 py-2.5 text-center text-amber-700">{formatDuration(m.cancelledSeconds)}</td>
-                    <td className="px-3 py-2.5 text-center text-slate-700">
-                      {m.completionRate !== null ? `${m.completionRate}%` : '—'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </article>
-
-        {/* Track breakdown */}
-        <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
-          <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold uppercase text-slate-500">This Week by Track</h2>
-          </div>
-          <table className="w-full min-w-[580px] text-xs">
-            <thead>
-              <tr className="border-b border-slate-100 text-left text-slate-500">
-                <th className="px-4 py-2 font-medium">Track</th>
-                <th className="px-3 py-2 text-center font-medium">Saved</th>
-                <th className="px-3 py-2 text-center font-medium">Overrun</th>
-                <th className="px-3 py-2 text-center font-medium">Pauses</th>
-                <th className="px-3 py-2 text-center font-medium">Cancelled</th>
-                <th className="px-3 py-2 text-center font-medium">Done %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trackBreakdown.map(({ track, metrics: m }) => (
-                <tr key={track.key} className="border-b border-slate-50 last:border-0">
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: track.color }} />
-                      <span className="font-medium text-slate-700">{track.label}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-center text-emerald-700">{formatDuration(m.timeSavedSeconds)}</td>
-                  <td className="px-3 py-2.5 text-center text-rose-700">{formatDuration(m.overrunSeconds)}</td>
-                  <td className="px-3 py-2.5 text-center text-slate-700">{m.pauseCount}</td>
-                  <td className="px-3 py-2.5 text-center text-amber-700">{formatDuration(m.cancelledSeconds)}</td>
-                  <td className="px-3 py-2.5 text-center">
-                    {m.completionRate !== null ? (
-                      <div className="flex items-center gap-1.5">
-                        <div className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-200">
-                          <div
-                            className="h-full rounded-full"
-                            style={{ width: `${m.completionRate}%`, backgroundColor: track.color }}
-                          />
-                        </div>
-                        <span className="text-slate-700">{m.completionRate}%</span>
-                      </div>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </article>
-
-        {completionLog.length === 0 ? (
-          <p className="text-center text-sm text-slate-400">
-            Complete or cancel tasks to start seeing analytics.
-          </p>
-        ) : null}
       </section>
     )
   }
@@ -4462,173 +2576,6 @@ function App() {
     )
   }
 
-  function renderRescheduleScreen() {
-    const pendingQueue = rescheduleQueue.filter((q) => q.status === 'pending')
-    const reorderableTasks = todayTasks.filter((t) => {
-      const s = sessions[t.id]
-      return s && s.timerState === TIMER_STATES.notStarted
-    })
-
-    function handleDragEnd(event) {
-      const { active, over } = event
-      if (!over || active.id === over.id) return
-      const oldIndex = reorderableTasks.findIndex((t) => t.id === active.id)
-      const newIndex = reorderableTasks.findIndex((t) => t.id === over.id)
-      const reordered = arrayMove(reorderableTasks, oldIndex, newIndex)
-      const reorderIds = reordered.map((t) => t.id)
-      setTodayTasks((prev) => {
-        const nonReorderable = prev.filter((t) => !reorderIds.includes(t.id))
-        return [...reordered, ...nonReorderable]
-      })
-    }
-
-    const reasonLabel = { overrun: 'Overrun', cancelled: 'Cancelled', partial: 'Partially done' }
-
-    return (
-      <section className="space-y-4 p-4">
-        {/* Needs Rescheduling */}
-        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
-            <AlertTriangle size={16} className="text-rose-500" />
-            <h2 className="text-sm font-semibold uppercase text-slate-500">Needs Rescheduling</h2>
-          </div>
-          {pendingQueue.length === 0 ? (
-            <p className="text-sm text-slate-500">No tasks need rescheduling right now.</p>
-          ) : (
-            <ul className="space-y-3">
-              {pendingQueue.map((item) => {
-                const meta = getTrackMeta(item.track)
-                return (
-                  <li key={item.id} className="rounded-lg border border-rose-200 bg-rose-50 p-3">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: meta?.color }} />
-                      <p className="font-medium text-sm text-slate-900">{item.taskName}</p>
-                      <span className="ml-auto rounded-full bg-rose-200 px-2 py-0.5 text-[10px] font-semibold text-rose-800">
-                        {reasonLabel[item.reason] ?? item.reason}
-                      </span>
-                    </div>
-                    <p className="mb-2 text-xs text-slate-600">
-                      {item.timeBlock} block
-                      {item.remainingMinutes ? ` · ${item.remainingMinutes} min remaining` : ''}
-                    </p>
-                    <div className="mb-2 rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs text-slate-700">
-                      <span className="font-medium">Suggested:</span> Move to {item.suggestedTimeBlock} block on{' '}
-                      <span className="font-medium">{formatDate(item.suggestedDate)}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleConfirmReschedule(item.id)}
-                        className="rounded-md bg-slate-900 px-3 py-1 text-xs font-medium text-white"
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDismissReschedule(item.id)}
-                        className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600"
-                      >
-                        Dismiss
-                      </button>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </article>
-
-        {/* AI Suggestion */}
-        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Sparkles size={16} className="text-purple-500" />
-              <h2 className="text-sm font-semibold uppercase text-slate-500">AI Chief of Staff</h2>
-            </div>
-            <button
-              type="button"
-              onClick={handleFetchAiSuggestion}
-              disabled={aiSuggestion.loading}
-              className="rounded-md bg-purple-600 px-3 py-1 text-xs font-medium text-white disabled:bg-purple-300"
-            >
-              {aiSuggestion.loading ? 'Thinking...' : 'Get Suggestion'}
-            </button>
-          </div>
-          {aiSuggestion.error ? (
-            <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{aiSuggestion.error}</p>
-          ) : aiSuggestion.text ? (
-            <div className="rounded-lg border border-purple-200 bg-purple-50 p-3 text-sm text-purple-900">
-              {aiSuggestion.text}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">
-              {pendingQueue.length > 0
-                ? 'Click "Get Suggestion" and your AI Chief of Staff will recommend the best reorder.'
-                : 'No pending items to analyze. Cancel or partially complete a task to get AI guidance.'}
-            </p>
-          )}
-        </article>
-
-        {/* Drag to Reorder */}
-        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
-            <Clock size={16} className="text-slate-500" />
-            <h2 className="text-sm font-semibold uppercase text-slate-500">Reorder Today's Remaining Tasks</h2>
-          </div>
-          {reorderableTasks.length === 0 ? (
-            <p className="text-sm text-slate-500">No unstarted tasks left to reorder.</p>
-          ) : (
-            <>
-              <p className="mb-3 text-xs text-slate-500">Drag tasks into the order you want to work through them.</p>
-              <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={reorderableTasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-                  <ul className="space-y-2">
-                    {reorderableTasks.map((task) => (
-                      <SortableTaskRow
-                        key={task.id}
-                        task={task}
-                        session={sessions[task.id]}
-                        trackMeta={getTrackMeta(task.track)}
-                      />
-                    ))}
-                  </ul>
-                </SortableContext>
-              </DndContext>
-            </>
-          )}
-        </article>
-
-        {/* Confirmed / Deferred */}
-        {deferredTasks.length > 0 ? (
-          <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold uppercase text-slate-500">Deferred to Future Days</h2>
-              <button
-                type="button"
-                onClick={handleClearDeferred}
-                className="text-xs text-slate-400 underline"
-              >
-                Clear all
-              </button>
-            </div>
-            <ul className="space-y-2">
-              {deferredTasks.map((item) => {
-                const meta = getTrackMeta(item.track)
-                return (
-                  <li key={item.id} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: meta?.color }} />
-                    <span className="flex-1 font-medium">{item.taskName}</span>
-                    <span className="text-xs text-slate-500">{formatDate(item.suggestedDate)}</span>
-                  </li>
-                )
-              })}
-            </ul>
-          </article>
-        ) : null}
-      </section>
-    )
-  }
-
   function renderPlaceholderScreen(title, message) {
     return (
       <section className="p-4">
@@ -4642,55 +2589,6 @@ function App() {
 
   return (
     <main className="mx-auto min-h-screen max-w-5xl bg-slate-50 pb-24 text-slate-900">
-
-      {/* ── Ventures Session Accountability Modal ──────────────────────── */}
-      {showVenturesModal && venturesModalData ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="bg-[#6B3FA0] px-6 py-5">
-              <p className="text-xs font-semibold uppercase tracking-widest text-purple-200">
-                Kuperman Ventures
-              </p>
-              <h2 className="mt-1 text-xl font-bold text-white">Session Accountability</h2>
-            </div>
-            <div className="space-y-5 p-6">
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-purple-700">
-                  You said you would:
-                </p>
-                <blockquote className="border-l-4 border-purple-400 pl-4 text-sm text-slate-700 leading-relaxed">
-                  {venturesModalData.session.definitionOfDone}
-                </blockquote>
-              </div>
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">
-                  What actually happened:
-                </p>
-                <blockquote className="border-l-4 border-slate-300 pl-4 text-sm text-slate-700 leading-relaxed">
-                  {venturesModalData.session.actualCompleted || '(no note recorded)'}
-                </blockquote>
-              </div>
-              {venturesModalData.session.definitionOfDone.trim().toLowerCase() !==
-                venturesModalData.session.actualCompleted.trim().toLowerCase() ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                  <p className="text-sm font-semibold text-amber-800">
-                    These don't match — note the gap for your Friday Review.
-                  </p>
-                </div>
-              ) : null}
-            </div>
-            <div className="px-6 pb-6">
-              <button
-                type="button"
-                onClick={() => setShowVenturesModal(false)}
-                className="w-full rounded-lg bg-[#6B3FA0] py-3 text-sm font-bold text-white hover:bg-purple-800"
-              >
-                Acknowledged
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {/* Clear Day Modal */}
       {showClearDayModal ? (
@@ -4757,7 +2655,7 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs sm:text-sm">
-            {gcalToken ? (
+            {session?.provider_token ? (
               <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 font-medium">
                 📅 Calendar sync on
               </span>
@@ -4810,223 +2708,80 @@ function App() {
             </span>
           </div>
 
-          <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-slate-100 p-3 text-sm sm:grid-cols-4">
-            <div>
-              <p className="text-xs text-slate-500">Time Block</p>
-              <p className="font-medium">{activeTask.timeBlock}</p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Completion Type</p>
-              <p className="font-medium">{activeTask.completionType}</p>
-            </div>
+          <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-slate-100 p-3 text-sm">
             <div>
               <p className="text-xs text-slate-500">Estimate</p>
               <p className="font-medium">{formatDuration(activeSession.estimateSeconds)}</p>
             </div>
             <div>
-              <p className="text-xs text-slate-500">State</p>
+              <p className="text-xs text-slate-500">Status</p>
               <p className="font-medium">{activeSession.timerState}</p>
             </div>
           </div>
 
-          <div
-            className={`mb-4 rounded-xl p-4 text-center ${
-              isOverrun ? 'bg-red-100 text-red-700' : 'bg-slate-900 text-white'
-            }`}
-          >
-            <p className="text-xs uppercase tracking-wide">{timerLabel}</p>
-            <p className="text-4xl font-semibold tabular-nums">{remainingOrOverrun}</p>
-          </div>
-
-          {activeTask.subtasks?.length > 0 ? (
-            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <p className="mb-2 text-sm font-medium text-slate-700">Steps</p>
-              <ul className="space-y-2">
-                {activeTask.subtasks.map((step, index) => {
-                  const checked = activeSession.subtaskChecks?.[index] ?? false
-                  const frozen = isCompleted || isCancelled
-                  return (
-                    <li key={index} className="flex items-start gap-2">
-                      <input
-                        type="checkbox"
-                        id={`subtask-${activeTask.id}-${index}`}
-                        checked={checked}
-                        onChange={() => handleToggleSubtask(index)}
-                        disabled={frozen}
-                        className="mt-0.5 h-4 w-4 flex-shrink-0 accent-slate-900 disabled:cursor-not-allowed"
-                      />
-                      <label
-                        htmlFor={`subtask-${activeTask.id}-${index}`}
-                        className={`text-sm leading-snug ${
-                          checked ? 'text-slate-400 line-through' : 'text-slate-700'
-                        } ${frozen ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                      >
-                        {step}
-                      </label>
-                    </li>
-                  )
-                })}
-              </ul>
-              <p className="mt-2 text-[11px] text-slate-400">
-                {(activeSession.subtaskChecks ?? []).filter(Boolean).length} of {activeTask.subtasks.length} steps done
+          <div className="mb-4 rounded-xl bg-slate-900 p-4 text-center text-white">
+            <p className="text-xs uppercase tracking-wide">
+              {activeSession.remainingSeconds === 0 ? 'Time Up' : 'Remaining'}
+            </p>
+            <p className="text-4xl font-semibold tabular-nums">
+              {formatDuration(activeSession?.remainingSeconds ?? 0)}
+            </p>
+            {activeSession.remainingSeconds === 0 && (
+              <p className="mt-1 text-xs text-slate-400">
+                {formatDuration(activeSession?.elapsedSeconds ?? 0)} elapsed
               </p>
-            </div>
-          ) : null}
-
-          {activeTask.requiresDefinitionOfDone ? (
-            <div className="mb-4 rounded-lg border border-purple-200 bg-purple-50 p-3">
-              <label className="mb-1 block text-sm font-medium">
-                Definition of done (required for Encore OS, min 10 words)
-              </label>
-              <textarea
-                value={definitionInput}
-                onChange={(event) => setDefinitionInput(event.target.value)}
-                rows={3}
-                className="w-full rounded-md border border-purple-200 bg-white p-2 text-sm outline-none ring-purple-300 focus:ring-2"
-                placeholder="Example: Ship mobile navigation polish with tested timer state transitions and complete overrun prompt behavior."
-                disabled={
-                  activeSession.timerState !== TIMER_STATES.notStarted &&
-                  activeSession.timerState !== TIMER_STATES.paused
-                }
-              />
-              <p className="mt-1 text-xs text-purple-700">Current word count: {definitionWords}</p>
-            </div>
-          ) : null}
+            )}
+          </div>
 
           <div className="mb-4 grid gap-2 sm:grid-cols-4">
             <button
               type="button"
-              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
-                timerActionPending === 'start'
-                  ? 'scale-95 bg-emerald-700 ring-2 ring-emerald-300'
-                  : 'bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300'
-              }`}
-              onClick={() => withTimerFeedback('start', handleStart)}
+              className="flex items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed active:scale-95"
+              onClick={handleStart}
               disabled={isCompleted || isCancelled}
             >
               <Play size={16} />
-              {timerActionPending === 'start' ? 'Starting…' : 'Start / Resume'}
+              Start / Resume
             </button>
             <button
               type="button"
-              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
-                timerActionPending === 'pause'
-                  ? 'scale-95 bg-amber-600 ring-2 ring-amber-300'
-                  : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-200'
-              }`}
-              onClick={() => withTimerFeedback('pause', handlePause)}
-              disabled={
-                isCompleted ||
-                isCancelled ||
-                (activeSession.timerState !== TIMER_STATES.running &&
-                  activeSession.timerState !== TIMER_STATES.overrun)
-              }
+              className="flex items-center justify-center gap-1 rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:bg-amber-200 disabled:cursor-not-allowed active:scale-95"
+              onClick={handlePause}
+              disabled={isCompleted || isCancelled || activeSession.timerState !== TIMER_STATES.running}
             >
               <Pause size={16} />
-              {timerActionPending === 'pause' ? 'Pausing…' : 'Pause'}
+              Pause
             </button>
             <button
               type="button"
-              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
-                timerActionPending === 'complete'
-                  ? 'scale-95 bg-blue-700 ring-2 ring-blue-300'
-                  : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300'
-              }`}
-              onClick={() => withTimerFeedback('complete', () => handleComplete(false))}
+              className="flex items-center justify-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed active:scale-95"
+              onClick={handleComplete}
               disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
             >
               <SquareCheck size={16} />
-              {timerActionPending === 'complete' ? 'Saving…' : 'Complete'}
+              Complete
             </button>
             <button
               type="button"
-              className={`flex items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-white transition-all duration-75 active:scale-95 disabled:cursor-not-allowed ${
-                timerActionPending === 'cancel'
-                  ? 'scale-95 bg-rose-700 ring-2 ring-rose-300'
-                  : 'bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300'
-              }`}
-              onClick={() => withTimerFeedback('cancel', handleCancel)}
+              className="flex items-center justify-center gap-1 rounded-md bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed active:scale-95"
+              onClick={handleCancel}
               disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
             >
               <StopCircle size={16} />
-              {timerActionPending === 'cancel' ? 'Cancelling…' : 'Cancel'}
+              Cancel
             </button>
           </div>
-          <div className="mb-4">
-            <button
-              type="button"
-              className={`flex w-full items-center justify-center gap-1 rounded-md border px-3 py-2 text-sm font-medium transition-all duration-75 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 ${
-                timerActionPending === 'partial'
-                  ? 'scale-95 border-amber-400 bg-amber-100 text-amber-900 ring-2 ring-amber-300'
-                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
-              }`}
-              onClick={() => withTimerFeedback('partial', () => handleComplete(true))}
-              disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
-            >
-              {timerActionPending === 'partial' ? 'Saving partial…' : 'Mark Partial — done for now, reschedule remainder'}
-            </button>
-          </div>
-
-          <div className="mb-4 grid gap-2 rounded-lg bg-slate-100 p-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
-            <p>Pause count: {activeSession.pauseCount}</p>
-            <p>Pause duration: {formatDuration(pauseDurationSeconds)}</p>
-            <p>Cancelled time: {formatDuration(activeSession.cancelledSeconds)}</p>
-            <p>Overrun time: {formatDuration(overrunSeconds)}</p>
-            <p>Time saved: {formatDuration(timeSavedSeconds)}</p>
-            <p>Elapsed: {formatDuration(activeSession.elapsedSeconds)}</p>
-          </div>
-
-          {isOverrun ? (
-            <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-              You've used your allotted time for {activeTask.name}. Complete it now, or reschedule
-              the remainder.
-            </div>
-          ) : null}
 
           <div className="rounded-lg border border-slate-200 p-3">
-            <label className="mb-1 block text-sm font-medium">What was actually completed?</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Note (optional)</label>
             <textarea
               value={completionInput}
               onChange={(event) => setCompletionInput(event.target.value)}
-              rows={3}
+              rows={2}
               className="w-full rounded-md border border-slate-300 p-2 text-sm outline-none ring-blue-300 focus:ring-2"
-              placeholder="Short completion summary..."
+              placeholder="What did you accomplish? Any blockers?"
               disabled={isCompleted || isCancelled}
             />
-
-            {activeTask.completionType === 'Done + Outcome' ? (
-              <div className="mt-3">
-                <p className="mb-2 text-sm font-medium">
-                  {activeTask.outcomePrompt ?? 'Did this task generate the intended outcome?'}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className={`rounded-md px-3 py-1 text-sm ${
-                      outcomeSelection === true
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-200 text-slate-700'
-                    }`}
-                    onClick={() => setOutcomeSelection(true)}
-                    disabled={isCompleted || isCancelled}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    type="button"
-                    className={`rounded-md px-3 py-1 text-sm ${
-                      outcomeSelection === false
-                        ? 'bg-rose-600 text-white'
-                        : 'bg-slate-200 text-slate-700'
-                    }`}
-                    onClick={() => setOutcomeSelection(false)}
-                    disabled={isCompleted || isCancelled}
-                  >
-                    No
-                  </button>
-                </div>
-              </div>
-            ) : null}
           </div>
 
           {statusMessage ? (
@@ -5035,11 +2790,6 @@ function App() {
             </p>
           ) : null}
 
-          {isCompleted && activeTask.requiresDefinitionOfDone && !showVenturesModal ? (
-            <div className="mt-4 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-700">
-              Session recap recorded — open a new Ventures session to review in the modal.
-            </div>
-          ) : null}
         </article>
         ) : (
         <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -5181,23 +2931,14 @@ function App() {
       </section>
       ) : null}
       {activeScreen === 'taskLibrary' ? renderTaskLibrary() : null}
-      {activeScreen === 'reschedule' ? renderRescheduleScreen() : null}
       {activeScreen === 'weekPlanner' ? (
         <WeekPlanner
-          weekPlan={weekPlan}
-          setWeekPlan={setWeekPlan}
           taskLibrary={taskLibrary}
           session={session}
-          gcalToken={gcalToken}
-          rescheduleQueue={rescheduleQueue}
           supabaseConfigured={supabaseConfigured}
-          onTriggerReplan={handleReplan}
-          onPublishComplete={handlePublishComplete}
-          onAddLibraryTask={(task) => setTaskLibrary((prev) => [task, ...prev])}
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
-      {activeScreen === 'analytics' ? renderAnalyticsScreen() : null}
       {activeScreen === 'settings' ? renderSettingsScreen() : null}
 
       {/* ── Floating Quick Log button ─────────────────────────────────── */}
@@ -5368,34 +3109,22 @@ function App() {
       )}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-        <ul className="mx-auto grid max-w-5xl grid-cols-7 gap-1 p-2 text-center text-xs sm:text-sm">
-          {NAV_ITEMS.map((item) => {
-            const pendingCount = item.id === 'reschedule'
-              ? rescheduleQueue.filter((q) => q.status === 'pending').length
-              : item.id === 'taskLibrary'
-                ? pendingProposals.length
-                : 0
-            return (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  onClick={() => setActiveScreen(item.id)}
-                  className={`relative block w-full rounded-md px-1 py-2 ${
-                    item.id === activeScreen
-                      ? 'bg-slate-900 font-semibold text-white'
-                      : 'text-slate-500 hover:bg-slate-100'
-                  }`}
-                >
-                  {item.label}
-                  {pendingCount > 0 ? (
-                    <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
-                      {pendingCount}
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            )
-          })}
+        <ul className="mx-auto grid max-w-5xl grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
+          {NAV_ITEMS.map((item) => (
+            <li key={item.id}>
+              <button
+                type="button"
+                onClick={() => setActiveScreen(item.id)}
+                className={`block w-full rounded-md px-1 py-2 ${
+                  item.id === activeScreen
+                    ? 'bg-slate-900 font-semibold text-white'
+                    : 'text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                {item.label}
+              </button>
+            </li>
+          ))}
         </ul>
       </nav>
     </main>
