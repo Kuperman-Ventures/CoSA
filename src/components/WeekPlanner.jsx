@@ -1134,6 +1134,56 @@ const GCAL_COLOR_TO_TRACK_COLOR = {
   '3':  TRACK_COLORS.ventures,   // Grape → Ventures purple
 }
 
+// ─── Overlap layout helper ─────────────────────────────────────────────────────
+// Takes an array of { startHour, durationMin, ...rest } events and returns
+// the same array with { col, totalCols } added to each entry so they can be
+// rendered side-by-side instead of on top of each other.
+
+function layoutOverlappingEvents(events) {
+  if (events.length === 0) return []
+
+  // Sort by start time, then by duration descending
+  const sorted = events.map((ev, idx) => ({ ...ev, _idx: idx }))
+    .sort((a, b) => a.startHour - b.startHour || b.durationMin - a.durationMin)
+
+  // Greedy column packing: place each event in the first column whose last
+  // event ends before this one starts.
+  const columns = [] // columns[c] = last end hour of events placed there
+  const colAssign = new Array(events.length)
+
+  for (const ev of sorted) {
+    const evEnd = ev.startHour + ev.durationMin / 60
+    let placed = false
+    for (let c = 0; c < columns.length; c++) {
+      if (ev.startHour >= columns[c]) {
+        columns[c] = evEnd
+        colAssign[ev._idx] = c
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      colAssign[ev._idx] = columns.length
+      columns.push(evEnd)
+    }
+  }
+
+  // For each event, the effective total columns is the max column index of any
+  // event that overlaps with it, + 1.
+  return events.map((ev, idx) => {
+    const evEnd = ev.startHour + ev.durationMin / 60
+    let maxCol = colAssign[idx]
+    for (let j = 0; j < events.length; j++) {
+      const other = events[j]
+      const otherEnd = other.startHour + other.durationMin / 60
+      if (other.startHour < evEnd && otherEnd > ev.startHour) {
+        maxCol = Math.max(maxCol, colAssign[j])
+      }
+    }
+    return { ...ev, col: colAssign[idx], totalCols: maxCol + 1 }
+  })
+}
+
 // ─── Calendar view sub-component ──────────────────────────────────────────────
 
 function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, syncingCalendar, onSync, onReviewInAssign, providerToken }) {
@@ -1292,14 +1342,23 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
 
                   {usingLiveData ? (
                     // ── Live Google Calendar events with actual times ──
-                    liveEvents.map((ev) => {
+                    layoutOverlappingEvents(liveEvents).map((ev) => {
                       const topPx = Math.max(0, (ev.startHour - GRID_START) * PX_PER_HOUR)
                       const heightPx = Math.max(18, (ev.durationMin / 60) * PX_PER_HOUR)
+                      const colW = 100 / ev.totalCols
+                      const leftPct = ev.col * colW
                       return (
                         <div
                           key={ev.id}
-                          className="absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] text-white overflow-hidden shadow-sm"
-                          style={{ top: topPx, height: heightPx, backgroundColor: ev.color, minHeight: 18 }}
+                          className="absolute rounded px-1 py-0.5 text-[10px] text-white overflow-hidden shadow-sm"
+                          style={{
+                            top: topPx,
+                            height: heightPx,
+                            minHeight: 18,
+                            left: `calc(${leftPct}% + 2px)`,
+                            width: `calc(${colW}% - 4px)`,
+                            backgroundColor: ev.color,
+                          }}
                           title={`${ev.name} — ${ev.durationMin}m`}
                         >
                           <p className="font-medium truncate leading-tight">{ev.name}</p>
@@ -1309,22 +1368,36 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
                     })
                   ) : (
                     // ── Plan estimate (pre-sync) using block start positions ──
-                    planTasks.map((task) => {
-                      const startH = BLOCK_START_HOUR[task.timeBlock] ?? GRID_START
-                      const topPx = Math.max(0, (startH - GRID_START) * PX_PER_HOUR)
-                      const heightPx = Math.max(18, ((task.estimateMinutes ?? 25) / 60) * PX_PER_HOUR)
+                    layoutOverlappingEvents(
+                      planTasks.map((task) => ({
+                        ...task,
+                        startHour: BLOCK_START_HOUR[task.timeBlock] ?? GRID_START,
+                        durationMin: task.estimateMinutes ?? 25,
+                      }))
+                    ).map((task) => {
+                      const topPx = Math.max(0, (task.startHour - GRID_START) * PX_PER_HOUR)
+                      const heightPx = Math.max(18, (task.durationMin / 60) * PX_PER_HOUR)
                       const track = normaliseTrack(task.track)
                       const color = TRACK_COLORS[track] ?? '#94a3b8'
                       const lib = taskLibrary.find((t) => t.id === task.templateId)
+                      const colW = 100 / task.totalCols
+                      const leftPct = task.col * colW
                       return (
                         <div
                           key={task.id ?? task.templateId}
-                          className="absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] text-white overflow-hidden opacity-70"
-                          style={{ top: topPx, height: heightPx, backgroundColor: color, minHeight: 18 }}
+                          className="absolute rounded px-1 py-0.5 text-[10px] text-white overflow-hidden opacity-70"
+                          style={{
+                            top: topPx,
+                            height: heightPx,
+                            minHeight: 18,
+                            left: `calc(${leftPct}% + 2px)`,
+                            width: `calc(${colW}% - 4px)`,
+                            backgroundColor: color,
+                          }}
                           title={`${task.name} — ${task.estimateMinutes}m (estimated position)`}
                         >
                           <p className="font-medium truncate leading-tight">{task.name ?? lib?.name}</p>
-                          {(task.estimateMinutes ?? 0) >= 20 && <p className="opacity-80">{task.estimateMinutes}m</p>}
+                          {(task.durationMin ?? 0) >= 20 && <p className="opacity-80">{task.durationMin}m</p>}
                         </div>
                       )
                     })
