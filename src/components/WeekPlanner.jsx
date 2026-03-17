@@ -6,8 +6,10 @@ import {
   upsertWeeklyPlan,
   updatePlanAfterPublish,
   replaceTodayTasks,
+  loadCalendarEventTags,
+  upsertCalendarEventTag,
 } from '../lib/supabaseSync'
-import { createWeekPlanEvents, fetchCoSACalendarEvents, BLOCK_CAPACITY_MINUTES } from '../lib/googleCalendar'
+import { createWeekPlanEvents, fetchCoSACalendarEvents, fetchPersonalCalendarEvents, BLOCK_CAPACITY_MINUTES } from '../lib/googleCalendar'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -278,9 +280,16 @@ export default function WeekPlanner({
   const [message, setMessage] = useState('')
   const [clearConfirm, setClearConfirm] = useState(false)
   const [calendarDiff, setCalendarDiff] = useState(null)
-  const [fetchedCalEvents, setFetchedCalEvents] = useState(null) // raw GCal events after sync
+  const [fetchedCalEvents, setFetchedCalEvents] = useState(null) // raw CoSA GCal events after sync
+  const [fetchedPersonalEvents, setFetchedPersonalEvents] = useState(null) // raw primary calendar events
   const [syncingCalendar, setSyncingCalendar] = useState(false)
   const [highlightedTemplateIds, setHighlightedTemplateIds] = useState(new Set())
+  // Personal calendar event tagging
+  const [eventTags, setEventTags] = useState({}) // { [gcalEventId]: { track, subTrack, title, durationMin, date } }
+  const [tagModalEvent, setTagModalEvent] = useState(null) // event open in tag modal
+  const [tagModalTrack, setTagModalTrack] = useState('')
+  const [tagModalSubTrack, setTagModalSubTrack] = useState('')
+  const [tagModalSaving, setTagModalSaving] = useState(false)
 
   // Sync planDays when weekPlan changes externally
   useEffect(() => {
@@ -290,6 +299,14 @@ export default function WeekPlanner({
   const weekStartDate = weekPlan?.weekStartDate ?? getWeekStartDateStr()
   const providerToken = session?.provider_token ?? null
   const userId = session?.user?.id ?? null
+
+  // Load saved event tags from Supabase on mount / user change
+  useEffect(() => {
+    if (!userId) return
+    loadCalendarEventTags(userId).then((tags) => {
+      if (tags && Object.keys(tags).length > 0) setEventTags(tags)
+    })
+  }, [userId])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -317,10 +334,15 @@ export default function WeekPlanner({
   // This replaces draft-plan allocations so the tracker matches the calendar.
 
   const calAllocations = useMemo(() => {
-    if (!fetchedCalEvents || fetchedCalEvents.length === 0) return null
+    const hasCoSAData = fetchedCalEvents && fetchedCalEvents.length > 0
+    const hasTaggedData = Object.keys(eventTags).length > 0
+    if (!hasCoSAData && !hasTaggedData) return null
+
     const trackTotals = { advisors: 0, jobSearch: 0, ventures: 0 }
     const subTrackTotals = {}
-    for (const ev of fetchedCalEvents) {
+
+    // CoSA calendar events (from sync)
+    for (const ev of fetchedCalEvents ?? []) {
       const templateId = ev.extendedProperties?.private?.cosaTemplateId
       if (!templateId) continue
       const lib = taskLibrary.find((t) => t.id === templateId)
@@ -339,8 +361,22 @@ export default function WeekPlanner({
         subTrackTotals[key] = (subTrackTotals[key] ?? 0) + durationMin
       }
     }
+
+    // Tagged personal calendar events (from user assignments)
+    for (const tag of Object.values(eventTags)) {
+      const track = normaliseTrack(tag.track)
+      if (!track || trackTotals[track] === undefined) continue
+      const durationMin = tag.durationMin ?? 0
+      if (durationMin <= 0) continue
+      trackTotals[track] = (trackTotals[track] ?? 0) + durationMin
+      if (tag.subTrack) {
+        const key = `${track}::${tag.subTrack}`
+        subTrackTotals[key] = (subTrackTotals[key] ?? 0) + durationMin
+      }
+    }
+
     return { trackTotals, subTrackTotals }
-  }, [fetchedCalEvents, taskLibrary])
+  }, [fetchedCalEvents, eventTags, taskLibrary])
 
   // ── Task bin — always shows all active tasks ──────────────────────────────
 
@@ -406,15 +442,16 @@ export default function WeekPlanner({
       return
     }
 
-    const [dayName, block] = overId.split('::')
-    if (!dayName || !block) return
+    // overId is now just a dayName (Monday / Tuesday / …)
+    const dayName = overId
+    if (!DAY_NAMES.includes(dayName)) return
 
     const sourceIsGrid = activeDragTask?._source === 'grid'
     const fromDay = activeDragTask?._fromDay
 
     if (sourceIsGrid) {
-      // ── Move an existing instance to a different day/block ──
-      const movedTask = { ...activeDragTask, timeBlock: block }
+      // ── Move an existing instance to a different day ──
+      const movedTask = { ...activeDragTask } // keep original timeBlock
       setPlanDays((prev) => {
         const dayDate = prev[dayName]?.date ?? getDayDate(weekStartDate, dayName)
         let next = { ...prev }
@@ -439,7 +476,7 @@ export default function WeekPlanner({
       // ── Create a new instance from the bin ──
       const libTask = taskLibrary.find((t) => t.id === active.id)
       if (!libTask) return
-      const newInstance = { ...planTaskFromLib(libTask), timeBlock: block }
+      const newInstance = planTaskFromLib(libTask) // timeBlock preserved from library
       setPlanDays((prev) => {
         const dayDate = prev[dayName]?.date ?? getDayDate(weekStartDate, dayName)
         return {
@@ -610,6 +647,36 @@ export default function WeekPlanner({
     setClearConfirm(false)
   }
 
+  // ── Personal calendar event tagging ──────────────────────────────────────
+
+  function openTagModal(ev) {
+    const existing = eventTags[ev.id] ?? {}
+    setTagModalEvent(ev)
+    setTagModalTrack(existing.track ?? '')
+    setTagModalSubTrack(existing.subTrack ?? '')
+  }
+
+  async function handleSaveTag() {
+    if (!tagModalEvent || !tagModalTrack) return
+    setTagModalSaving(true)
+    const tag = {
+      track:       tagModalTrack,
+      subTrack:    tagModalSubTrack || null,
+      title:       tagModalEvent.name,
+      durationMin: tagModalEvent.durationMin,
+      date:        tagModalEvent.date,
+    }
+    setEventTags((prev) => ({ ...prev, [tagModalEvent.id]: tag }))
+    await upsertCalendarEventTag(userId, tagModalEvent.id, tag)
+    setTagModalSaving(false)
+    setTagModalEvent(null)
+  }
+
+  // Sub-track options available for the selected track in the tag modal
+  const tagModalSubTrackOptions = tagModalTrack
+    ? Object.keys(SUB_TRACK_TARGETS[normaliseTrack(tagModalTrack)]?.subTracks ?? {})
+    : []
+
   // ── Calendar sync ─────────────────────────────────────────────────────────
 
   async function handleSyncCalendar() {
@@ -622,10 +689,14 @@ export default function WeekPlanner({
       // RFC 3339 with Z = UTC — required by Google Calendar API
       const timeMin = `${monday}T00:00:00Z`
       const timeMax = `${friday}T23:59:59Z`
-      const calEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+      const [calEvents, personalEvents] = await Promise.all([
+        fetchCoSACalendarEvents(providerToken, timeMin, timeMax),
+        fetchPersonalCalendarEvents(providerToken, timeMin, timeMax),
+      ])
 
       // Store raw events so Calendar tab renders actual GCal state
       setFetchedCalEvents(calEvents)
+      setFetchedPersonalEvents(personalEvents)
 
       if (calEvents.length === 0) {
         setCalendarDiff({ deleted: [], moved: [], total: 0 })
@@ -898,62 +969,48 @@ export default function WeekPlanner({
                 </div>
               )}
 
-              {/* Week grid */}
-              <div className="mb-4 grid grid-cols-5 gap-2">
-                {DAY_NAMES.map((dayName) => {
-                  const dayDate = planDays[dayName]?.date ?? getDayDate(weekStartDate, dayName)
-                  const dayTasks = planDays[dayName]?.tasks ?? []
-                  const blockNames = ['BD', 'Networking', 'Job Search', 'Encore OS', 'Friday'].filter((b) => {
-                    if (b === 'Friday') return dayName === 'Friday'
-                    if (b !== 'Friday') return true
-                    return false
-                  })
-                  const allBlocks = dayName === 'Friday'
-                    ? ['BD', 'Networking', 'Job Search', 'Friday']
-                    : ['BD', 'Networking', 'Job Search', 'Encore OS']
+             {/* Week grid — flat list per day, no block dividers */}
+             <div className="mb-4 grid grid-cols-5 gap-2">
+               {DAY_NAMES.map((dayName) => {
+                 const dayDate = planDays[dayName]?.date ?? getDayDate(weekStartDate, dayName)
+                 const dayTasks = planDays[dayName]?.tasks ?? []
+                 const totalMinutes = dayTasks.reduce((s, t) => s + (t.estimateMinutes ?? 0), 0)
 
-                  return (
-                    <div key={dayName} className="flex flex-col gap-1.5">
-                      <div className="text-center">
-                        <p className="text-xs font-bold text-slate-700">{dayName.slice(0, 3)}</p>
-                        <p className="text-[10px] text-slate-400">{dayDate}</p>
-                      </div>
-                      {allBlocks.map((block) => {
-                        const blockTasks = dayTasks.filter((t) => t.timeBlock === block)
-                        const blockMinutes = blockTasks.reduce((s, t) => s + (t.estimateMinutes ?? 0), 0)
-                        return (
-                          <DroppableZone
-                            key={block}
-                            id={`${dayName}::${block}`}
-                            className="min-h-[60px] rounded-lg border border-dashed border-slate-200 bg-slate-50 p-1.5"
-                          >
-                            <div className="mb-1 flex items-center justify-between">
-                              <p className="text-[9px] font-semibold uppercase text-slate-400">{block}</p>
-                              {blockMinutes > 0 && (
-                                <p className="text-[9px] text-slate-400">{blockMinutes}m</p>
-                              )}
-                            </div>
-                            {blockTasks.map((task) => {
-                              const track = normaliseTrack(task.track)
-                              return (
-                                <DraggableCard key={task.id} id={task.id}>
-                                  <TaskCard
-                                    task={task}
-                                    trackColor={TRACK_COLORS[track] ?? '#94a3b8'}
-                                    onRemove={() => removeTaskFromDay(dayName, task.id)}
-                                    onEditMinutes={(n) => updateInstanceMinutes(dayName, task.id, n)}
-                                    shaking={rejectedId === task.id}
-                                  />
-                                </DraggableCard>
-                              )
-                            })}
-                          </DroppableZone>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
-              </div>
+                 return (
+                   <div key={dayName} className="flex flex-col gap-1.5">
+                     <div className="text-center">
+                       <p className="text-xs font-bold text-slate-700">{dayName.slice(0, 3)}</p>
+                       <p className="text-[10px] text-slate-400">{dayDate}</p>
+                       {totalMinutes > 0 && (
+                         <p className="text-[9px] text-slate-500 mt-0.5">{totalMinutes}m</p>
+                       )}
+                     </div>
+                     <DroppableZone
+                       id={dayName}
+                       className="min-h-[120px] flex-1 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-1.5"
+                     >
+                       {dayTasks.length === 0 && (
+                         <p className="text-center text-[10px] text-slate-300 pt-4">Drop tasks here</p>
+                       )}
+                       {dayTasks.map((task) => {
+                         const track = normaliseTrack(task.track)
+                         return (
+                           <DraggableCard key={task.id} id={task.id}>
+                             <TaskCard
+                               task={task}
+                               trackColor={TRACK_COLORS[track] ?? '#94a3b8'}
+                               onRemove={() => removeTaskFromDay(dayName, task.id)}
+                               onEditMinutes={(n) => updateInstanceMinutes(dayName, task.id, n)}
+                               shaking={rejectedId === task.id}
+                             />
+                           </DraggableCard>
+                         )
+                       })}
+                     </DroppableZone>
+                   </div>
+                 )
+               })}
+             </div>
 
               {/* Health bars */}
               <HealthBars
@@ -1030,11 +1087,87 @@ export default function WeekPlanner({
           weekStartDate={weekStartDate}
           calendarDiff={calendarDiff}
           fetchedCalEvents={fetchedCalEvents}
+          fetchedPersonalEvents={fetchedPersonalEvents}
+          eventTags={eventTags}
+          onTagEvent={openTagModal}
           syncingCalendar={syncingCalendar}
           onSync={handleSyncCalendar}
           onReviewInAssign={handleReviewInAssignTab}
           providerToken={providerToken}
         />
+      )}
+
+      {/* ── Tag modal — assign Track/Sub-track to a personal calendar event ── */}
+      {tagModalEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white shadow-xl p-5">
+            <div className="mb-4 flex items-start justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-slate-800">{tagModalEvent.name}</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {tagModalEvent.date} · {tagModalEvent.durationMin}m
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTagModalEvent(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="mb-3 text-xs text-slate-500">
+              Assign this event to a track so it counts toward your weekly allocation.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Track</label>
+                <select
+                  value={tagModalTrack}
+                  onChange={(e) => { setTagModalTrack(e.target.value); setTagModalSubTrack('') }}
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  <option value="">— select track —</option>
+                  {Object.entries(TRACK_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              {tagModalSubTrackOptions.length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Sub-Track</label>
+                  <select
+                    value={tagModalSubTrack}
+                    onChange={(e) => setTagModalSubTrack(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="">— none —</option>
+                    {tagModalSubTrackOptions.map((sub) => (
+                      <option key={sub} value={sub}>{sub}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setTagModalEvent(null)}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTag}
+                disabled={!tagModalTrack || tagModalSaving}
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {tagModalSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <style>{`
@@ -1186,7 +1319,7 @@ function layoutOverlappingEvents(events) {
 
 // ─── Calendar view sub-component ──────────────────────────────────────────────
 
-function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, syncingCalendar, onSync, onReviewInAssign, providerToken }) {
+function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, fetchedPersonalEvents, eventTags, onTagEvent, syncingCalendar, onSync, onReviewInAssign, providerToken }) {
   const GRID_START = 9   // 9:00am
   const GRID_END = 18    // 6:00pm
   const GRID_HOURS = GRID_END - GRID_START
@@ -1221,12 +1354,26 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
   if (fetchedCalEvents) {
     for (const ev of fetchedCalEvents) {
       const parsed = parseCalEvent(ev)
-      // Clamp to grid hours
       if (parsed.startHour >= GRID_END || parsed.startHour + parsed.durationMin / 60 <= GRID_START) continue
       const dayName = dateToDay[parsed.date]
       if (!dayName) continue
       if (!calEventsByDay[dayName]) calEventsByDay[dayName] = []
       calEventsByDay[dayName].push(parsed)
+    }
+  }
+
+  // Group personal events by day column
+  const personalEventsByDay = {}
+  if (fetchedPersonalEvents) {
+    for (const ev of fetchedPersonalEvents) {
+      if (!ev.start?.dateTime) continue
+      const parsed = parseCalEvent(ev)
+      if (parsed.startHour >= GRID_END || parsed.startHour + parsed.durationMin / 60 <= GRID_START) continue
+      const dayName = dateToDay[parsed.date]
+      if (!dayName) continue
+      if (!personalEventsByDay[dayName]) personalEventsByDay[dayName] = []
+      const tag = (eventTags ?? {})[ev.id]
+      personalEventsByDay[dayName].push({ ...parsed, isPersonal: true, tag: tag ?? null })
     }
   }
 
@@ -1242,8 +1389,8 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
             {!providerToken
               ? 'Sign in with Google to enable calendar sync.'
               : usingLiveData
-              ? `Showing live data — ${fetchedCalEvents.length} CoSA event${fetchedCalEvents.length !== 1 ? 's' : ''} found in Google Calendar.`
-              : 'Sync to see your actual Google Calendar events with real times.'}
+              ? `Showing live data — ${fetchedCalEvents.length} CoSA event${fetchedCalEvents.length !== 1 ? 's' : ''} + ${fetchedPersonalEvents?.length ?? 0} personal event${(fetchedPersonalEvents?.length ?? 0) !== 1 ? 's' : ''} found. Click personal events to assign a track.`
+              : 'Sync to see your CoSA tasks and personal calendar events with real times.'}
           </p>
         </div>
         <button
@@ -1320,8 +1467,12 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
             const dayDate = dayData?.date ?? getDayDate(weekStartDate, dayName)
             const gridHeight = GRID_HOURS * PX_PER_HOUR
 
-            // Use live GCal events if synced, otherwise fall back to planDays
-            const liveEvents = usingLiveData ? (calEventsByDay[dayName] ?? []) : null
+            // Combine CoSA events and personal events for overlap layout
+            const liveCoSAEvents = usingLiveData ? (calEventsByDay[dayName] ?? []) : []
+            const livePersonalEvents = personalEventsByDay[dayName] ?? []
+            const allLiveEvents = usingLiveData
+              ? layoutOverlappingEvents([...liveCoSAEvents, ...livePersonalEvents])
+              : []
             const planTasks = dayData?.tasks ?? []
 
             return (
@@ -1341,12 +1492,51 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
                   ))}
 
                   {usingLiveData ? (
-                    // ── Live Google Calendar events with actual times ──
-                    layoutOverlappingEvents(liveEvents).map((ev) => {
+                    // ── Live events: CoSA tasks + personal calendar events ──
+                    allLiveEvents.map((ev) => {
                       const topPx = Math.max(0, (ev.startHour - GRID_START) * PX_PER_HOUR)
                       const heightPx = Math.max(18, (ev.durationMin / 60) * PX_PER_HOUR)
                       const colW = 100 / ev.totalCols
                       const leftPct = ev.col * colW
+
+                      if (ev.isPersonal) {
+                        // Personal calendar event — grey by default, track-coloured when tagged
+                        const tag = ev.tag
+                        const tagTrack = tag ? normaliseTrack(tag.track) : null
+                        const bgColor = tagTrack ? `${TRACK_COLORS[tagTrack]}33` : '#f1f5f9'
+                        const borderColor = tagTrack ? TRACK_COLORS[tagTrack] : '#cbd5e1'
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => onTagEvent?.(ev)}
+                            className="absolute overflow-hidden text-left hover:opacity-80 transition-opacity"
+                            style={{
+                              top: topPx,
+                              height: heightPx,
+                              minHeight: 18,
+                              left: `calc(${leftPct}% + 2px)`,
+                              width: `calc(${colW}% - 4px)`,
+                              backgroundColor: bgColor,
+                              border: `1.5px dashed ${borderColor}`,
+                              borderRadius: 4,
+                              padding: '2px 4px',
+                            }}
+                            title={tag
+                              ? `${ev.name} · ${tag.track}${tag.subTrack ? ' / ' + tag.subTrack : ''} — click to edit`
+                              : `${ev.name} — click to assign track`}
+                          >
+                            <p className="text-[9px] font-medium text-slate-600 truncate leading-tight">{ev.name}</p>
+                            {ev.durationMin >= 20 && (
+                              <p className="text-[9px] text-slate-400">
+                                {ev.durationMin}m{tag ? ` · ${tag.subTrack ?? tag.track}` : ' · + assign'}
+                              </p>
+                            )}
+                          </button>
+                        )
+                      }
+
+                      // CoSA calendar event
                       return (
                         <div
                           key={ev.id}

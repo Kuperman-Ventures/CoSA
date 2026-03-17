@@ -84,9 +84,9 @@ function buildEventBody(task, allTasksInBlock, date, extras = {}) {
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
-async function gcalFetch(path, method, providerToken, body) {
+async function gcalFetch(path, method, providerToken, body, calendarId = CALENDAR_ID) {
   try {
-    const res = await fetch(`${BASE_URL}/${encodeURIComponent(CALENDAR_ID)}/events${path}`, {
+    const res = await fetch(`${BASE_URL}/${encodeURIComponent(calendarId)}/events${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${providerToken}`,
@@ -267,4 +267,28 @@ export async function fetchAllCalendarEvents(providerToken, timeMin, timeMax) {
   })
   const data = await gcalFetch(`?${params.toString()}`, 'GET', providerToken)
   return data?.items ?? []
+}
+
+/**
+ * Fetch timed events from the user's primary Google Calendar within a date range.
+ * Returns only events with a dateTime start (i.e. not all-day events).
+ * CoSA-tagged events (cosaTag=cosa-event) are excluded to avoid double-counting.
+ * timeMin / timeMax: ISO 8601 strings (e.g. "2026-03-16T00:00:00Z")
+ */
+export async function fetchPersonalCalendarEvents(providerToken, timeMin, timeMax) {
+  if (!providerToken) return []
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: 'true',
+    maxResults: '250',
+    orderBy: 'startTime',
+  })
+  const data = await gcalFetch(`?${params.toString()}`, 'GET', providerToken, null, 'primary')
+  const items = data?.items ?? []
+  return items.filter(
+    (ev) =>
+      ev.start?.dateTime != null &&
+      ev.extendedProperties?.private?.cosaTag !== 'cosa-event',
+  )
 }

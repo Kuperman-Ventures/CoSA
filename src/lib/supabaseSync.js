@@ -621,3 +621,63 @@ export async function loadApiKeyHash(userId) {
     return null
   }
 }
+
+// ─── Calendar Event Tags ──────────────────────────────────────────────────────
+// Persist user-assigned Track / Sub-track for personal Google Calendar events.
+
+/**
+ * Load all saved calendar event tags for a user.
+ * Returns { [gcalEventId]: { track, subTrack, title, durationMin, date } }
+ */
+export async function loadCalendarEventTags(userId) {
+  if (!supabase || !userId) return {}
+  try {
+    const { data, error } = await supabase
+      .from('calendar_event_tags')
+      .select('*')
+      .eq('user_id', userId)
+    if (error) { console.error('[loadCalendarEventTags]', error.message); return {} }
+    return Object.fromEntries(
+      (data ?? []).map((row) => [
+        row.gcal_event_id,
+        {
+          track:       row.track,
+          subTrack:    row.sub_track ?? null,
+          title:       row.event_title ?? '',
+          durationMin: row.duration_min ?? 0,
+          date:        row.event_date ?? null,
+        },
+      ]),
+    )
+  } catch (err) {
+    console.error('[loadCalendarEventTags]', err.message)
+    return {}
+  }
+}
+
+/**
+ * Create or update a calendar event tag (upsert on user_id + gcal_event_id).
+ */
+export async function upsertCalendarEventTag(userId, gcalEventId, { track, subTrack, title, durationMin, date }) {
+  if (!supabase || !userId || !gcalEventId) return
+  try {
+    const { error } = await supabase
+      .from('calendar_event_tags')
+      .upsert(
+        {
+          user_id:       userId,
+          gcal_event_id: gcalEventId,
+          track,
+          sub_track:     subTrack ?? null,
+          event_title:   title ?? null,
+          duration_min:  durationMin ?? null,
+          event_date:    date ?? null,
+          updated_at:    new Date().toISOString(),
+        },
+        { onConflict: 'user_id,gcal_event_id' },
+      )
+    if (error) console.error('[upsertCalendarEventTag]', error.message)
+  } catch (err) {
+    console.error('[upsertCalendarEventTag]', err.message)
+  }
+}
