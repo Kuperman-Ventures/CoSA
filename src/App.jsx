@@ -1035,14 +1035,15 @@ function App() {
     setSession(null)
   }
 
-  const tasksByBlock = useMemo(
-    () =>
-      TIME_BLOCK_ORDER.map((timeBlock) => ({
-        timeBlock,
-        tasks: todayTasks.filter((task) => task.timeBlock === timeBlock),
-      })),
-    [todayTasks],
-  )
+  const tasksByTrack = useMemo(() => {
+    const trackOrder = Object.values(TRACKS).sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+    return trackOrder
+      .map((track) => ({
+        track,
+        tasks: todayTasks.filter((t) => t.track === track.key),
+      }))
+      .filter((g) => g.tasks.length > 0)
+  }, [todayTasks])
   const filteredTaskLibrary = useMemo(() => {
     if (libraryFilter === 'All') return taskLibrary
     return taskLibrary.filter((task) => task.status === libraryFilter)
@@ -1351,6 +1352,10 @@ function App() {
             })
             return next
           })
+          // Set active task to first in queue if nothing is active yet
+          if (effectiveTodayTasks.length === 0) {
+            setActiveTaskId(merged[0].id)
+          }
           upsertTodayTasks(merged, userId, todayStr)
         }
       }
@@ -2760,7 +2765,7 @@ function App() {
       </section>
       {activeScreen === 'today' ? (
         <section className="grid gap-4 p-4 lg:grid-cols-[1fr_320px]">
-        {hasActiveTodayTask ? (
+        {hasActiveTodayTask || todayTasks.length > 0 ? (
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2954,14 +2959,17 @@ function App() {
                 <p className="mb-2 text-xs text-slate-500">
                   {queueDate ? `Queue for: ${formatQueueDate(queueDate)}` : `Deployed: ${new Date(lastDeploymentAt).toLocaleDateString()}`}
                 </p>
-                {tasksByBlock.map((group) => (
-                  <div key={group.timeBlock} className="mb-3">
-                    <p className="mb-1 text-xs font-semibold text-slate-500">{group.timeBlock}</p>
+                {tasksByTrack.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic">No tasks in queue.</p>
+                ) : tasksByTrack.map((group) => (
+                  <div key={group.track.key} className="mb-3">
+                    <p className="mb-1 text-xs font-semibold" style={{ color: group.track.color }}>
+                      {group.track.label}
+                    </p>
                     <ul className="space-y-1">
                       {group.tasks.map((task) => {
                         const session = sessions[task.id]
                         const selected = task.id === activeTaskId
-                        const meta = getTrackMeta(task.track)
                         return (
                           <li key={task.id}>
                             <button
@@ -2974,14 +2982,14 @@ function App() {
                               }`}
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <span>{task.name}</span>
+                                <span className="truncate">{task.name}</span>
                                 <span
-                                  className="h-2 w-2 rounded-full"
-                                  style={{ backgroundColor: meta?.color }}
+                                  className="h-2 w-2 shrink-0 rounded-full"
+                                  style={{ backgroundColor: group.track.color }}
                                 />
                               </div>
                               <div className="mt-1 flex items-center justify-between text-xs opacity-80">
-                                <span>{session.timerState}</span>
+                                <span>{session?.timerState ?? 'Not Started'}</span>
                                 <span>{task.estimateMinutes}m</span>
                               </div>
                             </button>
