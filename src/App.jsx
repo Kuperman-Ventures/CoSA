@@ -3348,7 +3348,7 @@ function App() {
               </p>
             ) : (() => {
               // Group by track in display order
-              const trackOrder = [TRACKS.advisors.key, TRACKS.jobSearch.key, TRACKS.ventures.key]
+              const trackOrder = [TRACKS.advisors.key, TRACKS.jobSearch.key, TRACKS.ventures.key, TRACKS.cosaAdmin.key, TRACKS.networking.key]
               const grouped = {}
               for (const tk of trackOrder) grouped[tk] = []
               for (const task of filteredTaskLibrary) {

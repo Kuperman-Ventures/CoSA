@@ -20,6 +20,7 @@ const TRACK_LABELS = {
   jobSearch:  'Job Search',
   ventures:   'Kuperman Ventures',
   cosaAdmin:  'CoSA Administration',
+  networking: 'Shared (Networking)',
 }
 
 const TRACK_COLORS = {
@@ -27,6 +28,7 @@ const TRACK_COLORS = {
   jobSearch:  '#2E75B6',
   ventures:   '#9B6BAE',
   cosaAdmin:  '#0891b2',
+  networking: '#B8600B',
 }
 
 const TRACK_BG = {
@@ -34,6 +36,7 @@ const TRACK_BG = {
   jobSearch:  'bg-blue-50 border-blue-200',
   ventures:   'bg-purple-50 border-purple-200',
   cosaAdmin:  'bg-cyan-50 border-cyan-200',
+  networking: 'bg-orange-50 border-orange-200',
 }
 
 const SUB_TRACK_TARGETS = {
@@ -52,6 +55,10 @@ const SUB_TRACK_TARGETS = {
   cosaAdmin: {
     weekly: 120,
     subTracks: { 'Friday Review': 120 },
+  },
+  networking: {
+    weekly: 120,
+    subTracks: {},
   },
 }
 
@@ -88,8 +95,8 @@ function getDayDate(weekStartDateStr, dayName) {
 
 function normaliseTrack(raw) {
   if (!raw) return null
-  if (raw === 'networking') return 'jobSearch'
   if (raw === 'CoSA Administration' || raw === 'cosaAdmin') return 'cosaAdmin'
+  if (raw === 'Shared (Networking)') return 'networking'
   return raw
 }
 
