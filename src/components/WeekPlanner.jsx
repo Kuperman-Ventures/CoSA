@@ -733,12 +733,10 @@ export default function WeekPlanner({
         return
       }
 
-      // ── Build two lookup maps from fetched events ──────────────────────────
-      // 1. gcalEventId → { date, durationMin }
-      // 2. templateId  → [{ gcalEventId, date, durationMin }]
+      // ── Build lookup maps ──────────────────────────────────────────────────
+      // From GCal events: gcalId → { date, durationMin } and templateId → [entries]
       const byGcalId = {}
       const byTemplateId = {}
-
       for (const ev of calEvents) {
         const evDate = ev.start?.dateTime?.slice(0, 10) ?? ev.start?.date
         if (!evDate) continue
@@ -754,6 +752,16 @@ export default function WeekPlanner({
         }
       }
 
+      // From planDays: existing task objects keyed by gcalEventId and templateId
+      const tasksByGcalId = {}
+      const tasksByTemplateId = {}
+      for (const dayData of Object.values(planDays)) {
+        for (const task of dayData?.tasks ?? []) {
+          if (task.gcalEventId) tasksByGcalId[task.gcalEventId] = task
+          if (task.templateId) tasksByTemplateId[task.templateId] = task
+        }
+      }
+
       // Build date → dayName lookup (including days not yet in planDays)
       const dateToDay = {}
       for (const dayName of DAY_NAMES) {
@@ -761,93 +769,108 @@ export default function WeekPlanner({
         dateToDay[date] = dayName
       }
 
-      // ── Diff: match each placed instance against the live calendar ─────────
+      // ── Diff: compute change summary for the UI banner ────────────────────
       const deleted = []
       const moved = []
-      // Duration changes for tasks that stayed on the same date
-      const durationUpdates = [] // { dayName, taskId, newMinutes }
-
+      const durationUpdates = []
       for (const [dayName, dayData] of Object.entries(planDays)) {
         for (const task of dayData?.tasks ?? []) {
+          if (!task.gcalEventId) continue // unpublished — not in GCal yet
           let matchedDate = null
           let matchedDuration = null
-
-          if (task.gcalEventId && byGcalId[task.gcalEventId]) {
-            // Primary match: by exact Google Calendar event ID (most reliable)
+          if (byGcalId[task.gcalEventId]) {
             matchedDate = byGcalId[task.gcalEventId].date
             matchedDuration = byGcalId[task.gcalEventId].durationMin
           } else if (task.templateId && byTemplateId[task.templateId]) {
-            // Fallback: by templateId — find an entry on the expected date
             const entries = byTemplateId[task.templateId]
             const onExpected = entries.find((e) => e.date === dayData.date)
             if (onExpected) {
               matchedDate = onExpected.date
               matchedDuration = onExpected.durationMin
-              // Mark this entry as consumed so the same gcal event isn't double-matched
               byTemplateId[task.templateId] = entries.filter((e) => e !== onExpected)
             } else if (entries.length > 0) {
-              // Exists on a different date — moved
               matchedDate = entries[0].date
               matchedDuration = entries[0].durationMin
               byTemplateId[task.templateId] = entries.slice(1)
             }
-            // else: entries exhausted → deleted
           }
-
           if (matchedDate === null) {
             deleted.push({ task, dayName, planDate: dayData.date })
           } else if (matchedDate !== dayData.date) {
-            const newDayName = dateToDay[matchedDate] ?? null
-            moved.push({ task, dayName, planDate: dayData.date, calDate: matchedDate, newDayName, matchedDuration })
+            moved.push({ task, dayName, planDate: dayData.date, calDate: matchedDate, newDayName: dateToDay[matchedDate] ?? null, matchedDuration })
           } else if (matchedDuration !== null && matchedDuration !== task.estimateMinutes) {
-            // Same date, but GCal event duration was changed — update allocation
             durationUpdates.push({ dayName, taskId: task.id, newMinutes: matchedDuration })
           }
         }
       }
-
       setCalendarDiff({ deleted, moved, total: calEvents.length })
 
-      // ── Apply changes to planDays (Assign grid follows GCal) ──────────────
-      if (deleted.length > 0 || moved.length > 0 || durationUpdates.length > 0) {
-        const next = {}
-        for (const [dn, dd] of Object.entries(planDays)) {
-          next[dn] = { ...dd, tasks: [...(dd?.tasks ?? [])] }
+      // ── Rebuild planDays from live GCal state ─────────────────────────────
+      // Rather than patching individual changes, we reconstruct planDays directly
+      // from fetchedCalEvents. This correctly handles tasks moved between days,
+      // tasks published from Today's queue (not originally in the plan), and any
+      // other GCal-side change that the diff approach would miss.
+      const newDays = {}
+      for (const dayName of DAY_NAMES) {
+        const date = planDays[dayName]?.date ?? getDayDate(weekStartDate, dayName)
+        newDays[dayName] = { date, tasks: [] }
+      }
+
+      // Keep unpublished tasks (no gcalEventId) on their original day
+      for (const [dayName, dayData] of Object.entries(planDays)) {
+        for (const task of dayData?.tasks ?? []) {
+          if (!task.gcalEventId) newDays[dayName]?.tasks.push(task)
         }
-        // Remove deleted instances by exact id
-        for (const { task, dayName } of deleted) {
-          next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
-        }
-        // Move instances to new day, carrying over the GCal duration
-        for (const { task, dayName, newDayName, matchedDuration } of moved) {
-          next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
-          if (newDayName && next[newDayName]) {
-            const updatedTask = matchedDuration != null
-              ? { ...task, estimateMinutes: matchedDuration }
-              : { ...task }
-            next[newDayName].tasks = [...next[newDayName].tasks, updatedTask]
+      }
+
+      // Place every CoSA GCal event on the day it actually lives on
+      for (const ev of calEvents) {
+        const evDate = ev.start?.dateTime?.slice(0, 10) ?? ev.start?.date
+        const targetDay = evDate ? dateToDay[evDate] : null
+        if (!targetDay) continue
+
+        const templateId = ev.extendedProperties?.private?.cosaTemplateId
+        const gcalEventId = ev.id
+        const durationMin =
+          ev.start?.dateTime && ev.end?.dateTime
+            ? Math.round((new Date(ev.end.dateTime) - new Date(ev.start.dateTime)) / 60000)
+            : null
+
+        // Find the existing task object to preserve id, name, track etc.
+        const existing = tasksByGcalId[gcalEventId] ?? (templateId ? tasksByTemplateId[templateId] : null)
+        if (existing) {
+          newDays[targetDay].tasks.push({
+            ...existing,
+            gcalEventId,
+            estimateMinutes: durationMin ?? existing.estimateMinutes,
+          })
+        } else if (templateId) {
+          // Event exists in GCal but not in planDays — reconstruct from task library
+          const libTask = taskLibrary.find((t) => t.id === templateId)
+          if (libTask) {
+            newDays[targetDay].tasks.push({
+              id: `plan-gcal-${gcalEventId}`,
+              templateId: libTask.id,
+              name: libTask.name,
+              timeBlock: libTask.timeBlock,
+              estimateMinutes: durationMin ?? libTask.defaultTimeEstimate ?? 25,
+              track: libTask.track,
+              subTrack: libTask.subTrack ?? null,
+              gcalEventId,
+            })
           }
         }
-        // Update durations for same-day tasks whose GCal event was resized
-        for (const { dayName, taskId, newMinutes } of durationUpdates) {
-          next[dayName].tasks = next[dayName].tasks.map((t) =>
-            t.id === taskId ? { ...t, estimateMinutes: newMinutes } : t,
-          )
-        }
+      }
 
-        setPlanDays(next)
+      setPlanDays(newDays)
 
-        // Auto-save sync changes so they survive navigation away from WeekPlanner.
-        // The weekPlan in App.jsx is also updated so the useEffect that re-initialises
-        // planDays from weekPlan.days sees the patched version, not the stale one.
-        if (userId) {
-          const syncedPlan = { ...weekPlan, days: next }
-          upsertWeeklyPlan(syncedPlan, weekStartDate, userId)
-            .then((planId) => {
-              setWeekPlan({ ...syncedPlan, id: planId ?? weekPlan?.id })
-            })
-            .catch((err) => console.error('[sync auto-save]', err.message))
-        }
+      // Auto-save so changes survive navigation; also update App.jsx weekPlan so
+      // the planDays reset useEffect doesn't restore stale data on re-mount.
+      if (userId) {
+        const syncedPlan = { ...weekPlan, days: newDays }
+        upsertWeeklyPlan(syncedPlan, weekStartDate, userId)
+          .then((planId) => setWeekPlan({ ...syncedPlan, id: planId ?? weekPlan?.id }))
+          .catch((err) => console.error('[sync auto-save]', err.message))
       }
     } catch (err) {
       setMessage(`Sync failed: ${err.message}`)
