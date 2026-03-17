@@ -278,6 +278,7 @@ export default function WeekPlanner({
   setWeekPlan,
   taskLibrary,
   session,
+  gcalToken,
   rescheduleQueue,
   supabaseConfigured,
   onTriggerReplan,
@@ -312,7 +313,9 @@ export default function WeekPlanner({
   }, [weekPlan])
 
   const weekStartDate = weekPlan?.weekStartDate ?? getWeekStartDateStr()
-  const providerToken = session?.provider_token ?? null
+  // Prefer the persistent gcalToken (survives Supabase session refreshes) over
+  // session.provider_token which goes null after the first Supabase JWT refresh.
+  const providerToken = gcalToken ?? session?.provider_token ?? null
   const userId = session?.user?.id ?? null
 
   // Load saved event tags from Supabase on mount / user change
@@ -322,6 +325,17 @@ export default function WeekPlanner({
       if (tags && Object.keys(tags).length > 0) setEventTags(tags)
     })
   }, [userId])
+
+  // Auto-sync from Google Calendar when the Calendar tab opens.
+  // This ensures the Calendar view always reflects the live GCal state without
+  // requiring a manual "Sync" click, and patches planDays so the Assign tab
+  // stays in sync with whatever the user changed in Google Calendar.
+  useEffect(() => {
+    if (activeTab === 'calendar' && providerToken && !syncingCalendar && !fetchedCalEvents) {
+      handleSyncCalendar()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, providerToken])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -796,33 +810,44 @@ export default function WeekPlanner({
 
       // ── Apply changes to planDays (Assign grid follows GCal) ──────────────
       if (deleted.length > 0 || moved.length > 0 || durationUpdates.length > 0) {
-        setPlanDays((prev) => {
-          const next = {}
-          for (const [dn, dd] of Object.entries(prev)) {
-            next[dn] = { ...dd, tasks: [...(dd?.tasks ?? [])] }
+        const next = {}
+        for (const [dn, dd] of Object.entries(planDays)) {
+          next[dn] = { ...dd, tasks: [...(dd?.tasks ?? [])] }
+        }
+        // Remove deleted instances by exact id
+        for (const { task, dayName } of deleted) {
+          next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
+        }
+        // Move instances to new day, carrying over the GCal duration
+        for (const { task, dayName, newDayName, matchedDuration } of moved) {
+          next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
+          if (newDayName && next[newDayName]) {
+            const updatedTask = matchedDuration != null
+              ? { ...task, estimateMinutes: matchedDuration }
+              : { ...task }
+            next[newDayName].tasks = [...next[newDayName].tasks, updatedTask]
           }
-          // Remove deleted instances by exact id
-          for (const { task, dayName } of deleted) {
-            next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
-          }
-          // Move instances to new day, carrying over the GCal duration
-          for (const { task, dayName, newDayName, matchedDuration } of moved) {
-            next[dayName].tasks = next[dayName].tasks.filter((t) => t.id !== task.id)
-            if (newDayName && next[newDayName]) {
-              const updatedTask = matchedDuration != null
-                ? { ...task, estimateMinutes: matchedDuration }
-                : { ...task }
-              next[newDayName].tasks = [...next[newDayName].tasks, updatedTask]
-            }
-          }
-          // Update durations for same-day tasks whose GCal event was resized
-          for (const { dayName, taskId, newMinutes } of durationUpdates) {
-            next[dayName].tasks = next[dayName].tasks.map((t) =>
-              t.id === taskId ? { ...t, estimateMinutes: newMinutes } : t,
-            )
-          }
-          return next
-        })
+        }
+        // Update durations for same-day tasks whose GCal event was resized
+        for (const { dayName, taskId, newMinutes } of durationUpdates) {
+          next[dayName].tasks = next[dayName].tasks.map((t) =>
+            t.id === taskId ? { ...t, estimateMinutes: newMinutes } : t,
+          )
+        }
+
+        setPlanDays(next)
+
+        // Auto-save sync changes so they survive navigation away from WeekPlanner.
+        // The weekPlan in App.jsx is also updated so the useEffect that re-initialises
+        // planDays from weekPlan.days sees the patched version, not the stale one.
+        if (userId) {
+          const syncedPlan = { ...weekPlan, days: next }
+          upsertWeeklyPlan(syncedPlan, weekStartDate, userId)
+            .then((planId) => {
+              setWeekPlan({ ...syncedPlan, id: planId ?? weekPlan?.id })
+            })
+            .catch((err) => console.error('[sync auto-save]', err.message))
+        }
       }
     } catch (err) {
       setMessage(`Sync failed: ${err.message}`)

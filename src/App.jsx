@@ -5188,6 +5188,7 @@ function App() {
           setWeekPlan={setWeekPlan}
           taskLibrary={taskLibrary}
           session={session}
+          gcalToken={gcalToken}
           rescheduleQueue={rescheduleQueue}
           supabaseConfigured={supabaseConfigured}
           onTriggerReplan={handleReplan}
