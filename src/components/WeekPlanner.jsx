@@ -1037,7 +1037,22 @@ export default function WeekPlanner({
                {DAY_NAMES.map((dayName) => {
                  const dayDate = planDays[dayName]?.date ?? getDayDate(weekStartDate, dayName)
                  const dayTasks = planDays[dayName]?.tasks ?? []
-                 const totalMinutes = dayTasks.reduce((s, t) => s + (t.estimateMinutes ?? 0), 0)
+
+                 // Tagged personal calendar events for this day (classified in Calendar tab)
+                 const taggedForDay = Object.entries(eventTags)
+                   .filter(([, tag]) => tag.date === dayDate)
+                   .map(([evId, tag]) => ({
+                     id: `tagged-${evId}`,
+                     gcalEventId: evId,
+                     name: tag.title,
+                     track: tag.track,
+                     subTrack: tag.subTrack ?? null,
+                     estimateMinutes: tag.durationMin ?? 30,
+                   }))
+
+                 const totalMinutes =
+                   dayTasks.reduce((s, t) => s + (t.estimateMinutes ?? 0), 0) +
+                   taggedForDay.reduce((s, t) => s + (t.estimateMinutes ?? 0), 0)
 
                  return (
                    <div key={dayName} className="flex flex-col gap-1.5">
@@ -1052,7 +1067,7 @@ export default function WeekPlanner({
                        id={dayName}
                        className="min-h-[120px] flex-1 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-1.5"
                      >
-                       {dayTasks.length === 0 && (
+                       {dayTasks.length === 0 && taggedForDay.length === 0 && (
                          <p className="text-center text-[10px] text-slate-300 pt-4">Drop tasks here</p>
                        )}
                        {dayTasks.map((task) => {
@@ -1067,6 +1082,21 @@ export default function WeekPlanner({
                                shaking={rejectedId === task.id}
                              />
                            </DraggableCard>
+                         )
+                       })}
+                       {taggedForDay.map((task) => {
+                         const track = normaliseTrack(task.track)
+                         const color = TRACK_COLORS[track] ?? '#94a3b8'
+                         return (
+                           <div
+                             key={task.id}
+                             className="rounded-md border bg-white px-2 py-1.5 text-xs shadow-sm mb-1 opacity-80"
+                             style={{ borderLeftColor: color, borderLeftWidth: 3, borderStyle: 'dashed' }}
+                             title="Personal calendar event — classified via Calendar tab"
+                           >
+                             <span className="font-medium leading-tight text-slate-700 truncate block">{task.name}</span>
+                             <span className="text-slate-400">{task.estimateMinutes}m{task.subTrack ? ` · ${task.subTrack}` : ''}</span>
+                           </div>
                          )
                        })}
                      </DroppableZone>
