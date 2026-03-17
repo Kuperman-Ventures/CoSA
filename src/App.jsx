@@ -33,8 +33,9 @@ import {
   upsertUserPreferences,
   upsertQuickLogEntry,
   loadQuickLogEntries,
+  loadCalendarEventTags,
 } from './lib/supabaseSync'
-import { createEventsForSnapshot, fetchCoSACalendarEvents } from './lib/googleCalendar'
+import { createEventsForSnapshot, fetchCoSACalendarEvents, fetchPersonalCalendarEvents } from './lib/googleCalendar'
 
 const TRACKS = {
   advisors: {
@@ -1279,37 +1280,78 @@ function App() {
         }
       }
 
-      // 3. Merge today's CoSA calendar events into the queue
+      // 3. Merge today's calendar events into the queue:
+      //    a) CoSA-tagged GCal events (created via drag-drop in Calendar tab)
+      //    b) Personal GCal events the user tagged with a track (stored in Supabase)
       {
         const { data: { session: liveSession } } = await supabase.auth.getSession()
         const providerToken = liveSession?.provider_token
-        if (providerToken) {
-          try {
+        const existingCalIds = new Set(
+          effectiveTodayTasks.map((t) => t.calendarEventId).filter(Boolean)
+        )
+        const newFromCalendar = []
+
+        try {
+          if (providerToken) {
             const timeMin = `${todayStr}T00:00:00Z`
             const timeMax = `${todayStr}T23:59:59Z`
-            const gcalEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
-            const existingCalIds = new Set(
-              effectiveTodayTasks.map((t) => t.calendarEventId).filter(Boolean)
-            )
-            const newFromGcal = gcalEvents
-              .filter((ev) => !existingCalIds.has(ev.id))
-              .map(gcalEventToTodayTask)
-            if (newFromGcal.length > 0) {
-              const merged = [...effectiveTodayTasks, ...newFromGcal]
-              setTodayTasks(merged)
-              setQueueDate(todayStr)
-              setSessions((prev) => {
-                const next = { ...prev }
-                newFromGcal.forEach((t) => {
-                  if (!next[t.id]) next[t.id] = getInitialSession(t)
-                })
-                return next
-              })
-              upsertTodayTasks(merged, userId, todayStr)
+
+            // a) CoSA-created events (cosaTag=cosa-event in GCal extendedProperties)
+            const cosaEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+            for (const ev of cosaEvents) {
+              if (!existingCalIds.has(ev.id)) {
+                newFromCalendar.push(gcalEventToTodayTask(ev))
+                existingCalIds.add(ev.id)
+              }
             }
-          } catch (err) {
-            console.error('[GCal merge] Failed to load today events:', err)
+
+            // b) Personal events tagged with a track in Supabase
+            const allTags = await loadCalendarEventTags(userId)
+            const todayTaggedIds = Object.entries(allTags)
+              .filter(([, tag]) => tag.date === todayStr)
+              .map(([gcalId]) => gcalId)
+
+            if (todayTaggedIds.length > 0) {
+              const personalEvents = await fetchPersonalCalendarEvents(providerToken, timeMin, timeMax)
+              for (const ev of personalEvents) {
+                if (existingCalIds.has(ev.id)) continue
+                const tag = allTags[ev.id]
+                if (!tag) continue
+                const startDT = ev.start?.dateTime
+                const endDT   = ev.end?.dateTime
+                const durationMin = startDT && endDT
+                  ? Math.round((new Date(endDT) - new Date(startDT)) / 60000)
+                  : (tag.durationMin ?? 30)
+                newFromCalendar.push({
+                  id: `gcal-${ev.id}`,
+                  templateId: null,
+                  name: ev.summary ?? tag.title ?? '(untitled)',
+                  track: tag.track,
+                  subTrack: tag.subTrack ?? null,
+                  estimateMinutes: Math.max(5, durationMin),
+                  kpiMapping: '',
+                  calendarEventId: ev.id,
+                })
+                existingCalIds.add(ev.id)
+              }
+            }
           }
+        } catch (err) {
+          console.error('[GCal merge] Failed to load today events:', err)
+        }
+
+        if (newFromCalendar.length > 0) {
+          const merged = [...effectiveTodayTasks, ...newFromCalendar]
+          setTodayTasks(merged)
+          setQueueDate(todayStr)
+          setSessions((prev) => {
+            const next = { ...prev }
+            newFromCalendar.forEach((t) => {
+              if (!next[t.id]) next[t.id] = getInitialSession(t)
+            })
+            return next
+          })
+          upsertTodayTasks(merged, userId, todayStr)
         }
       }
 
