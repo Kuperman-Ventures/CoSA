@@ -1036,15 +1036,21 @@ function App() {
   }
 
   const tasksByTrack = useMemo(() => {
-    // 1. Deduplicate: prefer the task with a calendarEventId; fallback key = name+duration
-    const seen = new Map()
+    // 1. Two-pass dedup:
+    //    Pass A — by calendarEventId (same GCal event loaded via two paths)
+    //    Pass B — by name+duration (same-named event appearing from different calendar sources)
+    const seenCalIds = new Set()
+    const seenContent = new Set()
     const deduped = []
     for (const t of todayTasks) {
-      const key = t.calendarEventId ?? `${t.name}__${t.estimateMinutes}`
-      if (!seen.has(key)) {
-        seen.set(key, true)
-        deduped.push(t)
+      if (t.calendarEventId) {
+        if (seenCalIds.has(t.calendarEventId)) continue
+        seenCalIds.add(t.calendarEventId)
       }
+      const contentKey = `${t.name}__${t.estimateMinutes}`
+      if (seenContent.has(contentKey)) continue
+      seenContent.add(contentKey)
+      deduped.push(t)
     }
     // 2. Filter out completed/cancelled
     const active = deduped.filter((t) => {
