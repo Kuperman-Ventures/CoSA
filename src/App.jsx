@@ -3340,16 +3340,6 @@ function App() {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              onClick={deployLibraryToToday}
-              className="w-full rounded-md bg-emerald-600 px-2 py-2 text-xs font-semibold text-white"
-            >
-              Deploy Active Tasks to Today
-            </button>
-            <p className="text-[11px] text-slate-500">
-              Last deployment: {new Date(lastDeploymentAt).toLocaleString()}
-            </p>
           </div>
           <div className="space-y-3">
             {filteredTaskLibrary.length === 0 ? (
@@ -5004,21 +4994,10 @@ function App() {
         </article>
         ) : (
         <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          {clearedDates.includes(getTodayDateString()) ? (
-            <>
-              <h2 className="text-lg font-semibold text-slate-500">No tasks scheduled</h2>
-              <p className="mt-2 text-sm text-slate-500">
-                This day was manually cleared. Click Deploy in the Task Library if your plans changed.
-              </p>
-            </>
-          ) : (
-            <>
-              <h2 className="text-lg font-semibold">No Today tasks deployed yet</h2>
-              <p className="mt-2 text-sm text-slate-600">
-                Go to Task Library and click &quot;Deploy Active Tasks to Today&quot; to create today&apos;s task instances.
-              </p>
-            </>
-          )}
+          <h2 className="text-lg font-semibold">No tasks scheduled for today</h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Build your week in the <strong>Week Planner</strong> and publish to populate today&apos;s queue.
+          </p>
         </article>
         )}
 
