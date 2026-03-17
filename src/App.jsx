@@ -2765,8 +2765,16 @@ function App() {
       </section>
       {activeScreen === 'today' ? (
         <section className="grid gap-4 p-4 lg:grid-cols-[1fr_320px]">
-        {hasActiveTodayTask || todayTasks.length > 0 ? (
+        {todayTasks.length > 0 ? (
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          {!hasActiveTodayTask ? (
+            <div className="flex h-32 items-center justify-center text-center">
+              <div>
+                <p className="text-sm font-medium text-slate-700">Tasks loaded from your calendar</p>
+                <p className="mt-1 text-xs text-slate-400">Select a task from the queue on the right to start the timer.</p>
+              </div>
+            </div>
+          ) : (<>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-xs uppercase text-slate-500">Active Task</p>
@@ -2861,13 +2869,13 @@ function App() {
               {statusMessage}
             </p>
           ) : null}
-
+          </>)}
         </article>
         ) : (
         <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold">No tasks scheduled for today</h2>
           <p className="mt-2 text-sm text-slate-600">
-            Build your week in the <strong>Week Planner</strong> and publish to populate today&apos;s queue.
+            Tag calendar events with a track, or drag tasks from the <strong>Calendar</strong> view to populate today&apos;s queue.
           </p>
         </article>
         )}
