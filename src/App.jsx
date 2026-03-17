@@ -1198,9 +1198,12 @@ function App() {
       }
 
       // 2. Today tasks — load from Supabase, fall back to 9am auto-deploy
+      // Track the effective queue in a local var so GCal merge can dedup cleanly.
+      let effectiveTodayTasks = []
       {
         const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
         if (remoteTodayTasks && remoteTodayTasks.length > 0) {
+          effectiveTodayTasks = remoteTodayTasks
           setTodayTasks(remoteTodayTasks)
           setQueueDate(targetStr)
           setSessions((prev) => {
@@ -1245,9 +1248,7 @@ function App() {
             lastAutoDate !== todayStr &&
             !localCleared.includes(todayStr)
           ) {
-            const deployable = activeLibrary
-              .filter((t) => t.status === 'Active')
-              .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
+            const deployable = activeLibrary.filter((t) => t.status === 'Active')
             const validDeployable = deployable.filter((t) => validateLibraryTask(t).length === 0)
             if (validDeployable.length > 0) {
               const deployId = Date.now()
@@ -1265,6 +1266,7 @@ function App() {
                 }
               }
 
+              effectiveTodayTasks = snapshot
               setTodayTasks(snapshot)
               setSessions(buildSessionsFromTodayTasks(snapshot))
               setActiveTaskId(snapshot[0]?.id ?? null)
@@ -1279,29 +1281,34 @@ function App() {
 
       // 3. Merge today's CoSA calendar events into the queue
       {
-        const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
+        const { data: { session: liveSession } } = await supabase.auth.getSession()
+        const providerToken = liveSession?.provider_token
         if (providerToken) {
-          const timeMin = `${todayStr}T00:00:00Z`
-          const timeMax = `${todayStr}T23:59:59Z`
-          const gcalEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
-          if (gcalEvents.length > 0) {
-            setTodayTasks((prev) => {
-              const existingCalIds = new Set(prev.map((t) => t.calendarEventId).filter(Boolean))
-              const newFromGcal = gcalEvents
-                .filter((ev) => !existingCalIds.has(ev.id))
-                .map(gcalEventToTodayTask)
-              if (newFromGcal.length === 0) return prev
-              const merged = [...prev, ...newFromGcal]
-              // Persist the new GCal-sourced tasks to Supabase
-              upsertTodayTasks(merged, userId, todayStr)
-              setSessions((s) => {
-                const next = { ...s }
-                newFromGcal.forEach((t) => { if (!next[t.id]) next[t.id] = getInitialSession(t) })
+          try {
+            const timeMin = `${todayStr}T00:00:00Z`
+            const timeMax = `${todayStr}T23:59:59Z`
+            const gcalEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+            const existingCalIds = new Set(
+              effectiveTodayTasks.map((t) => t.calendarEventId).filter(Boolean)
+            )
+            const newFromGcal = gcalEvents
+              .filter((ev) => !existingCalIds.has(ev.id))
+              .map(gcalEventToTodayTask)
+            if (newFromGcal.length > 0) {
+              const merged = [...effectiveTodayTasks, ...newFromGcal]
+              setTodayTasks(merged)
+              setQueueDate(todayStr)
+              setSessions((prev) => {
+                const next = { ...prev }
+                newFromGcal.forEach((t) => {
+                  if (!next[t.id]) next[t.id] = getInitialSession(t)
+                })
                 return next
               })
-              return merged
-            })
-            setQueueDate(todayStr)
+              upsertTodayTasks(merged, userId, todayStr)
+            }
+          } catch (err) {
+            console.error('[GCal merge] Failed to load today events:', err)
           }
         }
       }
