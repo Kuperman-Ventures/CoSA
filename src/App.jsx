@@ -871,7 +871,7 @@ function App() {
   const [libraryMessage, setLibraryMessage] = useState('')
   const [lastDeploymentAt, setLastDeploymentAt] = useState(bootstrap.lastDeploymentAt)
   const [queueDate, setQueueDate] = useState(bootstrap.queueDate)
-  const [libraryFilter, setLibraryFilter] = useState('All')
+  const [libraryFilter, setLibraryFilter] = useState('Active')
   const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
   const [archiveConfirmId, setArchiveConfirmId] = useState(null)
   const [completionLog, setCompletionLog] = useState(() => loadCompletionLog())
@@ -1889,21 +1889,22 @@ function App() {
                 Add Task
               </button>
             </div>
-            <label className="block text-xs text-slate-600">
-              Show
-              <select
-                value={libraryFilter}
-                onChange={(event) => setLibraryFilter(event.target.value)}
-                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 outline-none ring-blue-300 focus:ring-2"
-              >
-                <option value="All">All</option>
-                {LIBRARY_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="flex gap-1">
+              {['Active', ...LIBRARY_STATUSES.filter((s) => s !== 'Active'), 'All'].map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setLibraryFilter(f)}
+                  className={`flex-1 rounded-md px-1 py-1 text-[11px] font-medium transition-colors ${
+                    libraryFilter === f
+                      ? 'bg-slate-900 text-white'
+                      : 'border border-slate-200 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-700'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="space-y-3">
             {filteredTaskLibrary.length === 0 ? (
