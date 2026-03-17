@@ -93,6 +93,12 @@ const FREQUENCIES = ['Daily', 'Weekly', 'Monthly', 'As scheduled']
 const COMPLETION_TYPES = ['Done', 'Done + Outcome', 'Partial']
 const LIBRARY_STATUSES = ['Active', 'Paused', 'Archived']
 const TIME_BLOCK_ORDER = ['BD', 'Networking', 'Job Search', 'Encore OS', 'Friday']
+// Sub-tracks per track — kept in sync with WeekPlanner SUB_TRACK_TARGETS
+const TRACK_SUB_TRACKS = {
+  advisors:  ['Business Development', 'Materials', 'Content', 'Meetings'],
+  jobSearch: ['Networking', 'Searching', 'Applications', 'L&D', 'Boards', 'Admin', 'Other'],
+  ventures:  ['Alpha', 'Growth', 'Product', 'Research', 'Subscription', 'Build'],
+}
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const ALL_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -1182,6 +1188,7 @@ function App() {
   const [queueDate, setQueueDate] = useState(bootstrap.queueDate)
   const [libraryFilter, setLibraryFilter] = useState('All')
   const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
+  const [archiveConfirmId, setArchiveConfirmId] = useState(null)
   const [rescheduleQueue, setRescheduleQueue] = useState(bootstrap.rescheduleQueue)
   const [deferredTasks, setDeferredTasks] = useState(bootstrap.deferredTasks)
   const [aiSuggestion, setAiSuggestion] = useState({ loading: false, text: '', error: '' })
@@ -1756,6 +1763,15 @@ function App() {
       prev.map((task) => (task.id === taskId ? { ...task, [field]: value } : task)),
     )
     setLibraryMessage('Saved to Task Library template. Changes apply to future deployments only.')
+  }
+
+  function archiveLibraryTask(taskId) {
+    setTaskLibrary((prev) =>
+      prev.map((task) => (task.id === taskId ? { ...task, status: 'Archived' } : task)),
+    )
+    setSelectedLibraryTaskId(null)
+    setLibraryMessage('Task archived and removed from active library.')
+    setArchiveConfirmId(null)
   }
 
   // ── AI Task Proposal handlers ─────────────────────────────────────────────
@@ -3518,9 +3534,14 @@ function App() {
                 <span className="mb-1 block text-slate-600">Track</span>
                 <select
                   value={selectedLibraryTask.track}
-                  onChange={(event) =>
+                  onChange={(event) => {
                     updateLibraryTask(selectedLibraryTask.id, 'track', event.target.value)
-                  }
+                    // Clear sub-track if it doesn't belong to the new track
+                    const newSubTracks = TRACK_SUB_TRACKS[event.target.value] ?? []
+                    if (selectedLibraryTask.subTrack && !newSubTracks.includes(selectedLibraryTask.subTrack)) {
+                      updateLibraryTask(selectedLibraryTask.id, 'subTrack', null)
+                    }
+                  }}
                   className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
                 >
                   {Object.values(TRACKS).map((track) => (
@@ -3529,6 +3550,24 @@ function App() {
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className="text-sm">
+                <span className="mb-1 block text-slate-600">Sub-Track</span>
+                <select
+                  value={selectedLibraryTask.subTrack ?? ''}
+                  onChange={(event) =>
+                    updateLibraryTask(selectedLibraryTask.id, 'subTrack', event.target.value || null)
+                  }
+                  className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
+                >
+                  <option value="">— none —</option>
+                  {(TRACK_SUB_TRACKS[selectedLibraryTask.track] ?? []).map((sub) => (
+                    <option key={sub} value={sub}>{sub}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Used for weekly allocation tracking in the Week Planner.
+                </p>
               </label>
               <label className="text-sm">
                 <span className="mb-1 block text-slate-600">Default Time Estimate (minutes)</span>
@@ -3705,6 +3744,37 @@ function App() {
                   Ready to deploy.
                 </div>
               )}
+
+              {/* Archive / Delete */}
+              <div className="sm:col-span-2 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                {archiveConfirmId === selectedLibraryTask.id ? (
+                  <>
+                    <span className="text-xs text-slate-500">Archive this task? It won't be deleted, just hidden.</span>
+                    <button
+                      type="button"
+                      onClick={() => setArchiveConfirmId(null)}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => archiveLibraryTask(selectedLibraryTask.id)}
+                      className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+                    >
+                      Yes, Archive
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setArchiveConfirmId(selectedLibraryTask.id)}
+                    className="rounded-md border border-rose-200 px-3 py-1.5 text-xs text-rose-600 hover:border-rose-300 hover:bg-rose-50"
+                  >
+                    Archive Task
+                  </button>
+                )}
+              </div>
             </div>
           )}
           {libraryMessage ? (
