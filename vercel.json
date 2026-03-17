@@ -1,10 +1,1 @@
-{
-  "functions": {
-    "api/replan-week.js": {
-      "maxDuration": 30
-    },
-    "api/suggest-reschedule.js": {
-      "maxDuration": 30
-    }
-  }
-}
+{}
