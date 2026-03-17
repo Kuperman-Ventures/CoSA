@@ -148,6 +148,40 @@ export async function deleteCalendarEvent(eventId, providerToken) {
 }
 
 /**
+ * Create a CoSA calendar event with explicit start/end ISO datetimes.
+ * Use this when the user sets the exact time (unlike createCalendarEvent which
+ * derives times from a task's timeBlock).
+ *
+ * @param {string} title - Event summary / title
+ * @param {string} track - Normalised track key (e.g. 'advisors', 'jobSearch')
+ * @param {string} startISO - ISO datetime string, e.g. "2026-03-16T10:00:00"
+ * @param {string} endISO   - ISO datetime string, e.g. "2026-03-16T11:00:00"
+ * @param {string} providerToken - Google OAuth bearer token
+ * @param {object} [extras] - Optional { templateId } stored in extendedProperties
+ * @returns {Promise<object|null>} Full GCal event object returned by the API, or null on failure
+ */
+export async function createCalendarEventAtTime(title, track, startISO, endISO, providerToken, extras = {}) {
+  if (!providerToken) return null
+  const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const body = {
+    summary: title,
+    colorId: TRACK_COLOR_IDS[track] ?? '1',
+    start: { dateTime: startISO, timeZone: userTz },
+    end:   { dateTime: endISO,   timeZone: userTz },
+    extendedProperties: {
+      private: {
+        cosaTag:    'cosa-event',
+        cosaTrack:  track,
+        ...(extras.templateId ? { cosaTemplateId: extras.templateId }   : {}),
+        ...(extras.subTrack   ? { cosaSubTrack:   extras.subTrack }     : {}),
+      },
+    },
+  }
+  const data = await gcalFetch('', 'POST', providerToken, body)
+  return data ?? null
+}
+
+/**
  * Create events for every task in a snapshot, grouped by block for sequential timing.
  * Returns a map of { [taskId]: calendarEventId }.
  */

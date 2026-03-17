@@ -9,7 +9,7 @@ import {
   loadCalendarEventTags,
   upsertCalendarEventTag,
 } from '../lib/supabaseSync'
-import { createWeekPlanEvents, fetchCoSACalendarEvents, fetchPersonalCalendarEvents, BLOCK_CAPACITY_MINUTES } from '../lib/googleCalendar'
+import { createWeekPlanEvents, fetchCoSACalendarEvents, fetchPersonalCalendarEvents, BLOCK_CAPACITY_MINUTES, createCalendarEventAtTime, deleteCalendarEvent } from '../lib/googleCalendar'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -283,6 +283,7 @@ export default function WeekPlanner({
   supabaseConfigured,
   onTriggerReplan,
   onPublishComplete,
+  onAddLibraryTask,
 }) {
   const [activeTab, setActiveTab] = useState('assign')
   const [planDays, setPlanDays] = useState(() => weekPlan?.days ?? {})
@@ -306,6 +307,11 @@ export default function WeekPlanner({
   const [tagModalTrack, setTagModalTrack] = useState('')
   const [tagModalSubTrack, setTagModalSubTrack] = useState('')
   const [tagModalSaving, setTagModalSaving] = useState(false)
+  // Create calendar event modal
+  const [createEventModal, setCreateEventModal] = useState(null) // { date, startTime, endTime }
+  const [createEventForm, setCreateEventForm] = useState({ title: '', track: 'advisors', subTrack: '', addToLibrary: false })
+  const [creatingEvent, setCreatingEvent] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null) // gcalEventId pending deletion
 
   // Sync planDays when weekPlan changes externally
   useEffect(() => {
@@ -372,19 +378,30 @@ export default function WeekPlanner({
 
     // CoSA calendar events (from sync)
     for (const ev of fetchedCalEvents ?? []) {
-      const templateId = ev.extendedProperties?.private?.cosaTemplateId
-      if (!templateId) continue
-      const lib = taskLibrary.find((t) => t.id === templateId)
-      if (!lib) continue
-      const track = normaliseTrack(lib.track)
-      if (!track || trackTotals[track] === undefined) continue
+      const priv = ev.extendedProperties?.private ?? {}
+      const templateId = priv.cosaTemplateId
       const durationMin =
         ev.start?.dateTime && ev.end?.dateTime
           ? Math.round((new Date(ev.end.dateTime) - new Date(ev.start.dateTime)) / 60000)
           : 0
       if (durationMin <= 0) continue
+
+      // Prefer template library for track/subTrack; fall back to stored cosaTrack
+      let track, subTrack
+      if (templateId) {
+        const lib = taskLibrary.find((t) => t.id === templateId)
+        if (!lib) continue
+        track    = normaliseTrack(lib.track)
+        subTrack = lib.subTrack ?? priv.cosaSubTrack ?? null
+      } else if (priv.cosaTrack) {
+        track    = normaliseTrack(priv.cosaTrack)
+        subTrack = priv.cosaSubTrack ?? null
+      } else {
+        continue
+      }
+
+      if (!track || trackTotals[track] === undefined) continue
       trackTotals[track] = (trackTotals[track] ?? 0) + durationMin
-      const subTrack = lib.subTrack ?? null
       if (subTrack) {
         const key = `${track}::${subTrack}`
         subTrackTotals[key] = (subTrackTotals[key] ?? 0) + durationMin
@@ -879,6 +896,80 @@ export default function WeekPlanner({
     }
   }
 
+  // ── Create / delete calendar events ──────────────────────────────────────
+
+  // Map a start-time string (HH:MM) to the nearest CoSA time block
+  function guessTimeBlock(startTime) {
+    const [h, m] = startTime.split(':').map(Number)
+    const totalMin = h * 60 + (m ?? 0)
+    if (totalMin < 11 * 60) return 'BD'
+    if (totalMin < 13 * 60) return 'Networking'
+    if (totalMin < 14 * 60) return 'Job Search'
+    return 'Encore OS'
+  }
+
+  async function handleCreateCalendarEvent() {
+    const { title, track, subTrack, addToLibrary } = createEventForm
+    const { date, startTime, endTime } = createEventModal ?? {}
+    if (!providerToken || !title.trim() || !date) return
+    setCreatingEvent(true)
+    try {
+      const startISO = `${date}T${startTime}:00`
+      const endISO   = `${date}T${endTime}:00`
+
+      let templateId = null
+      if (addToLibrary && onAddLibraryTask) {
+        const durationMin = Math.max(5, Math.round((new Date(endISO) - new Date(startISO)) / 60000))
+        const newLibTask = {
+          id: `lib-${Date.now()}`,
+          name: title.trim(),
+          track,
+          subTrack: subTrack || null,
+          timeBlock: guessTimeBlock(startTime),
+          defaultTimeEstimate: durationMin,
+          status: 'Active',
+          completionType: 'Done',
+          frequency: 'Weekly',
+          requiresDefinitionOfDone: false,
+          kpiMapping: '',
+          subtasks: [],
+          outcomePrompt: '',
+          daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        }
+        onAddLibraryTask(newLibTask)
+        templateId = newLibTask.id
+      }
+
+      const event = await createCalendarEventAtTime(
+        title.trim(), track, startISO, endISO, providerToken,
+        { ...(templateId ? { templateId } : {}), ...(subTrack ? { subTrack } : {}) }
+      )
+      if (event) {
+        setFetchedCalEvents((prev) => (prev ? [...prev, event] : [event]))
+      }
+      setCreateEventModal(null)
+      setCreateEventForm({ title: '', track: 'advisors', subTrack: '', addToLibrary: false })
+    } catch (err) {
+      console.error('[handleCreateCalendarEvent]', err)
+      setMessage(`Failed to create event: ${err.message}`)
+    } finally {
+      setCreatingEvent(false)
+    }
+  }
+
+  async function handleDeleteCalendarEvent(eventId) {
+    if (!providerToken || !eventId) return
+    try {
+      await deleteCalendarEvent(eventId, providerToken)
+      setFetchedCalEvents((prev) => (prev ? prev.filter((e) => e.id !== eventId) : prev))
+    } catch (err) {
+      console.error('[handleDeleteCalendarEvent]', err)
+      setMessage(`Failed to delete event: ${err.message}`)
+    } finally {
+      setDeleteConfirmId(null)
+    }
+  }
+
   function handleReviewInAssignTab() {
     const ids = new Set([
       ...(calendarDiff?.deleted ?? []).map((d) => d.task.templateId),
@@ -1187,7 +1278,140 @@ export default function WeekPlanner({
           onSync={handleSyncCalendar}
           onReviewInAssign={handleReviewInAssignTab}
           providerToken={providerToken}
+          onCreateEvent={(params) => {
+            setCreateEventModal(params)
+            setCreateEventForm({ title: '', track: 'advisors', subTrack: '', addToLibrary: false })
+          }}
+          onDeleteEvent={(id) => setDeleteConfirmId(id)}
+          deleteConfirmId={deleteConfirmId}
+          onDeleteConfirm={handleDeleteCalendarEvent}
+          onDeleteCancel={() => setDeleteConfirmId(null)}
         />
+      )}
+
+      {/* ── Create calendar event modal ───────────────────────────────────── */}
+      {createEventModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-base font-semibold text-slate-800">New Calendar Event</h3>
+              <button
+                type="button"
+                onClick={() => setCreateEventModal(null)}
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Title */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Event Title</label>
+                <input
+                  type="text"
+                  value={createEventForm.title}
+                  onChange={(e) => setCreateEventForm((p) => ({ ...p, title: e.target.value }))}
+                  placeholder="e.g. Advisor meeting with Sarah"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  autoFocus
+                />
+              </div>
+
+              {/* Date + Times row */}
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={createEventModal.date}
+                    onChange={(e) => setCreateEventModal((p) => ({ ...p, date: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Start</label>
+                  <input
+                    type="time"
+                    value={createEventModal.startTime}
+                    onChange={(e) => setCreateEventModal((p) => ({ ...p, startTime: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">End</label>
+                  <input
+                    type="time"
+                    value={createEventModal.endTime}
+                    onChange={(e) => setCreateEventModal((p) => ({ ...p, endTime: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  />
+                </div>
+              </div>
+
+              {/* Track */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Track</label>
+                <select
+                  value={createEventForm.track}
+                  onChange={(e) => setCreateEventForm((p) => ({ ...p, track: e.target.value, subTrack: '' }))}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                >
+                  {Object.entries(TRACK_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sub-track (only when sub-tracks exist for selected track) */}
+              {Object.keys(SUB_TRACK_TARGETS[createEventForm.track]?.subTracks ?? {}).length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Sub-Track</label>
+                  <select
+                    value={createEventForm.subTrack}
+                    onChange={(e) => setCreateEventForm((p) => ({ ...p, subTrack: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  >
+                    <option value="">— none —</option>
+                    {Object.keys(SUB_TRACK_TARGETS[createEventForm.track].subTracks).map((st) => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Add to Task Library */}
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={createEventForm.addToLibrary}
+                  onChange={(e) => setCreateEventForm((p) => ({ ...p, addToLibrary: e.target.checked }))}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-400"
+                />
+                <span className="text-sm text-slate-700">Also add to Task Library</span>
+              </label>
+            </div>
+
+            {/* Actions */}
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setCreateEventModal(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateCalendarEvent}
+                disabled={creatingEvent || !createEventForm.title.trim()}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creatingEvent ? 'Creating…' : 'Create Event'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Tag modal — assign Track/Sub-track to a personal calendar event ── */}
@@ -1412,7 +1636,7 @@ function layoutOverlappingEvents(events) {
 
 // ─── Calendar view sub-component ──────────────────────────────────────────────
 
-function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, fetchedPersonalEvents, eventTags, onTagEvent, syncingCalendar, onSync, onReviewInAssign, providerToken }) {
+function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetchedCalEvents, fetchedPersonalEvents, eventTags, onTagEvent, syncingCalendar, onSync, onReviewInAssign, providerToken, onCreateEvent, onDeleteEvent, deleteConfirmId, onDeleteConfirm, onDeleteCancel }) {
   const GRID_START = 9   // 9:00am
   const GRID_END = 18    // 6:00pm
   const GRID_HOURS = GRID_END - GRID_START
@@ -1486,15 +1710,29 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
               : 'Sync to see your CoSA tasks and directly-placed calendar events with real times.'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onSync}
-          disabled={syncingCalendar || !providerToken}
-          className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          <RefreshCw size={13} className={syncingCalendar ? 'animate-spin' : ''} />
-          {syncingCalendar ? 'Syncing…' : 'Sync from Google Calendar'}
-        </button>
+        <div className="flex items-center gap-2">
+          {onCreateEvent && providerToken && (
+            <button
+              type="button"
+              onClick={() => {
+                const today = new Date().toISOString().slice(0, 10)
+                onCreateEvent({ date: today, startTime: '09:30', endTime: '10:30' })
+              }}
+              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              + New Event
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onSync}
+            disabled={syncingCalendar || !providerToken}
+            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={syncingCalendar ? 'animate-spin' : ''} />
+            {syncingCalendar ? 'Syncing…' : 'Sync from Google Calendar'}
+          </button>
+        </div>
       </div>
 
       {/* Diff results */}
@@ -1574,7 +1812,25 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
                   <p className="text-xs font-bold text-slate-700">{dayName.slice(0, 3)}</p>
                   <p className="text-[10px] text-slate-400">{dayDate}</p>
                 </div>
-                <div className="relative" style={{ height: gridHeight }}>
+                <div
+                  className="relative"
+                  style={{ height: gridHeight, cursor: onCreateEvent ? 'crosshair' : 'default' }}
+                  onClick={(e) => {
+                    if (!onCreateEvent) return
+                    // Only fire when clicking the grid background (not on a child event block)
+                    if (e.target !== e.currentTarget) return
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    const offsetY = e.clientY - rect.top
+                    const clickedHour = Math.floor(offsetY / PX_PER_HOUR) + GRID_START
+                    const startH = Math.max(GRID_START, Math.min(GRID_END - 1, clickedHour))
+                    const endH   = Math.min(GRID_END, startH + 1)
+                    onCreateEvent({
+                      date: dayDate,
+                      startTime: `${String(startH).padStart(2, '0')}:00`,
+                      endTime:   `${String(endH).padStart(2, '0')}:00`,
+                    })
+                  }}
+                >
                   {/* Hour lines */}
                   {Array.from({ length: GRID_HOURS }, (_, i) => (
                     <div
@@ -1630,22 +1886,51 @@ function CalendarView({ planDays, taskLibrary, weekStartDate, calendarDiff, fetc
                       }
 
                       // CoSA calendar event
+                      const isConfirming = deleteConfirmId === ev.id
                       return (
                         <div
                           key={ev.id}
-                          className="absolute rounded px-1 py-0.5 text-[10px] text-white overflow-hidden shadow-sm"
+                          className="absolute rounded px-1 py-0.5 text-[10px] text-white overflow-hidden shadow-sm group"
                           style={{
                             top: topPx,
                             height: heightPx,
                             minHeight: 18,
                             left: `calc(${leftPct}% + 2px)`,
                             width: `calc(${colW}% - 4px)`,
-                            backgroundColor: ev.color,
+                            backgroundColor: isConfirming ? '#ef4444' : ev.color,
                           }}
                           title={`${ev.name} — ${ev.durationMin}m`}
                         >
-                          <p className="font-medium truncate leading-tight">{ev.name}</p>
-                          {ev.durationMin >= 20 && <p className="opacity-80">{ev.durationMin}m</p>}
+                          {isConfirming ? (
+                            <div className="flex items-center gap-1 h-full">
+                              <span className="text-[9px] font-medium leading-tight truncate">Delete?</span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onDeleteConfirm(ev.id) }}
+                                className="shrink-0 rounded bg-white/30 px-1 text-[9px] font-bold hover:bg-white/50"
+                              >Yes</button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onDeleteCancel() }}
+                                className="shrink-0 rounded bg-white/20 px-1 text-[9px] hover:bg-white/40"
+                              >No</button>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="font-medium truncate leading-tight pr-3">{ev.name}</p>
+                              {ev.durationMin >= 20 && <p className="opacity-80">{ev.durationMin}m</p>}
+                              {onDeleteEvent && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); onDeleteEvent(ev.id) }}
+                                  className="absolute top-0.5 right-0.5 opacity-0 group-hover:opacity-100 transition-opacity rounded hover:bg-white/30 p-px"
+                                  title="Delete event"
+                                >
+                                  <X size={9} />
+                                </button>
+                              )}
+                            </>
+                          )}
                         </div>
                       )
                     })

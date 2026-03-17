@@ -5193,6 +5193,7 @@ function App() {
           supabaseConfigured={supabaseConfigured}
           onTriggerReplan={handleReplan}
           onPublishComplete={handlePublishComplete}
+          onAddLibraryTask={(task) => setTaskLibrary((prev) => [task, ...prev])}
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
