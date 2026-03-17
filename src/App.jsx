@@ -757,13 +757,6 @@ function getDefaultTodaySnapshot(libraryTasks, targetDate = new Date()) {
   const todayName = DAY_NAMES[targetDate.getDay()]
   return libraryTasks
     .filter((task) => task.status === 'Active')
-    .filter((task) => {
-      if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
-      return task.daysOfWeek.includes(todayName)
-    })
-    .sort(
-      (a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock),
-    )
     .map((task, index) => mapLibraryTaskToTodayTask(task, deploymentId, index))
 }
 
@@ -1355,14 +1348,10 @@ function App() {
       return
     }
 
-    const todayName = DAY_NAMES[new Date().getDay()]
-    const dayFilteredCandidates = deployableCandidates.filter((task) => {
-      if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
-      return task.daysOfWeek.includes(todayName)
-    })
+    const dayFilteredCandidates = deployableCandidates
 
     if (dayFilteredCandidates.length === 0) {
-      setLibraryMessage(`No Active tasks are scheduled for ${todayName}.`)
+      setLibraryMessage('No Active tasks in the library to deploy.')
       return
     }
 
@@ -1674,8 +1663,6 @@ function App() {
       for (const dayName of planDayNames) {
         const dayTasks = taskLibrary
           .filter((t) => t.status === 'Active')
-          .filter((t) => (t.daysOfWeek ?? ALL_WEEKDAYS).includes(dayName))
-          .sort((a, b) => TIME_BLOCK_ORDER.indexOf(a.timeBlock) - TIME_BLOCK_ORDER.indexOf(b.timeBlock))
           .map((t) => ({
             templateId:      t.id,
             name:            t.name,
@@ -2006,29 +1993,8 @@ function App() {
                                   </div>
                                 </div>
                                 <div className="mt-1 flex items-center justify-between text-xs opacity-70">
-                                  {task.subTrack
-                                    ? <span>{task.subTrack}</span>
-                                    : <span>{task.timeBlock}</span>
-                                  }
+                                  <span>{task.subTrack ?? '—'}</span>
                                   <span>{task.defaultTimeEstimate}m</span>
-                                </div>
-                                <div className="mt-1 flex gap-0.5">
-                                  {['M', 'T', 'W', 'T', 'F'].map((abbr, i) => {
-                                    const fullDay = DAYS_OF_WEEK[i]
-                                    const active = (task.daysOfWeek ?? ALL_WEEKDAYS).includes(fullDay)
-                                    return (
-                                      <span
-                                        key={fullDay}
-                                        className={`rounded px-0.5 text-[9px] font-medium ${
-                                          active
-                                            ? selected ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700'
-                                            : selected ? 'text-white/30' : 'text-slate-300'
-                                        }`}
-                                      >
-                                        {abbr}
-                                      </span>
-                                    )
-                                  })}
                                 </div>
                               </button>
                             </li>
@@ -2046,32 +2012,22 @@ function App() {
               Today&apos;s Deploy Preview · {DAY_NAMES[new Date().getDay()]}
             </p>
             <ul className="mt-1 space-y-1 text-xs text-slate-700">
-              {activeDeployCandidates
-                .filter((task) => {
-                  if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
-                  return task.daysOfWeek.includes(DAY_NAMES[new Date().getDay()])
-                })
-                .map((task) => (
-                  <li key={`preview-${task.id}`} className="flex items-center justify-between gap-2">
-                    <span className="truncate">
-                      {task.timeBlock}: {task.name}
-                    </span>
-                    <span
-                      className={
-                        task.errors.length === 0
-                          ? 'rounded bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700'
-                          : 'rounded bg-rose-100 px-1 py-0.5 text-[10px] text-rose-700'
-                      }
-                    >
-                      {task.errors.length === 0 ? 'Ready' : 'Blocked'}
-                    </span>
-                  </li>
-                ))}
-              {activeDeployCandidates.filter((task) => {
-                if (!task.daysOfWeek || task.daysOfWeek.length === 0) return true
-                return task.daysOfWeek.includes(DAY_NAMES[new Date().getDay()])
-              }).length === 0 ? (
-                <li className="text-slate-500">No Active tasks scheduled for today.</li>
+              {activeDeployCandidates.map((task) => (
+                <li key={`preview-${task.id}`} className="flex items-center justify-between gap-2">
+                  <span className="truncate">{task.name}</span>
+                  <span
+                    className={
+                      task.errors.length === 0
+                        ? 'rounded bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700'
+                        : 'rounded bg-rose-100 px-1 py-0.5 text-[10px] text-rose-700'
+                    }
+                  >
+                    {task.errors.length === 0 ? 'Ready' : 'Blocked'}
+                  </span>
+                </li>
+              ))}
+              {activeDeployCandidates.length === 0 ? (
+                <li className="text-slate-500">No Active tasks in the library.</li>
               ) : null}
             </ul>
           </div>
