@@ -34,7 +34,7 @@ import {
   upsertQuickLogEntry,
   loadQuickLogEntries,
 } from './lib/supabaseSync'
-import { createEventsForSnapshot } from './lib/googleCalendar'
+import { createEventsForSnapshot, fetchCoSACalendarEvents } from './lib/googleCalendar'
 
 const TRACKS = {
   advisors: {
@@ -723,6 +723,26 @@ function planTaskToTodayTask(planTask, library, dayName, planId, index) {
   }
 }
 
+// Maps a Google Calendar CoSA event → today_task_instance shape.
+function gcalEventToTodayTask(ev) {
+  const priv = ev.extendedProperties?.private ?? {}
+  const startDT = ev.start?.dateTime
+  const endDT   = ev.end?.dateTime
+  const durationMin = startDT && endDT
+    ? Math.round((new Date(endDT) - new Date(startDT)) / 60000)
+    : 30
+  return {
+    id: `gcal-${ev.id}`,
+    templateId: priv.cosaTemplateId ?? null,
+    name: ev.summary ?? '(untitled)',
+    track: priv.cosaTrack ?? 'advisors',
+    subTrack: priv.cosaSubTrack ?? null,
+    estimateMinutes: Math.max(5, durationMin),
+    kpiMapping: '',
+    calendarEventId: ev.id,
+  }
+}
+
 function buildSessionsFromTodayTasks(tasks) {
   return tasks.reduce((acc, task) => {
     acc[task.id] = getInitialSession(task)
@@ -1253,6 +1273,35 @@ function App() {
               upsertTodayTasks(snapshot, userId, todayStr)
               setStatusMessage("Today's tasks auto-deployed from your library.")
             }
+          }
+        }
+      }
+
+      // 3. Merge today's CoSA calendar events into the queue
+      {
+        const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
+        if (providerToken) {
+          const timeMin = `${todayStr}T00:00:00Z`
+          const timeMax = `${todayStr}T23:59:59Z`
+          const gcalEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+          if (gcalEvents.length > 0) {
+            setTodayTasks((prev) => {
+              const existingCalIds = new Set(prev.map((t) => t.calendarEventId).filter(Boolean))
+              const newFromGcal = gcalEvents
+                .filter((ev) => !existingCalIds.has(ev.id))
+                .map(gcalEventToTodayTask)
+              if (newFromGcal.length === 0) return prev
+              const merged = [...prev, ...newFromGcal]
+              // Persist the new GCal-sourced tasks to Supabase
+              upsertTodayTasks(merged, userId, todayStr)
+              setSessions((s) => {
+                const next = { ...s }
+                newFromGcal.forEach((t) => { if (!next[t.id]) next[t.id] = getInitialSession(t) })
+                return next
+              })
+              return merged
+            })
+            setQueueDate(todayStr)
           }
         }
       }
