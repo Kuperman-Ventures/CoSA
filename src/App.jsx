@@ -1039,6 +1039,10 @@ function App() {
       options: {
         redirectTo: window.location.origin,
         scopes: 'https://www.googleapis.com/auth/calendar.events',
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
       },
     })
 
