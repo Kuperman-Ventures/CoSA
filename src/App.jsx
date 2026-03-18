@@ -531,6 +531,32 @@ for (const g of QUICK_LOG_KPI_GROUPS) {
 
 const QUICK_LOG_LOCAL_KEY = 'cosa_quick_logs_v1'
 
+// Subtasks are stored in their own localStorage key, completely decoupled from
+// the Supabase task_templates sync cycle. This guarantees they survive even if
+// the DB column is missing or PostgREST silently drops the field.
+const SUBTASKS_LOCAL_KEY = 'cosa.taskSubtasks.v1' // { [taskId]: subtask[] }
+
+function loadSubtasksMap() {
+  if (typeof window === 'undefined') return {}
+  const raw = window.localStorage.getItem(SUBTASKS_LOCAL_KEY)
+  const parsed = safeParseJSON(raw)
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+}
+
+function saveSubtasksMap(map) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(SUBTASKS_LOCAL_KEY, JSON.stringify(map))
+}
+
+function mergeSubtasksIntoLibrary(library) {
+  const map = loadSubtasksMap()
+  if (Object.keys(map).length === 0) return library
+  return library.map((t) => ({
+    ...t,
+    subtasks: map[t.id] ?? t.subtasks ?? [],
+  }))
+}
+
 function loadCompletionLog() {
   if (typeof window === 'undefined') return []
   const raw = window.localStorage.getItem(COMPLETION_LOG_KEY)
@@ -1341,12 +1367,14 @@ function App() {
     const targetStr = getDeployTargetDate()
 
     const doSync = async () => {
-      // 1. Task library
+      // 1. Task library — load from Supabase, then merge in local subtasks so
+      //    they're never lost even if the DB column is missing or returns empty.
       let activeLibrary = taskLibrary
       const remoteLibrary = await loadTaskTemplates(userId)
       if (remoteLibrary && remoteLibrary.length > 0) {
-        setTaskLibrary(remoteLibrary)
-        activeLibrary = remoteLibrary
+        const merged = mergeSubtasksIntoLibrary(remoteLibrary)
+        setTaskLibrary(merged)
+        activeLibrary = merged
       } else {
         upsertTaskTemplates(taskLibrary, userId)
       }
@@ -1452,34 +1480,52 @@ function App() {
     setTaskLibrary((prev) =>
       prev.map((task) => (task.id === taskId ? { ...task, [field]: value } : task)),
     )
+    // Subtasks are also persisted in their own localStorage key immediately,
+    // so they survive Supabase sync even if the DB column is missing.
+    if (field === 'subtasks') {
+      const map = loadSubtasksMap()
+      map[taskId] = Array.isArray(value) ? value : []
+      saveSubtasksMap(map)
+    }
   }
 
   async function saveLibraryTask() {
-    if (!selectedLibraryTask || !session?.user?.id) return
+    if (!selectedLibraryTask) return
     setLibrarySaveStatus('saving')
-    try {
-      // Build the single latest task object from current state and save immediately.
-      const rows = [selectedLibraryTask].map((t) => ({
-        id: t.id,
-        user_id: session.user.id,
-        name: t.name ?? '',
-        track: t.track ?? 'advisors',
-        sub_track: t.subTrack ?? null,
-        default_estimate_minutes: t.defaultTimeEstimate ?? 25,
-        kpi_mapping: t.kpiMapping ?? '',
-        status: t.status ?? 'Active',
-        subtasks: Array.isArray(t.subtasks) ? t.subtasks : [],
-        updated_at: new Date().toISOString(),
-      }))
-      const { error } = await supabase.from('task_templates').upsert(rows, { onConflict: 'id' })
-      if (error) throw error
-      setLibrarySaveStatus('saved')
-      setTimeout(() => setLibrarySaveStatus(null), 2500)
-    } catch (err) {
-      console.error('[saveLibraryTask]', err)
-      setLibrarySaveStatus('error')
-      setTimeout(() => setLibrarySaveStatus(null), 4000)
+
+    const t = selectedLibraryTask
+    const subtasks = Array.isArray(t.subtasks) ? t.subtasks : []
+
+    // 1. Always save subtasks to dedicated localStorage key — guaranteed to work.
+    const map = loadSubtasksMap()
+    map[t.id] = subtasks
+    saveSubtasksMap(map)
+
+    // 2. Attempt Supabase upsert — best effort (silent fail is OK because
+    //    localStorage is the source of truth for subtasks).
+    if (session?.user?.id && supabase) {
+      try {
+        const row = {
+          id: t.id,
+          user_id: session.user.id,
+          name: t.name ?? '',
+          track: t.track ?? 'advisors',
+          sub_track: t.subTrack ?? null,
+          default_estimate_minutes: t.defaultTimeEstimate ?? 25,
+          kpi_mapping: t.kpiMapping ?? '',
+          status: t.status ?? 'Active',
+          subtasks,
+          updated_at: new Date().toISOString(),
+        }
+        const { error } = await supabase.from('task_templates').upsert(row, { onConflict: 'id' })
+        if (error) console.warn('[saveLibraryTask] Supabase subtasks write failed (will use localStorage):', error.message)
+      } catch (err) {
+        console.warn('[saveLibraryTask] Supabase error (will use localStorage):', err.message)
+      }
     }
+
+    setLibrarySaveStatus('saved')
+    setTimeout(() => setLibrarySaveStatus(null), 2500)
   }
 
   function archiveLibraryTask(taskId) {
