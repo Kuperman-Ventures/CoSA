@@ -1485,9 +1485,15 @@ function App() {
       }
 
       // 4. Timer sessions → completion log for KPI/analytics
+      // Merge remote into local rather than replacing so entries completed
+      // moments before a reload (not yet returned from Supabase) are kept.
       const remoteSessions = await loadTimerSessions(userId)
       if (remoteSessions && remoteSessions.length > 0) {
-        setCompletionLog(remoteSessions)
+        setCompletionLog((prev) => {
+          const remoteIds = new Set(remoteSessions.map((s) => s.id))
+          const localOnly = prev.filter((e) => !remoteIds.has(e.id))
+          return [...remoteSessions, ...localOnly]
+        })
       }
 
       // 5. Friday reviews
@@ -1694,6 +1700,7 @@ function App() {
     const nextSession = {
       ...current,
       timerState: TIMER_STATES.cancelled,
+      completionType: 'Cancelled',
       cancelledSeconds: current.remainingSeconds,
       pauseDurationSeconds: current.pauseDurationSeconds + Math.max(0, pauseDelta),
       currentPauseStartedAtMs: null,
@@ -1711,6 +1718,7 @@ function App() {
       taskName: activeTask.name,
       track: activeTask.track,
       kpiMapping: activeTask.kpiMapping ?? '',
+      completionType: 'Cancelled',
       outcomeAchieved: null,
       definitionOfDoneUsed: false,
       completedAt: now,
@@ -1748,9 +1756,12 @@ function App() {
     const now = new Date().toISOString()
     const safeQty = Math.max(1, Math.round(quantity))
 
+    const completionType = current.outcomeAchieved != null ? 'Done + Outcome' : 'Done'
+
     const nextSession = {
       ...current,
       timerState: TIMER_STATES.completed,
+      completionType,
       actualCompleted: current.timerState === TIMER_STATES.notStarted ? '(logged complete)' : (completionInput.trim() || ''),
       elapsedSeconds,
       pauseDurationSeconds: (current.pauseDurationSeconds ?? 0) + Math.max(0, pauseDelta),
@@ -1770,6 +1781,7 @@ function App() {
       taskName: task.name,
       track: task.track,
       kpiMapping: task.kpiMapping ?? '',
+      completionType,
       quantity: safeQty,
       completedAt: now,
       estimateSeconds: current.estimateSeconds,
