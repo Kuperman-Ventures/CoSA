@@ -11,7 +11,7 @@ import {
   createCalendarEventAtTime,
   updateCalendarEventAtTime,
   deleteCalendarEvent,
-  fetchCoSACalendarEvents,
+  fetchAllCalendarEvents,
   fetchPersonalCalendarEvents,
 } from '../lib/googleCalendar'
 
@@ -419,7 +419,7 @@ function LibrarySidebar({ taskLibrary, onDragStart, collapsedTracks, setCollapse
 
 // ─── Calendar Event Block ─────────────────────────────────────────────────────
 
-function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick, onEdit }) {
+function CalendarEventBlock({ ev, isPersonal, isUntaggedCosa, tag, onDelete, onTagClick, onEdit }) {
   const priv = ev.extendedProperties?.private ?? {}
   const track = isPersonal ? tag?.track : priv.cosaTrack
   const color = TRACK_COLORS[track] ?? (isPersonal ? '#94a3b8' : '#64748b')
@@ -428,24 +428,31 @@ function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick, onEdit 
   const top  = minutesToPx(startMins)
   const height = Math.max(20, (dur / 60) * PX_PER_HOUR)
 
+  const needsTag = isPersonal || isUntaggedCosa
+
   return (
     <div
       className={`absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] overflow-hidden group
-        ${isPersonal ? 'border border-dashed border-slate-300 bg-slate-50' : 'border-l-2 bg-white shadow-sm cursor-pointer hover:brightness-95'}`}
-      style={{ top, height, borderColor: isPersonal ? undefined : color }}
-      onClick={!isPersonal ? (e) => { e.stopPropagation(); onEdit?.(ev) } : undefined}
+        ${isUntaggedCosa
+          ? 'border border-dashed border-amber-400 bg-amber-50'
+          : isPersonal
+            ? 'border border-dashed border-slate-300 bg-slate-50'
+            : 'border-l-2 bg-white shadow-sm cursor-pointer hover:brightness-95'
+        }`}
+      style={{ top, height, borderColor: needsTag ? undefined : color }}
+      onClick={!needsTag ? (e) => { e.stopPropagation(); onEdit?.(ev) } : undefined}
     >
       <div className="flex items-start justify-between gap-0.5">
-        <span className={`leading-tight font-medium ${isPersonal ? 'text-slate-500' : 'text-slate-700'} truncate`}>
+        <span className={`leading-tight font-medium ${needsTag ? (isUntaggedCosa ? 'text-amber-700' : 'text-slate-500') : 'text-slate-700'} truncate`}>
           {ev.summary ?? '(no title)'}
         </span>
         <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          {isPersonal && (
+          {needsTag && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onTagClick?.(ev) }}
-              className="rounded p-0.5 hover:bg-slate-200"
-              title="Tag to track"
+              className={`rounded p-0.5 ${isUntaggedCosa ? 'hover:bg-amber-200' : 'hover:bg-slate-200'}`}
+              title={isUntaggedCosa ? 'Tag this CoSA Calendar event' : 'Tag to track'}
             >
               <Tag size={9} />
             </button>
@@ -453,9 +460,11 @@ function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick, onEdit 
         </div>
       </div>
       {height >= 32 && (
-        <div className="text-slate-400 leading-none">{minsToTimeStr(startMins)} · {dur}m</div>
+        <div className={`leading-none ${isUntaggedCosa ? 'text-amber-500' : 'text-slate-400'}`}>
+          {minsToTimeStr(startMins)} · {dur}m
+        </div>
       )}
-      {!isPersonal && priv.cosaSubTrack && (
+      {!needsTag && priv.cosaSubTrack && (
         <div className="truncate text-[9px] text-slate-400">{priv.cosaSubTrack}</div>
       )}
       {isPersonal && tag && (
@@ -463,6 +472,9 @@ function CalendarEventBlock({ ev, isPersonal, tag, onDelete, onTagClick, onEdit 
           {TRACK_LABELS[tag.track] ?? tag.track}
           {tag.subTrack ? ` · ${tag.subTrack}` : ''}
         </div>
+      )}
+      {isUntaggedCosa && (
+        <div className="text-[9px] text-amber-500 italic">tap to tag</div>
       )}
     </div>
   )
@@ -698,7 +710,7 @@ function EditEventModal({ ev, onSave, onDelete, onClose }) {
 
 // ─── Time Grid ────────────────────────────────────────────────────────────────
 
-function TimeGrid({ weekDates, weekEvents, personalEvents, calendarTags, draggingTask, onDropLibraryTask, onDeleteEvent, onTagEvent, onEditEvent, onLogBehind }) {
+function TimeGrid({ weekDates, weekEvents, untaggedCosaEvents = [], personalEvents, calendarTags, draggingTask, onDropLibraryTask, onDeleteEvent, onTagEvent, onEditEvent, onLogBehind }) {
   const TOTAL_HOURS = GRID_END_HOUR - GRID_START_HOUR
   const gridHeight  = TOTAL_HOURS * PX_PER_HOUR
   const hours = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => GRID_START_HOUR + i)
@@ -708,6 +720,11 @@ function TimeGrid({ weekDates, weekEvents, personalEvents, calendarTags, draggin
   for (const ev of weekEvents) {
     const d = ev.start?.dateTime?.slice(0, 10)
     if (d) { if (!eventsByDate[d]) eventsByDate[d] = []; eventsByDate[d].push(ev) }
+  }
+  const untaggedCosaByDate = {}
+  for (const ev of untaggedCosaEvents) {
+    const d = ev.start?.dateTime?.slice(0, 10)
+    if (d) { if (!untaggedCosaByDate[d]) untaggedCosaByDate[d] = []; untaggedCosaByDate[d].push(ev) }
   }
   const personalByDate = {}
   for (const ev of personalEvents) {
@@ -801,6 +818,17 @@ function TimeGrid({ weekDates, weekEvents, personalEvents, calendarTags, draggin
                 />
               ))}
 
+              {/* User-created CoSA Calendar events (no cosaTag yet) — taggable */}
+              {(untaggedCosaByDate[date] ?? []).map((ev) => (
+                <CalendarEventBlock
+                  key={ev.id}
+                  ev={ev}
+                  isUntaggedCosa
+                  tag={null}
+                  onTagClick={onTagEvent}
+                />
+              ))}
+
               {/* CoSA events */}
               {(eventsByDate[date] ?? []).map((ev) => (
                 <CalendarEventBlock
@@ -827,8 +855,9 @@ export default function WeekPlanner({
   supabaseConfigured,
 }) {
   const [weekOffset, setWeekOffset] = useState(0)
-  const [weekEvents, setWeekEvents]       = useState([])
-  const [personalEvents, setPersonalEvents] = useState([])
+  const [weekEvents, setWeekEvents]               = useState([])
+  const [untaggedCosaEvents, setUntaggedCosaEvents] = useState([])
+  const [personalEvents, setPersonalEvents]         = useState([])
   const [calendarTags, setCalendarTags]   = useState({})
   const [loading, setLoading]             = useState(false)
   const [draggingTask, setDraggingTask]   = useState(null)
@@ -884,11 +913,15 @@ export default function WeekPlanner({
       const timeMin = `${mondayStr}T00:00:00Z`
       const timeMax = `${friday}T23:59:59Z`
 
-      const [cosa, personal] = await Promise.all([
-        fetchCoSACalendarEvents(providerToken, timeMin, timeMax),
+      const [allCosa, personal] = await Promise.all([
+        fetchAllCalendarEvents(providerToken, timeMin, timeMax),
         fetchPersonalCalendarEvents(providerToken, timeMin, timeMax),
       ])
-      setWeekEvents(cosa)
+      // Split CoSA Calendar events: CoSA-created (have cosaTag) vs user-created (no tag)
+      const cosaTagged   = allCosa.filter((ev) => ev.extendedProperties?.private?.cosaTag === 'cosa-event')
+      const cosaUntagged = allCosa.filter((ev) => ev.extendedProperties?.private?.cosaTag !== 'cosa-event')
+      setWeekEvents(cosaTagged)
+      setUntaggedCosaEvents(cosaUntagged)
       setPersonalEvents(personal)
     } catch (err) {
       setError('Failed to load calendar events.')
@@ -958,13 +991,34 @@ export default function WeekPlanner({
   async function handleSaveTag(track, subTrack) {
     if (!tagModal || !session?.user?.id) return
     const ev = tagModal
-    const dur = eventDurationMins(ev)
-    const date = ev.start?.dateTime?.slice(0, 10) ?? null
-    const tag = { track, subTrack, title: ev.summary, durationMin: dur, date }
-    if (supabaseConfigured) {
-      await upsertCalendarEventTag(session.user.id, ev.id, tag)
+    const isCosaCalendarEvent = untaggedCosaEvents.some((e) => e.id === ev.id)
+
+    if (isCosaCalendarEvent && providerToken) {
+      // Patch the GCal event to add cosaTag + track metadata, converting it into
+      // a proper CoSA event that the app can find on future fetches.
+      const updated = await updateCalendarEventAtTime(
+        ev.id,
+        ev.summary ?? '(untitled)',
+        track,
+        ev.start?.dateTime,
+        ev.end?.dateTime,
+        providerToken,
+        { subTrack: subTrack ?? '' },
+      )
+      if (updated) {
+        setWeekEvents((prev) => [...prev, updated])
+        setUntaggedCosaEvents((prev) => prev.filter((e) => e.id !== ev.id))
+      }
+    } else {
+      // Personal calendar event — save tag to Supabase only
+      const dur = eventDurationMins(ev)
+      const date = ev.start?.dateTime?.slice(0, 10) ?? null
+      const tag = { track, subTrack, title: ev.summary, durationMin: dur, date }
+      if (supabaseConfigured) {
+        await upsertCalendarEventTag(session.user.id, ev.id, tag)
+      }
+      setCalendarTags((prev) => ({ ...prev, [ev.id]: tag }))
     }
-    setCalendarTags((prev) => ({ ...prev, [ev.id]: tag }))
     setTagModal(null)
   }
 
@@ -1046,6 +1100,7 @@ export default function WeekPlanner({
             <TimeGrid
               weekDates={weekDates}
               weekEvents={weekEvents}
+              untaggedCosaEvents={untaggedCosaEvents}
               personalEvents={personalEvents}
               calendarTags={calendarTags}
               draggingTask={draggingTask}
