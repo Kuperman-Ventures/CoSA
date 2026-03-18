@@ -1196,20 +1196,17 @@ function App() {
   }
 
   const tasksByTrack = useMemo(() => {
-    // 1. Two-pass dedup:
-    //    Pass A — by calendarEventId (same GCal event loaded via two paths)
-    //    Pass B — by name+duration (same-named event appearing from different calendar sources)
+    // Dedup by calendarEventId only — prevents the same GCal event from
+    // appearing twice if loaded via multiple fetch paths. Tasks with the
+    // same name/template (e.g. two "Job Search Sprint" blocks) are kept
+    // because they have distinct calendarEventIds.
     const seenCalIds = new Set()
-    const seenContent = new Set()
     const deduped = []
     for (const t of todayTasks) {
       if (t.calendarEventId) {
         if (seenCalIds.has(t.calendarEventId)) continue
         seenCalIds.add(t.calendarEventId)
       }
-      const contentKey = `${t.name}__${t.estimateMinutes}`
-      if (seenContent.has(contentKey)) continue
-      seenContent.add(contentKey)
       deduped.push(t)
     }
     // 2. Filter out completed/cancelled
