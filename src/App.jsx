@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import WeekPlanner from './components/WeekPlanner'
-import { Pause, Play, SquareCheck, StopCircle, GripVertical, AlertTriangle, Clock, Settings, ChevronDown, ChevronRight } from 'lucide-react'
+import { Pause, Play, SquareCheck, StopCircle, GripVertical, AlertTriangle, Clock, Settings, ChevronDown, ChevronRight, X } from 'lucide-react'
 import {
   DndContext,
   closestCenter,
@@ -917,6 +917,7 @@ function App() {
   const [fridayReviews, setFridayReviews] = useState([])
   const [reviewDraft, setReviewDraft] = useState({ q1: '', q2: '', q3: '', mondayIntention: '' })
   const [reviewSaving, setReviewSaving] = useState(false)
+  const [kpiDetail, setKpiDetail] = useState(null)
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
   const [clearedDates, setClearedDates] = useState(() => {
@@ -2449,6 +2450,7 @@ function App() {
 
   function renderKpiDashboard() {
     const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
+    const { start: monthStart, end: monthEnd } = getMonthBoundsForWeek(weekOffset)
     const isCurrentWeek = weekOffset === 0
 
     const { kpisHit, kpisTotal, weekScore, kpiResults } = kpiSummary
@@ -2479,13 +2481,189 @@ function App() {
       const hoursLogged = minutesLogged / 60
       const targetHours = TRACK_HOUR_TARGETS[track.key] ?? 0
       const pct = targetHours > 0 ? Math.min(100, Math.round((hoursLogged / targetHours) * 100)) : 0
-      return { track, hoursLogged, targetHours, pct }
+      return { track, hoursLogged, targetHours, pct, entries }
     }).filter((t) => t.targetHours > 0)
 
     const weekStartStr = weekStart.toISOString().slice(0, 10)
     const savedReview = fridayReviews.find((r) => r.week_start === weekStartStr)
 
+    // ── Detail-drawer helpers ────────────────────────────────────────────────
+    function openScoreDetail() {
+      setKpiDetail({ type: 'score', title: 'Week Score Breakdown', kpiResults })
+    }
+
+    function openTrackDetail(trackData) {
+      setKpiDetail({ type: 'track', title: `${trackData.track.label} — Sessions This Week`, trackData })
+    }
+
+    function openKpiDetail(kpi) {
+      const rangeStart = kpi.period === 'month' ? monthStart : weekStart
+      const rangeEnd   = kpi.period === 'month' ? monthEnd   : weekEnd
+
+      let entries
+      if (kpi.isRate) {
+        const allVentures = completionLog.filter((e) => {
+          const d = new Date(e.completedAt)
+          return d >= rangeStart && d <= rangeEnd && e.track === 'ventures' &&
+            (e.completionType === 'Done' || e.completionType === 'Done + Outcome')
+        })
+        entries = allVentures.map((e) => ({ ...e, _dodUsed: !!e.definitionOfDoneUsed }))
+      } else {
+        entries = completionLog.filter((e) => {
+          const d = new Date(e.completedAt)
+          if (d < rangeStart || d > rangeEnd) return false
+          if (e.kpiMapping !== kpi.kpiMapping) return false
+          if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
+          return true
+        })
+      }
+      setKpiDetail({ type: 'kpi', title: kpi.label, kpi, entries })
+    }
+
+    // ── Detail modal ─────────────────────────────────────────────────────────
+    const detailModal = kpiDetail ? (
+      <div
+        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
+        onClick={() => setKpiDetail(null)}
+      >
+        <div
+          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <h3 className="text-sm font-semibold text-slate-900">{kpiDetail.title}</h3>
+            <button
+              type="button"
+              onClick={() => setKpiDetail(null)}
+              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="overflow-y-auto flex-1 p-4">
+
+            {/* Score breakdown */}
+            {kpiDetail.type === 'score' && (
+              <div className="space-y-1.5">
+                {kpiDetail.kpiResults.map((k) => (
+                  <div key={k.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                    <div>
+                      <p className="text-xs font-medium text-slate-800">{k.label}</p>
+                      <p className="text-[11px] text-slate-400">{k.trackGroup} · {k.period}</p>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-slate-500">
+                        {k.isRate
+                          ? k.total > 0 ? `${k.count}/${k.total}` : '—'
+                          : `${k.count}${k.target ? ` / ${k.target}` : ''}`}
+                      </span>
+                      {k.isRate && k.total === 0 ? (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-400">—</span>
+                      ) : k.hit ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                      ) : (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Track sessions */}
+            {kpiDetail.type === 'track' && (
+              kpiDetail.trackData.entries.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">No sessions logged for this track in this period.</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {[...kpiDetail.trackData.entries]
+                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+                    .map((e, i) => {
+                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
+                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      return (
+                        <li key={e.id ?? i} className="py-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
+                              <p className="text-[11px] text-slate-400">{e.kpiMapping || '—'}</p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
+                              <p className="text-[11px] text-slate-400">{dayStr}</p>
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                </ul>
+              )
+            )}
+
+            {/* KPI entries */}
+            {kpiDetail.type === 'kpi' && (
+              kpiDetail.entries.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">No logged entries for this KPI in this period.</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {[...kpiDetail.entries]
+                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+                    .map((e, i) => {
+                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
+                      return (
+                        <li key={e.id ?? i} className="py-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
+                              {kpiDetail.kpi.isRate && (
+                                <p className="text-[11px] text-slate-400">
+                                  {e._dodUsed ? '✓ Definition of done used' : '✗ No definition of done'}
+                                </p>
+                              )}
+                              {!kpiDetail.kpi.isRate && (e.quantity ?? 1) > 1 && (
+                                <p className="text-[11px] text-slate-400">×{e.quantity} units</p>
+                              )}
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
+                              <p className="text-[11px] text-slate-400">{dayStr}</p>
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                </ul>
+              )
+            )}
+          </div>
+
+          {/* Footer total for track / kpi */}
+          {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
+            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
+              <span>{kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}</span>
+              <span className="font-semibold">{kpiDetail.trackData.hoursLogged.toFixed(1)}h of {kpiDetail.trackData.targetHours}h target</span>
+            </div>
+          )}
+          {kpiDetail.type === 'kpi' && kpiDetail.entries.length > 0 && !kpiDetail.kpi.isRate && (
+            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
+              <span>{kpiDetail.entries.length} session{kpiDetail.entries.length !== 1 ? 's' : ''}</span>
+              <span className="font-semibold">
+                {kpiDetail.entries.reduce((s, e) => s + (e.quantity ?? 1), 0)} total
+                {kpiDetail.kpi.target ? ` / ${kpiDetail.kpi.target} target` : ''}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    ) : null
+
     return (
+      <>
+      {detailModal}
       <section className="space-y-4 p-4">
         {/* Week navigation */}
         <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -2511,43 +2689,55 @@ function App() {
           </button>
         </div>
 
-        {/* Week score */}
-        <article className={`rounded-xl border ${score.border} ${score.bg} p-4`}>
+        {/* Week score — clickable */}
+        <article
+          className={`rounded-xl border ${score.border} ${score.bg} p-4 cursor-pointer hover:opacity-90 active:scale-[0.99] transition-transform`}
+          onClick={openScoreDetail}
+          title="Click to see KPI breakdown"
+        >
           <p className="text-xs font-semibold uppercase tracking-wide opacity-70">Week Score</p>
           <p className={`mt-1 text-2xl font-bold ${score.text}`}>{score.label}</p>
           <p className={`text-sm ${score.text}`}>{score.desc}</p>
           <p className={`mt-1 text-xs ${score.text} opacity-80`}>
-            {kpisHit} of {weeklyKpis.length} weekly KPIs hit
+            {kpisHit} of {weeklyKpis.length} weekly KPIs hit · <span className="underline underline-offset-2">see breakdown</span>
           </p>
         </article>
 
-        {/* Time This Week by Track */}
+        {/* Time This Week by Track — each row clickable */}
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
           <div className="space-y-3">
-            {timeByTrack.map(({ track, hoursLogged, targetHours, pct }) => (
-              <div key={track.key}>
-                <div className="mb-1 flex items-center justify-between text-xs">
-                  <span className="font-medium text-slate-700">{track.label}</span>
-                  <span className={`font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}>
-                    {hoursLogged.toFixed(1)}h <span className="font-normal text-slate-400">/ {targetHours}h target</span>
-                  </span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${pct}%`, backgroundColor: track.color }}
-                  />
-                </div>
-              </div>
-            ))}
+            {timeByTrack.map((trackData) => {
+              const { track, hoursLogged, targetHours, pct } = trackData
+              return (
+                <button
+                  key={track.key}
+                  type="button"
+                  className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
+                  onClick={() => openTrackDetail(trackData)}
+                >
+                  <div className="mb-1 flex items-center justify-between text-xs">
+                    <span className="font-medium text-slate-700">{track.label}</span>
+                    <span className={`font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}>
+                      {hoursLogged.toFixed(1)}h <span className="font-normal text-slate-400">/ {targetHours}h target</span>
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{ width: `${pct}%`, backgroundColor: track.color }}
+                    />
+                  </div>
+                </button>
+              )
+            })}
             {completionLog.filter((e) => { const d = new Date(e.completedAt); return d >= weekStart && d <= weekEnd }).length === 0 && (
               <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
             )}
           </div>
         </article>
 
-        {/* KPI scorecard by track group */}
+        {/* KPI scorecard by track group — each row clickable */}
         {KPI_TRACK_GROUPS.map((group) => {
           const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
           return (
@@ -2567,7 +2757,12 @@ function App() {
                 </thead>
                 <tbody>
                   {groupKpis.map((kpi) => (
-                    <tr key={kpi.id} className="border-b border-slate-50 last:border-0">
+                    <tr
+                      key={kpi.id}
+                      className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
+                      onClick={() => openKpiDetail(kpi)}
+                      title="Click to see contributing sessions"
+                    >
                       <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
                       <td className="px-3 py-2.5 text-center text-slate-500">
                         {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
@@ -2759,6 +2954,7 @@ function App() {
         </article>
 
       </section>
+      </>
     )
   }
 
