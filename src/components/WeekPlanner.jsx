@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, X, Plus, Loader2, Tag } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, X, Plus, Loader2, Tag, Settings } from 'lucide-react'
 import {
   upsertWeeklyPlan,
   updatePlanAfterPublish,
@@ -20,50 +20,66 @@ import {
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
 const TRACK_LABELS = {
-  advisors:   'Kuperman Advisors',
-  networking: 'Shared (Networking)',
-  jobSearch:  'Job Search',
-  ventures:   'Kuperman Ventures',
-  cosaAdmin:  'CoSA Administration',
+  advisors:    'Kuperman Advisors',
+  jobSearch:   'Job Search',
+  ventures:    'Kuperman Ventures',
+  networking:  'Shared Networking',
+  development: 'Development',
+  cosaAdmin:   'Administration',
 }
 
 const TRACK_COLORS = {
-  advisors:   '#1E6B3C',
-  networking: '#B8600B',
-  jobSearch:  '#2E75B6',
-  ventures:   '#9B6BAE',
-  cosaAdmin:  '#0891b2',
+  advisors:    '#1E6B3C',
+  jobSearch:   '#2E75B6',
+  ventures:    '#9B6BAE',
+  networking:  '#B8600B',
+  development: '#7c3aed',
+  cosaAdmin:   '#0891b2',
 }
 
 const TRACK_SUB_TRACKS = {
-  advisors:   ['Business Development', 'Materials', 'Content', 'Meetings'],
-  networking: ['Coffee Chat', 'LinkedIn', 'Event', 'Other'],
-  jobSearch:  ['Networking', 'Searching', 'Applications', 'L&D', 'Boards', 'Admin', 'Other'],
-  ventures:   ['Alpha', 'Growth', 'Product', 'Research', 'Subscription', 'Build'],
-  cosaAdmin:  ['Friday Review'],
+  advisors:    ['Networking & Business Development', 'Materials', 'Product', 'Client Work', 'Back Office'],
+  jobSearch:   ['Network Development & Outreach', 'Searching', 'Materials'],
+  ventures:    ['Alpha', 'Product', 'Beta Prep'],
+  networking:  [],
+  development: [],
+  cosaAdmin:   [],
 }
 
-const SUB_TRACK_TARGETS = {
+// Default allocation targets (sub-track values are percentages of the weekly total).
+// Persisted to localStorage as 'cosa.allocations'; bump ALLOC_VERSION when structure changes
+// to force a reset of stale cached data.
+const ALLOC_VERSION = 'v2'
+const DEFAULT_ALLOCATIONS = {
   advisors: {
-    weekly: 960,
-    subTracks: { 'Business Development': 480, 'Materials': 192, 'Content': 96, 'Meetings': 192 },
-  },
-  networking: {
-    weekly: 180,
-    subTracks: { 'Coffee Chat': 60, 'LinkedIn': 60, 'Event': 30, 'Other': 30 },
+    weekly: 700,
+    subTracks: {
+      'Networking & Business Development': 60,
+      'Materials': 20,
+      'Product': 10,
+      'Client Work': 5,
+      'Back Office': 5,
+    },
   },
   jobSearch: {
-    weekly: 960,
-    subTracks: { 'Networking': 288, 'Searching': 144, 'Applications': 288, 'L&D': 96, 'Boards': 48, 'Admin': 48, 'Other': 48 },
+    weekly: 700,
+    subTracks: {
+      'Network Development & Outreach': 75,
+      'Searching': 15,
+      'Materials': 10,
+    },
   },
   ventures: {
-    weekly: 480,
-    subTracks: { 'Alpha': 144, 'Growth': 120, 'Product': 72, 'Research': 48, 'Subscription': 48, 'Build': 72 },
+    weekly: 500,
+    subTracks: {
+      'Alpha': 70,
+      'Product': 25,
+      'Beta Prep': 5,
+    },
   },
-  cosaAdmin: {
-    weekly: 120,
-    subTracks: { 'Friday Review': 120 },
-  },
+  networking:  { weekly: 200, subTracks: {} },
+  development: { weekly: 60,  subTracks: {} },
+  cosaAdmin:   { weekly: 60,  subTracks: {} },
 }
 
 // Calendar display parameters
@@ -143,9 +159,130 @@ function healthColor(assigned, target) {
   return 'red'
 }
 
+// ─── Allocation Editor Modal ──────────────────────────────────────────────────
+
+function AllocationEditor({ allocations, onSave, onClose }) {
+  const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(allocations)))
+
+  function setWeekly(track, val) {
+    const v = Math.max(0, parseInt(val) || 0)
+    setDraft((p) => ({ ...p, [track]: { ...p[track], weekly: v } }))
+  }
+
+  function setPct(track, subTrack, val) {
+    const v = Math.max(0, Math.min(100, parseInt(val) || 0))
+    setDraft((p) => ({
+      ...p,
+      [track]: { ...p[track], subTracks: { ...p[track].subTracks, [subTrack]: v } },
+    }))
+  }
+
+  function pctTotal(track) {
+    return Object.values(draft[track]?.subTracks ?? {}).reduce((s, v) => s + v, 0)
+  }
+
+  const isValid = Object.keys(draft).every((track) => {
+    const hasSubs = Object.keys(draft[track].subTracks).length > 0
+    return !hasSubs || pctTotal(track) <= 100
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="flex w-full max-w-lg flex-col rounded-xl bg-white shadow-xl" style={{ maxHeight: '90vh' }}>
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Allocation Targets</h3>
+            <p className="text-xs text-slate-500 mt-0.5">Set weekly targets and sub-track splits per track</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded p-1 hover:bg-slate-100">
+            <X size={14} className="text-slate-400" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {Object.entries(draft).map(([track, cfg]) => {
+            const total = pctTotal(track)
+            const hasSubs = Object.keys(cfg.subTracks).length > 0
+            const totalCls = total > 100 ? 'text-red-500' : total === 100 ? 'text-emerald-600' : 'text-amber-500'
+            return (
+              <div key={track} className="rounded-lg border border-slate-200 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold" style={{ color: TRACK_COLORS[track] }}>
+                    {TRACK_LABELS[track]}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[11px] text-slate-400">Weekly target</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={2000}
+                      value={cfg.weekly}
+                      onChange={(e) => setWeekly(track, e.target.value)}
+                      className="w-16 rounded border border-slate-200 px-1.5 py-0.5 text-xs text-right outline-none focus:ring-1 focus:ring-indigo-300"
+                    />
+                    <span className="text-[11px] text-slate-400">min</span>
+                  </div>
+                </div>
+
+                {hasSubs && (
+                  <div className="space-y-1.5 mt-2 border-t border-slate-100 pt-2">
+                    <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-1.5">Sub-track split (% of weekly)</p>
+                    {Object.entries(cfg.subTracks).map(([st, pct]) => (
+                      <div key={st} className="flex items-center gap-2">
+                        <span className="flex-1 text-[11px] text-slate-600 truncate">{st}</span>
+                        <span className="text-[11px] text-slate-400">
+                          {Math.round((pct / 100) * cfg.weekly)}m
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={pct}
+                          onChange={(e) => setPct(track, st, e.target.value)}
+                          className="w-14 rounded border border-slate-200 px-1.5 py-0.5 text-xs text-right outline-none focus:ring-1 focus:ring-indigo-300"
+                        />
+                        <span className="text-[11px] text-slate-400 w-3">%</span>
+                      </div>
+                    ))}
+                    <div className={`text-right text-[11px] font-semibold pt-1 ${totalCls}`}>
+                      {total > 100
+                        ? `⚠ Total ${total}% — exceeds 100%`
+                        : total === 100
+                        ? `✓ Total 100%`
+                        : `Total ${total}% · ${100 - total}% unallocated`}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => isValid && onSave(draft)}
+            disabled={!isValid}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+          >
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Health Bars ──────────────────────────────────────────────────────────────
 
-function HealthBars({ weekEvents, calendarTags }) {
+function HealthBars({ weekEvents, calendarTags, trackTargets, onEditAllocations }) {
   const totals = {}
 
   for (const ev of weekEvents) {
@@ -161,7 +298,6 @@ function HealthBars({ weekEvents, calendarTags }) {
     }
   }
 
-  // also count tagged personal events
   for (const tag of Object.values(calendarTags)) {
     const { track, subTrack, durationMin } = tag
     if (!track || !durationMin) continue
@@ -174,8 +310,18 @@ function HealthBars({ weekEvents, calendarTags }) {
 
   return (
     <aside className="w-52 shrink-0 space-y-3 overflow-y-auto pb-4">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">This Week</p>
-      {Object.entries(SUB_TRACK_TARGETS).map(([track, cfg]) => {
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">This Week</p>
+        <button
+          type="button"
+          onClick={onEditAllocations}
+          className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          title="Edit allocation targets"
+        >
+          <Settings size={11} />
+        </button>
+      </div>
+      {Object.entries(trackTargets).map(([track, cfg]) => {
         const assigned = totals[track]?.total ?? 0
         const color = healthColor(assigned, cfg.weekly)
         const barW = cfg.weekly > 0 ? Math.min(100, (assigned / cfg.weekly) * 100) : 0
@@ -184,8 +330,8 @@ function HealthBars({ weekEvents, calendarTags }) {
         return (
           <div key={track}>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="font-medium" style={{ color: TRACK_COLORS[track] }}>{TRACK_LABELS[track]}</span>
-              <span className={`font-semibold ${textCls}`}>{assigned}m / {cfg.weekly}m</span>
+              <span className="font-medium truncate" style={{ color: TRACK_COLORS[track] }}>{TRACK_LABELS[track]}</span>
+              <span className={`font-semibold shrink-0 ml-1 ${textCls}`}>{assigned}m / {cfg.weekly}m</span>
             </div>
             <div className="mt-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
               <div className={`h-full rounded-full transition-all ${barCls}`} style={{ width: `${barW}%` }} />
@@ -199,7 +345,7 @@ function HealthBars({ weekEvents, calendarTags }) {
                 <div key={st} className="ml-2 mt-1">
                   <div className="flex items-center justify-between text-[10px] text-slate-500">
                     <span className="truncate">{st}</span>
-                    <span>{stAssigned}m</span>
+                    <span className="shrink-0 ml-1">{stAssigned}m / {tgt}m</span>
                   </div>
                   <div className="mt-0.5 h-1 rounded-full bg-slate-100 overflow-hidden">
                     <div className={`h-full rounded-full ${stBarCls}`} style={{ width: `${stBarW}%` }} />
@@ -691,6 +837,38 @@ export default function WeekPlanner({
   const [logModal, setLogModal]           = useState(null)
   const [collapsedTracks, setCollapsedTracks] = useState({})
   const [error, setError]                 = useState('')
+  const [showAllocEditor, setShowAllocEditor] = useState(false)
+
+  // Allocation targets — stored as percentages per sub-track in localStorage.
+  // Falls back to DEFAULT_ALLOCATIONS when not set or when structure is outdated.
+  const [allocations, setAllocations] = useState(() => {
+    try {
+      const raw = localStorage.getItem('cosa.allocations')
+      if (!raw) return DEFAULT_ALLOCATIONS
+      const parsed = JSON.parse(raw)
+      // If stored version doesn't have the new 'development' track, reset to defaults
+      if (!parsed.development) return DEFAULT_ALLOCATIONS
+      return parsed
+    } catch { return DEFAULT_ALLOCATIONS }
+  })
+
+  // Convert percentage-based allocations → absolute minute targets for HealthBars
+  const trackTargets = useMemo(() => {
+    const result = {}
+    for (const [track, cfg] of Object.entries(allocations)) {
+      const subTracks = {}
+      for (const [st, pct] of Object.entries(cfg.subTracks)) {
+        subTracks[st] = Math.round((pct / 100) * cfg.weekly)
+      }
+      result[track] = { weekly: cfg.weekly, subTracks }
+    }
+    return result
+  }, [allocations])
+
+  function saveAllocations(next) {
+    setAllocations(next)
+    try { localStorage.setItem('cosa.allocations', JSON.stringify(next)) } catch {}
+  }
 
   const mondayStr  = getWeekMondayStr(weekOffset)
   const weekDates  = getWeekDates(mondayStr)
@@ -880,10 +1058,22 @@ export default function WeekPlanner({
           </div>
         </div>
 
-        <HealthBars weekEvents={weekEvents} calendarTags={calendarTags} />
+        <HealthBars
+          weekEvents={weekEvents}
+          calendarTags={calendarTags}
+          trackTargets={trackTargets}
+          onEditAllocations={() => setShowAllocEditor(true)}
+        />
       </div>
 
       {/* ── Modals ──────────────────────────────────────────────────────── */}
+      {showAllocEditor && (
+        <AllocationEditor
+          allocations={allocations}
+          onSave={(next) => { saveAllocations(next); setShowAllocEditor(false) }}
+          onClose={() => setShowAllocEditor(false)}
+        />
+      )}
       {tagModal && (
         <TagModal
           ev={tagModal}

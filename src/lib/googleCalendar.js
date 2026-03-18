@@ -3,11 +3,12 @@ const CALENDAR_ID =
 
 // Google Calendar colorId values that best match track colors
 const TRACK_COLOR_IDS = {
-  advisors:   '10', // Basil (dark green)
-  networking: '6',  // Tangerine (orange)
-  jobSearch:  '9',  // Blueberry (blue)
-  ventures:   '3',  // Grape (purple)
-  cosaAdmin:  '7',  // Peacock (teal/cyan)
+  advisors:    '10', // Basil (dark green)
+  jobSearch:   '9',  // Blueberry (blue)
+  ventures:    '3',  // Grape (purple)
+  networking:  '6',  // Tangerine (orange)
+  development: '1',  // Lavender (violet)
+  cosaAdmin:   '7',  // Peacock (teal/cyan)
 }
 
 // ── Legacy block-based constants (kept for backward compat with existing plan events) ──

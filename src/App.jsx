@@ -44,12 +44,6 @@ const TRACKS = {
     color: '#1E6B3C',
     priority: 1,
   },
-  networking: {
-    key: 'networking',
-    label: 'Shared (Networking)',
-    color: '#B8600B',
-    priority: 1.5,
-  },
   jobSearch: {
     key: 'jobSearch',
     label: 'Job Search',
@@ -62,11 +56,23 @@ const TRACKS = {
     color: '#9B6BAE',
     priority: 3,
   },
+  networking: {
+    key: 'networking',
+    label: 'Shared Networking',
+    color: '#B8600B',
+    priority: 4,
+  },
+  development: {
+    key: 'development',
+    label: 'Development',
+    color: '#7c3aed',
+    priority: 5,
+  },
   cosaAdmin: {
     key: 'cosaAdmin',
-    label: 'CoSA Administration',
+    label: 'Administration',
     color: '#0891b2',
-    priority: 4,
+    priority: 6,
   },
 }
 
@@ -81,12 +87,14 @@ const TIMER_STATES = {
 const LIBRARY_STATUSES = ['Active', 'Paused', 'Archived']
 const TIME_BLOCK_ORDER = ['BD', 'Networking', 'Job Search', 'Encore OS', 'Friday']
 const ALL_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-// Sub-tracks per track — kept in sync with WeekPlanner SUB_TRACK_TARGETS
+// Sub-tracks per track — kept in sync with WeekPlanner TRACK_SUB_TRACKS / DEFAULT_ALLOCATIONS
 const TRACK_SUB_TRACKS = {
-  advisors:  ['Business Development', 'Materials', 'Content', 'Meetings'],
-  jobSearch: ['Networking', 'Searching', 'Applications', 'L&D', 'Boards', 'Admin', 'Other'],
-  ventures:  ['Alpha', 'Growth', 'Product', 'Research', 'Subscription', 'Build'],
-  cosaAdmin: ['Friday Review'],
+  advisors:    ['Networking & Business Development', 'Materials', 'Product', 'Client Work', 'Back Office'],
+  jobSearch:   ['Network Development & Outreach', 'Searching', 'Materials'],
+  ventures:    ['Alpha', 'Product', 'Beta Prep'],
+  networking:  [],
+  development: [],
+  cosaAdmin:   [],
 }
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -2381,11 +2389,12 @@ function App() {
 
     // Time This Week: hours logged per track from the completion log
     const TRACK_HOUR_TARGETS = {
-      advisors:  16, // 960 min
-      networking: 3, // 180 min
-      jobSearch: 16, // 960 min
-      ventures:   8, // 480 min
-      cosaAdmin:  2, // 120 min
+      advisors:    12, // 700 min
+      jobSearch:   12, // 700 min
+      ventures:     8, // 500 min
+      networking:   3, // 200 min
+      development:  1, // 60 min
+      cosaAdmin:    1, // 60 min
     }
     const timeByTrack = Object.values(TRACKS).map((track) => {
       const entries = completionLog.filter((e) => {
