@@ -2221,10 +2221,11 @@ function App() {
                 No tasks in this filter.
               </p>
             ) : (() => {
-              // Group by track in display order
-              const trackOrder = [TRACKS.advisors.key, TRACKS.jobSearch.key, TRACKS.ventures.key]
+              // Group by track in priority order — includes ALL tracks defined in TRACKS
+              const trackOrder = Object.values(TRACKS)
+                .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+                .map((t) => t.key)
               const grouped = {}
-              for (const tk of trackOrder) grouped[tk] = []
               for (const task of filteredTaskLibrary) {
                 const key = task.track ?? TRACKS.advisors.key
                 if (!grouped[key]) grouped[key] = []
