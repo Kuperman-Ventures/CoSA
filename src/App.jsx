@@ -723,6 +723,7 @@ function mapLibraryTaskToTodayTask(task, deploymentId, index) {
     track: task.track,
     estimateMinutes: task.defaultTimeEstimate,
     kpiMapping: task.kpiMapping ?? '',
+    subtasks: (task.subtasks ?? []).map((st) => ({ ...st })),
   }
 }
 
@@ -928,6 +929,8 @@ function App() {
   const [quickLogToast, setQuickLogToast] = useState(false)
   // { taskId: string, qty: number } — shown in Today Queue when completing a countable KPI task
   const [quantityPrompt, setQuantityPrompt] = useState(null)
+  // { [todayTaskId]: { [subtaskId]: boolean } } — checkbox state for subtasks in Today Queue
+  const [subtaskChecks, setSubtaskChecks] = useState({})
   const [quickLogEntries, setQuickLogEntries] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem(QUICK_LOG_LOCAL_KEY) ?? '[]') } catch { return [] }
   })
@@ -1471,6 +1474,7 @@ function App() {
       defaultTimeEstimate: 25,
       kpiMapping: '',
       status: 'Active',
+      subtasks: [],
     }
     setTaskLibrary((prev) => [nextTask, ...prev])
     setSelectedLibraryTaskId(nextId)
@@ -2319,6 +2323,62 @@ function App() {
                   {getStatusBehavior(selectedLibraryTask.status)}
                 </p>
               </label>
+              {/* ── Subtasks ─────────────────────────────────────────── */}
+              <div className="sm:col-span-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm text-slate-600">Subtasks <span className="text-xs text-slate-400">(shown as checkboxes in Today Queue)</span></span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newSubtask = { id: `st-${Date.now()}`, text: '' }
+                      updateLibraryTask(selectedLibraryTask.id, 'subtasks', [
+                        ...(selectedLibraryTask.subtasks ?? []),
+                        newSubtask,
+                      ])
+                    }}
+                    className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    + Add subtask
+                  </button>
+                </div>
+                {(selectedLibraryTask.subtasks ?? []).length === 0 ? (
+                  <p className="rounded-md border border-dashed border-slate-200 p-2 text-xs text-slate-400">
+                    No subtasks yet — click "Add subtask" to create a checklist.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {(selectedLibraryTask.subtasks ?? []).map((st, stIdx) => (
+                      <li key={st.id} className="flex items-center gap-2">
+                        <span className="shrink-0 text-slate-300">☐</span>
+                        <input
+                          type="text"
+                          value={st.text}
+                          placeholder={`Step ${stIdx + 1}`}
+                          onChange={(e) => {
+                            const next = (selectedLibraryTask.subtasks ?? []).map((s) =>
+                              s.id === st.id ? { ...s, text: e.target.value } : s
+                            )
+                            updateLibraryTask(selectedLibraryTask.id, 'subtasks', next)
+                          }}
+                          className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+                        />
+                        <button
+                          type="button"
+                          title="Remove subtask"
+                          onClick={() => {
+                            const next = (selectedLibraryTask.subtasks ?? []).filter((s) => s.id !== st.id)
+                            updateLibraryTask(selectedLibraryTask.id, 'subtasks', next)
+                          }}
+                          className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
               {(libraryValidationMap[selectedLibraryTask.id] ?? []).length > 0 ? (
                 <div className="sm:col-span-2 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
                   <p className="font-semibold">Fix before deployment:</p>
@@ -3109,6 +3169,38 @@ function App() {
                                 </button>
                               )}
                             </div>
+
+                            {/* Subtask checklist */}
+                            {(task.subtasks ?? []).filter((st) => st.text.trim()).length > 0 && (
+                              <ul className="mt-1.5 space-y-0.5 pl-1">
+                                {(task.subtasks ?? []).filter((st) => st.text.trim()).map((st) => {
+                                  const checked = subtaskChecks[task.id]?.[st.id] ?? false
+                                  return (
+                                    <li key={st.id}>
+                                      <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-slate-50">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() =>
+                                            setSubtaskChecks((prev) => ({
+                                              ...prev,
+                                              [task.id]: {
+                                                ...(prev[task.id] ?? {}),
+                                                [st.id]: !checked,
+                                              },
+                                            }))
+                                          }
+                                          className="h-3.5 w-3.5 rounded accent-slate-900"
+                                        />
+                                        <span className={`text-xs ${checked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                                          {st.text}
+                                        </span>
+                                      </label>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            )}
                           </li>
                         )
                       })}
