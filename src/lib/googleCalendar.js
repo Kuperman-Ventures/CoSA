@@ -1,8 +1,5 @@
-// Use the signed-in user's own primary calendar so they have full edit rights
-// in Google Calendar UI. The old group calendar ID is kept as a comment for
-// reference in case existing events need to be manually removed from GCal.
-// Old group calendar: c_f733c89ebd8fa8294dfb9b29147e64acc78eae845b47ea1271ddb7844e191716@group.calendar.google.com
-const CALENDAR_ID = 'primary'
+const CALENDAR_ID =
+  'c_f733c89ebd8fa8294dfb9b29147e64acc78eae845b47ea1271ddb7844e191716@group.calendar.google.com'
 
 // Google Calendar colorId values that best match track colors
 const TRACK_COLOR_IDS = {
