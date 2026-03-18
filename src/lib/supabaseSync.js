@@ -12,6 +12,7 @@ function taskToRow(task, userId) {
     default_estimate_minutes: task.defaultTimeEstimate ?? 25,
     kpi_mapping: task.kpiMapping ?? '',
     status: task.status ?? 'Active',
+    subtasks: Array.isArray(task.subtasks) ? task.subtasks : [],
     updated_at: new Date().toISOString(),
   }
 }
@@ -25,6 +26,7 @@ function rowToTask(row) {
     defaultTimeEstimate: row.default_estimate_minutes,
     kpiMapping: row.kpi_mapping,
     status: row.status,
+    subtasks: Array.isArray(row.subtasks) ? row.subtasks : [],
   }
 }
 

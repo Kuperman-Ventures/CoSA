@@ -3292,10 +3292,17 @@ function App() {
                               )}
                             </div>
 
-                            {/* Subtask checklist */}
-                            {(task.subtasks ?? []).filter((st) => st.text.trim()).length > 0 && (
+                            {/* Subtask checklist — look up template so subtasks are always current */}
+                            {(() => {
+                              const effectiveSubtasks = (
+                                taskLibrary.find((tl) => tl.id === task.templateId)?.subtasks
+                                ?? task.subtasks
+                                ?? []
+                              ).filter((st) => st.text.trim())
+                              if (effectiveSubtasks.length === 0) return null
+                              return (
                               <ul className="mt-1.5 space-y-0.5 pl-1">
-                                {(task.subtasks ?? []).filter((st) => st.text.trim()).map((st) => {
+                                {effectiveSubtasks.map((st) => {
                                   const checked = subtaskChecks[task.id]?.[st.id] ?? false
                                   return (
                                     <li key={st.id}>
@@ -3322,7 +3329,8 @@ function App() {
                                   )
                                 })}
                               </ul>
-                            )}
+                              )
+                            })()}
                           </li>
                         )
                       })}
