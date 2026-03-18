@@ -468,6 +468,12 @@ const KPI_DEFINITIONS = [
 
 const KPI_TRACK_GROUPS = ['Kuperman Advisors', 'Shared (Networking)', 'Job Search', 'Kuperman Ventures']
 
+// KPI mappings where a single session can produce more than one unit
+// (e.g. one outreach block = 5 messages). These trigger the quantity prompt.
+const COUNTABLE_KPI_MAPPINGS = new Set(
+  KPI_DEFINITIONS.filter((d) => !d.isRate && (d.target ?? 0) > 1).map((d) => d.kpiMapping)
+)
+
 // Quick Log: KPI options grouped by track, with the track key used for timer_sessions
 const QUICK_LOG_KPI_GROUPS = [
   {
@@ -601,13 +607,15 @@ function countKpi(log, kpiDef, weekStart, weekEnd, monthStart, monthEnd) {
     return { count: dodUsed.length, total: allVentures.length }
   }
 
-  const count = log.filter((e) => {
-    const d = new Date(e.completedAt)
-    if (d < rangeStart || d > rangeEnd) return false
-    if (e.kpiMapping !== kpiDef.kpiMapping) return false
-    if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
-    return true
-  }).length
+  const count = log
+    .filter((e) => {
+      const d = new Date(e.completedAt)
+      if (d < rangeStart || d > rangeEnd) return false
+      if (e.kpiMapping !== kpiDef.kpiMapping) return false
+      if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
+      return true
+    })
+    .reduce((sum, e) => sum + (e.quantity ?? 1), 0)
 
   return { count, total: null }
 }
@@ -914,10 +922,12 @@ function App() {
     try { return JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]') } catch { return [] }
   })
   const [showQuickLog, setShowQuickLog] = useState(false)
-  const [quickLogForm, setQuickLogForm] = useState({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], note: '' })
+  const [quickLogForm, setQuickLogForm] = useState({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], kpiQuantities: {}, note: '' })
   const [quickLogErrors, setQuickLogErrors] = useState({})
   const [quickLogSubmitting, setQuickLogSubmitting] = useState(false)
   const [quickLogToast, setQuickLogToast] = useState(false)
+  // { taskId: string, qty: number } — shown in Today Queue when completing a countable KPI task
+  const [quantityPrompt, setQuantityPrompt] = useState(null)
   const [quickLogEntries, setQuickLogEntries] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem(QUICK_LOG_LOCAL_KEY) ?? '[]') } catch { return [] }
   })
@@ -1635,7 +1645,7 @@ function App() {
     handleCompleteTask(activeTask.id)
   }
 
-  function handleCompleteTask(taskId) {
+  function handleCompleteTask(taskId, quantity = 1) {
     const task = todayTasks.find((t) => t.id === taskId)
     const current = sessions[taskId]
     if (!task || !current) return
@@ -1651,6 +1661,7 @@ function App() {
       : (current.estimateSeconds ?? task.estimateMinutes * 60)
 
     const now = new Date().toISOString()
+    const safeQty = Math.max(1, Math.round(quantity))
 
     const nextSession = {
       ...current,
@@ -1660,6 +1671,7 @@ function App() {
       pauseDurationSeconds: (current.pauseDurationSeconds ?? 0) + Math.max(0, pauseDelta),
       currentPauseStartedAtMs: null,
       completionLoggedAtISO: now,
+      quantity: safeQty,
     }
 
     setSessions((prev) => ({ ...prev, [taskId]: nextSession }))
@@ -1673,6 +1685,7 @@ function App() {
       taskName: task.name,
       track: task.track,
       kpiMapping: task.kpiMapping ?? '',
+      quantity: safeQty,
       completedAt: now,
       estimateSeconds: current.estimateSeconds,
       elapsedSeconds,
@@ -1680,7 +1693,9 @@ function App() {
       cancelledSeconds: 0,
     }
     setCompletionLog((prev) => [...prev, logEntry])
-    setStatusMessage(`"${task.name}" marked complete.`)
+    setQuantityPrompt(null)
+    const label = safeQty > 1 ? ` (×${safeQty})` : ''
+    setStatusMessage(`"${task.name}" marked complete${label}.`)
   }
 
   async function handleSaveFridayReview() {
@@ -1870,7 +1885,7 @@ function App() {
   // ─── Quick Log ────────────────────────────────────────────────────────────
 
   function openQuickLog() {
-    setQuickLogForm({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], note: '' })
+    setQuickLogForm({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], kpiQuantities: {}, note: '' })
     setQuickLogErrors({})
     setShowQuickLog(true)
   }
@@ -1891,25 +1906,23 @@ function App() {
     // Determine unique tracks from selected KPIs
     const tracks = [...new Set(quickLogForm.kpiCredits.map((k) => KPI_LABEL_TO_TRACK[k]).filter(Boolean))]
 
-    // Build one completion log entry per track (for KPI counting)
-    const newLogEntries = tracks.map((track) => {
-      const trackKpis = quickLogForm.kpiCredits.filter((k) => KPI_LABEL_TO_TRACK[k] === track)
-      return {
-        id: `ql-${Date.now()}-${track}`,
-        taskName: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
-        track,
-        kpiMapping: trackKpis[0] ?? '',
-        outcomeAchieved: true,
-        definitionOfDoneUsed: false,
-        completedAt: now,
-        estimateSeconds: elapsedSeconds,
-        elapsedSeconds,
-        pauseCount: 0,
-        pauseDurationSeconds: 0,
-        cancelledSeconds: 0,
-        isQuickLog: true,
-      }
-    })
+    // Build one completion log entry per KPI (preserving individual quantities)
+    const newLogEntries = quickLogForm.kpiCredits.map((kpi, i) => ({
+      id: `ql-${Date.now()}-${i}-${kpi.replace(/\s+/g, '-')}`,
+      taskName: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
+      track: KPI_LABEL_TO_TRACK[kpi] ?? tracks[0] ?? '',
+      kpiMapping: kpi,
+      quantity: quickLogForm.kpiQuantities[kpi] ?? 1,
+      outcomeAchieved: true,
+      definitionOfDoneUsed: false,
+      completedAt: now,
+      estimateSeconds: elapsedSeconds,
+      elapsedSeconds,
+      pauseCount: 0,
+      pauseDurationSeconds: 0,
+      cancelledSeconds: 0,
+      isQuickLog: true,
+    }))
 
     // Update completion log immediately (KPI dashboard reacts instantly)
     setCompletionLog((prev) => [...prev, ...newLogEntries])
@@ -1930,16 +1943,18 @@ function App() {
         userId,
       )
 
-      // 2. One timer_sessions record per unique track
-      for (const track of tracks) {
-        const trackKpis = quickLogForm.kpiCredits.filter((k) => KPI_LABEL_TO_TRACK[k] === track)
+      // 2. One timer_sessions record per KPI (with individual quantities)
+      for (const kpi of quickLogForm.kpiCredits) {
+        const track = KPI_LABEL_TO_TRACK[kpi] ?? tracks[0] ?? ''
+        const qty = quickLogForm.kpiQuantities[kpi] ?? 1
         const row = {
           id: crypto.randomUUID(),
           user_id: userId,
           task_instance_id: null,
           task_name: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
           track,
-          kpi_mapping: trackKpis[0] ?? '',
+          kpi_mapping: kpi,
+          quantity: qty,
           timer_state: 'Completed',
           completion_type: 'Done',
           estimate_seconds: elapsedSeconds,
@@ -3042,14 +3057,57 @@ function App() {
                                   <span>{task.estimateMinutes}m</span>
                                 </div>
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handleCompleteTask(task.id)}
-                                title="Mark complete"
-                                className="shrink-0 rounded-md border border-slate-200 bg-white px-2 text-green-600 hover:bg-green-50 hover:border-green-300 text-base"
-                              >
-                                ✓
-                              </button>
+
+                              {/* Completion button — shows quantity prompt for countable KPIs */}
+                              {quantityPrompt?.taskId === task.id ? (
+                                <div className="flex shrink-0 flex-col items-center gap-0.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-1">
+                                  <span className="text-[9px] font-medium text-slate-500 leading-none">How many?</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={99}
+                                    value={quantityPrompt.qty}
+                                    onChange={(e) =>
+                                      setQuantityPrompt((p) => ({ ...p, qty: Math.max(1, parseInt(e.target.value) || 1) }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleCompleteTask(task.id, quantityPrompt.qty)
+                                      if (e.key === 'Escape') setQuantityPrompt(null)
+                                    }}
+                                    className="w-10 rounded border border-slate-200 bg-white py-0.5 text-center text-sm font-medium outline-none focus:border-green-400 focus:ring-1 focus:ring-green-200"
+                                    autoFocus
+                                  />
+                                  <div className="flex gap-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCompleteTask(task.id, quantityPrompt.qty)}
+                                      className="rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-green-700"
+                                    >✓</button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setQuantityPrompt(null)}
+                                      className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-100"
+                                    >✕</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (task.kpiMapping && COUNTABLE_KPI_MAPPINGS.has(task.kpiMapping)) {
+                                      setQuantityPrompt({ taskId: task.id, qty: 1 })
+                                    } else {
+                                      handleCompleteTask(task.id)
+                                    }
+                                  }}
+                                  title={task.kpiMapping && COUNTABLE_KPI_MAPPINGS.has(task.kpiMapping)
+                                    ? 'Mark complete — you\'ll enter how many'
+                                    : 'Mark complete'}
+                                  className="shrink-0 rounded-md border border-slate-200 bg-white px-2 text-green-600 hover:bg-green-50 hover:border-green-300 text-base"
+                                >
+                                  ✓
+                                </button>
+                              )}
                             </div>
                           </li>
                         )
@@ -3179,23 +3237,46 @@ function App() {
                       <div className="space-y-1">
                         {grp.kpis.map((kpi) => {
                           const checked = quickLogForm.kpiCredits.includes(kpi)
+                          const isCountable = COUNTABLE_KPI_MAPPINGS.has(kpi)
+                          const qty = quickLogForm.kpiQuantities[kpi] ?? 1
                           return (
-                            <label key={kpi} className="flex cursor-pointer items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  setQuickLogForm((f) => ({
-                                    ...f,
-                                    kpiCredits: checked
-                                      ? f.kpiCredits.filter((k) => k !== kpi)
-                                      : [...f.kpiCredits, kpi],
-                                  }))
-                                }
-                                className="h-3.5 w-3.5 rounded accent-slate-900"
-                              />
-                              <span className="text-xs text-slate-700">{kpi}</span>
-                            </label>
+                            <div key={kpi} className="flex items-center gap-2">
+                              <label className="flex flex-1 cursor-pointer items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    setQuickLogForm((f) => ({
+                                      ...f,
+                                      kpiCredits: checked
+                                        ? f.kpiCredits.filter((k) => k !== kpi)
+                                        : [...f.kpiCredits, kpi],
+                                      kpiQuantities: checked
+                                        ? (({ [kpi]: _, ...rest }) => rest)(f.kpiQuantities)
+                                        : { ...f.kpiQuantities, [kpi]: f.kpiQuantities[kpi] ?? 1 },
+                                    }))
+                                  }
+                                  className="h-3.5 w-3.5 rounded accent-slate-900"
+                                />
+                                <span className="text-xs text-slate-700">{kpi}</span>
+                              </label>
+                              {/* Quantity stepper — only for countable KPIs when checked */}
+                              {checked && isCountable && (
+                                <div className="flex items-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setQuickLogForm((f) => ({ ...f, kpiQuantities: { ...f.kpiQuantities, [kpi]: Math.max(1, qty - 1) } }))}
+                                    className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
+                                  >−</button>
+                                  <span className="w-6 text-center text-xs font-medium text-slate-800">{qty}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setQuickLogForm((f) => ({ ...f, kpiQuantities: { ...f.kpiQuantities, [kpi]: qty + 1 } }))}
+                                    className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
+                                  >+</button>
+                                </div>
+                              )}
+                            </div>
                           )
                         })}
                       </div>
