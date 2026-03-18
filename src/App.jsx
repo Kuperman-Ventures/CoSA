@@ -1355,7 +1355,76 @@ function App() {
     setTodayPreviewDate(next)
   }
 
-  const previewTasks = null
+  const [previewTasks, setPreviewTasks] = useState(null)     // null = idle, [] = loaded but empty
+  const [previewTasksLoading, setPreviewTasksLoading] = useState(false)
+
+  useEffect(() => {
+    if (!todayPreviewDate || !session?.user?.id || !supabaseConfigured) {
+      setPreviewTasks(null)
+      return
+    }
+    let cancelled = false
+    setPreviewTasksLoading(true)
+
+    async function fetchPreview() {
+      const { data: { session: liveSession } } = await supabase.auth.getSession()
+      const providerToken = liveSession?.provider_token
+      if (!providerToken || cancelled) { setPreviewTasksLoading(false); return }
+
+      const timeMin = new Date(`${todayPreviewDate}T00:00:00`).toISOString()
+      const timeMax = new Date(`${todayPreviewDate}T23:59:59`).toISOString()
+
+      const tasks = []
+      const seenIds = new Set()
+
+      // CoSA-tagged calendar events
+      try {
+        const cosaEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+        for (const ev of cosaEvents) {
+          if (seenIds.has(ev.id)) continue
+          seenIds.add(ev.id)
+          tasks.push(gcalEventToTodayTask(ev))
+        }
+      } catch {}
+
+      // Personally-tagged events
+      try {
+        const allTags = await loadCalendarEventTags(session.user.id)
+        const dayTaggedIds = Object.entries(allTags)
+          .filter(([, tag]) => tag.date === todayPreviewDate)
+          .map(([gcalId]) => gcalId)
+
+        if (dayTaggedIds.length > 0) {
+          const personalEvents = await fetchPersonalCalendarEvents(providerToken, timeMin, timeMax)
+          for (const ev of personalEvents) {
+            const tag = allTags[ev.id]
+            if (!tag || seenIds.has(ev.id)) continue
+            seenIds.add(ev.id)
+            const durationMin = ev.start?.dateTime && ev.end?.dateTime
+              ? Math.max(5, Math.round((new Date(ev.end.dateTime) - new Date(ev.start.dateTime)) / 60000))
+              : (tag.durationMin ?? 30)
+            tasks.push({
+              id: `gcal-${ev.id}`,
+              templateId: null,
+              name: ev.summary ?? tag.title ?? '(untitled)',
+              track: tag.track,
+              subTrack: tag.subTrack ?? null,
+              estimateMinutes: durationMin,
+              calendarEventId: ev.id,
+            })
+          }
+        }
+      } catch {}
+
+      if (!cancelled) {
+        setPreviewTasks(tasks)
+        setPreviewTasksLoading(false)
+      }
+    }
+
+    fetchPreview().catch(() => { if (!cancelled) setPreviewTasksLoading(false) })
+    return () => { cancelled = true }
+  }, [todayPreviewDate, session?.user?.id])
 
   const kpiSummary = useMemo(() => {
     const { start: ws, end: we } = getWeekBounds(weekOffset)
@@ -3430,25 +3499,46 @@ function App() {
 
             {todayPreviewDate ? (
               <>
-                <p className="mb-2 text-xs text-slate-400">Preview — read only</p>
-                {previewTasks && previewTasks.length > 0 ? (
-                  <ul className="space-y-1">
-                    {previewTasks.map((task) => {
-                      const lib = taskLibrary.find((t) => t.id === task.templateId)
-                      const meta = getTrackMeta(lib?.track ?? '')
-                      return (
-                        <li key={task.id ?? task.templateId} className="rounded-md border border-slate-200 px-2 py-2 text-sm">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-slate-700">{task.name ?? lib?.name ?? '—'}</span>
-                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta?.color }} />
-                          </div>
-                          <p className="mt-0.5 text-xs text-slate-400">{task.estimateMinutes ?? lib?.defaultTimeEstimate}m</p>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : (
-                  <p className="text-xs text-slate-400">No tasks planned for this day yet.</p>
+                <p className="mb-2 text-xs text-slate-400">Calendar preview — read only</p>
+                {previewTasksLoading ? (
+                  <p className="text-xs text-slate-400 italic">Loading…</p>
+                ) : previewTasks && previewTasks.length > 0 ? (() => {
+                  // Group by track, same as the live queue
+                  const grouped = []
+                  const seen = new Map()
+                  for (const task of previewTasks) {
+                    const meta = getTrackMeta(task.track ?? '')
+                    const key = task.track ?? ''
+                    if (!seen.has(key)) {
+                      const entry = { track: meta ?? { key, label: key, color: '#94a3b8' }, tasks: [] }
+                      seen.set(key, entry)
+                      grouped.push(entry)
+                    }
+                    seen.get(key).tasks.push(task)
+                  }
+                  return grouped.map((group) => (
+                    <div key={group.track.key} className="mb-3">
+                      <p className="mb-1 text-xs font-semibold" style={{ color: group.track.color }}>
+                        {group.track.label}
+                      </p>
+                      <ul className="space-y-1">
+                        {group.tasks.map((task) => (
+                          <li key={task.id} className="rounded-md border border-slate-200 bg-white px-2 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm text-slate-700">{task.name}</span>
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: group.track.color }}
+                              />
+                            </div>
+                            <p className="mt-0.5 text-xs text-slate-400">{task.estimateMinutes}m</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))
+                })() : (
+                  <p className="text-xs italic text-slate-400">No calendar events found for this day.</p>
                 )}
               </>
             ) : (
