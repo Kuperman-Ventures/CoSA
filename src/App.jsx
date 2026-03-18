@@ -2233,7 +2233,7 @@ function App() {
               }
               return trackOrder.map((trackKey) => {
                 const group = grouped[trackKey]
-                if (group.length === 0) return null
+                if (!group || group.length === 0) return null
                 const meta = getTrackMeta(trackKey)
                 const collapsed = collapsedLibraryTracks[trackKey]
                 return (
