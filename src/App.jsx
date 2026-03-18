@@ -35,7 +35,7 @@ import {
   loadQuickLogEntries,
   loadCalendarEventTags,
 } from './lib/supabaseSync'
-import { createEventsForSnapshot, fetchCoSACalendarEvents, fetchPersonalCalendarEvents } from './lib/googleCalendar'
+import { createEventsForSnapshot, fetchCoSACalendarEvents, fetchPersonalCalendarEvents, GCalAuthError } from './lib/googleCalendar'
 
 const TRACKS = {
   advisors: {
@@ -918,6 +918,7 @@ function App() {
   const [reviewDraft, setReviewDraft] = useState({ q1: '', q2: '', q3: '', mondayIntention: '' })
   const [reviewSaving, setReviewSaving] = useState(false)
   const [kpiDetail, setKpiDetail] = useState(null)
+  const [gcalSyncStatus, setGcalSyncStatus] = useState(null) // null | 'syncing' | 'ok' | 'auth-error' | 'error'
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
   const [clearedDates, setClearedDates] = useState(() => {
@@ -1055,6 +1056,129 @@ function App() {
       return
     }
     setSession(null)
+  }
+
+  // ── GCal sync helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Merge GCal events for `dateStr` into the today queue.
+   * - NEW events are appended.
+   * - EXISTING events (matched by calendarEventId) are refreshed — name and
+   *   duration are updated if GCal changed them since the last load.
+   * Throws GCalAuthError if the token is expired/invalid so callers can react.
+   */
+  async function mergeGCalIntoQueue(currentTasks, dateStr, userId) {
+    const { data: { session: liveSession } } = await supabase.auth.getSession()
+    const providerToken = liveSession?.provider_token
+    if (!providerToken) return
+
+    const timeMin = `${dateStr}T00:00:00Z`
+    const timeMax = `${dateStr}T23:59:59Z`
+
+    // Build lookup: calendarEventId → task index in currentTasks
+    const calIdToIdx = {}
+    currentTasks.forEach((t, i) => { if (t.calendarEventId) calIdToIdx[t.calendarEventId] = i })
+
+    let updatedTasks = [...currentTasks]
+    let changed = false
+
+    // a) CoSA-tagged events — add new, refresh existing
+    const cosaEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
+    for (const ev of cosaEvents) {
+      const idx = calIdToIdx[ev.id]
+      if (idx !== undefined) {
+        // Refresh name / duration if GCal changed them
+        const existing = updatedTasks[idx]
+        const startDT = ev.start?.dateTime
+        const endDT   = ev.end?.dateTime
+        const durationMin = startDT && endDT
+          ? Math.round((new Date(endDT) - new Date(startDT)) / 60000)
+          : existing.estimateMinutes
+        const newName = ev.summary ?? existing.name
+        if (newName !== existing.name || durationMin !== existing.estimateMinutes) {
+          updatedTasks[idx] = { ...existing, name: newName, estimateMinutes: Math.max(5, durationMin) }
+          changed = true
+        }
+      } else {
+        updatedTasks.push(gcalEventToTodayTask(ev))
+        calIdToIdx[ev.id] = updatedTasks.length - 1
+        changed = true
+      }
+    }
+
+    // b) Personal tagged events — add new, refresh existing
+    const allTags = await loadCalendarEventTags(userId)
+    const todayTaggedIds = Object.entries(allTags)
+      .filter(([, tag]) => tag.date === dateStr)
+      .map(([gcalId]) => gcalId)
+
+    if (todayTaggedIds.length > 0) {
+      const personalEvents = await fetchPersonalCalendarEvents(providerToken, timeMin, timeMax)
+      for (const ev of personalEvents) {
+        const tag = allTags[ev.id]
+        if (!tag) continue
+        const startDT = ev.start?.dateTime
+        const endDT   = ev.end?.dateTime
+        const durationMin = startDT && endDT
+          ? Math.round((new Date(endDT) - new Date(startDT)) / 60000)
+          : (tag.durationMin ?? 30)
+        const idx = calIdToIdx[ev.id]
+        if (idx !== undefined) {
+          const existing = updatedTasks[idx]
+          const newName = ev.summary ?? tag.title ?? existing.name
+          if (newName !== existing.name || durationMin !== existing.estimateMinutes) {
+            updatedTasks[idx] = { ...existing, name: newName, estimateMinutes: Math.max(5, durationMin) }
+            changed = true
+          }
+        } else {
+          updatedTasks.push({
+            id: `gcal-${ev.id}`,
+            templateId: null,
+            name: ev.summary ?? tag.title ?? '(untitled)',
+            track: tag.track,
+            subTrack: tag.subTrack ?? null,
+            estimateMinutes: Math.max(5, durationMin),
+            kpiMapping: '',
+            calendarEventId: ev.id,
+          })
+          calIdToIdx[ev.id] = updatedTasks.length - 1
+          changed = true
+        }
+      }
+    }
+
+    if (!changed) return
+
+    setTodayTasks(updatedTasks)
+    setQueueDate(dateStr)
+    setSessions((prev) => {
+      const next = { ...prev }
+      updatedTasks.forEach((t) => { if (!next[t.id]) next[t.id] = getInitialSession(t) })
+      return next
+    })
+    if (currentTasks.length === 0 && updatedTasks.length > 0) {
+      setActiveTaskId(updatedTasks[0].id)
+    }
+    upsertTodayTasks(updatedTasks, userId, dateStr)
+  }
+
+  /** Manual "Sync from Calendar" button handler. */
+  async function handleSyncFromGCal() {
+    if (!session?.user?.id) return
+    setGcalSyncStatus('syncing')
+    try {
+      await mergeGCalIntoQueue(todayTasks, getTodayDateString(), session.user.id)
+      setGcalSyncStatus('ok')
+      setTimeout(() => setGcalSyncStatus(null), 3000)
+    } catch (err) {
+      if (err instanceof GCalAuthError) {
+        setGcalSyncStatus('auth-error')
+      } else {
+        console.error('[syncFromGCal]', err)
+        setGcalSyncStatus('error')
+        setTimeout(() => setGcalSyncStatus(null), 4000)
+      }
+    }
   }
 
   const tasksByTrack = useMemo(() => {
@@ -1324,83 +1448,12 @@ function App() {
         }
       }
 
-      // 3. Merge today's calendar events into the queue:
-      //    a) CoSA-tagged GCal events (created via drag-drop in Calendar tab)
-      //    b) Personal GCal events the user tagged with a track (stored in Supabase)
-      {
-        const { data: { session: liveSession } } = await supabase.auth.getSession()
-        const providerToken = liveSession?.provider_token
-        const existingCalIds = new Set(
-          effectiveTodayTasks.map((t) => t.calendarEventId).filter(Boolean)
-        )
-        const newFromCalendar = []
-
-        try {
-          if (providerToken) {
-            const timeMin = `${todayStr}T00:00:00Z`
-            const timeMax = `${todayStr}T23:59:59Z`
-
-            // a) CoSA-created events (cosaTag=cosa-event in GCal extendedProperties)
-            const cosaEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
-            for (const ev of cosaEvents) {
-              if (!existingCalIds.has(ev.id)) {
-                newFromCalendar.push(gcalEventToTodayTask(ev))
-                existingCalIds.add(ev.id)
-              }
-            }
-
-            // b) Personal events tagged with a track in Supabase
-            const allTags = await loadCalendarEventTags(userId)
-            const todayTaggedIds = Object.entries(allTags)
-              .filter(([, tag]) => tag.date === todayStr)
-              .map(([gcalId]) => gcalId)
-
-            if (todayTaggedIds.length > 0) {
-              const personalEvents = await fetchPersonalCalendarEvents(providerToken, timeMin, timeMax)
-              for (const ev of personalEvents) {
-                if (existingCalIds.has(ev.id)) continue
-                const tag = allTags[ev.id]
-                if (!tag) continue
-                const startDT = ev.start?.dateTime
-                const endDT   = ev.end?.dateTime
-                const durationMin = startDT && endDT
-                  ? Math.round((new Date(endDT) - new Date(startDT)) / 60000)
-                  : (tag.durationMin ?? 30)
-                newFromCalendar.push({
-                  id: `gcal-${ev.id}`,
-                  templateId: null,
-                  name: ev.summary ?? tag.title ?? '(untitled)',
-                  track: tag.track,
-                  subTrack: tag.subTrack ?? null,
-                  estimateMinutes: Math.max(5, durationMin),
-                  kpiMapping: '',
-                  calendarEventId: ev.id,
-                })
-                existingCalIds.add(ev.id)
-              }
-            }
-          }
-        } catch (err) {
-          console.error('[GCal merge] Failed to load today events:', err)
-        }
-
-        if (newFromCalendar.length > 0) {
-          const merged = [...effectiveTodayTasks, ...newFromCalendar]
-          setTodayTasks(merged)
-          setQueueDate(todayStr)
-          setSessions((prev) => {
-            const next = { ...prev }
-            newFromCalendar.forEach((t) => {
-              if (!next[t.id]) next[t.id] = getInitialSession(t)
-            })
-            return next
-          })
-          // Set active task to first in queue if nothing is active yet
-          if (effectiveTodayTasks.length === 0) {
-            setActiveTaskId(merged[0].id)
-          }
-          upsertTodayTasks(merged, userId, todayStr)
-        }
+      // 3. Merge today's calendar events into the queue (add new + refresh changed)
+      try {
+        await mergeGCalIntoQueue(effectiveTodayTasks, todayStr, userId)
+      } catch (err) {
+        if (err instanceof GCalAuthError) setGcalSyncStatus('auth-error')
+        else console.error('[sign-in GCal merge]', err)
       }
 
       // 4. Timer sessions → completion log for KPI/analytics
@@ -3038,9 +3091,32 @@ function App() {
           </div>
           <div className="flex items-center gap-2 text-xs sm:text-sm">
             {session?.provider_token ? (
-              <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 font-medium">
-                📅 Calendar sync on
-              </span>
+              gcalSyncStatus === 'auth-error' ? (
+                <button
+                  type="button"
+                  onClick={handleGoogleLogin}
+                  className="rounded-md bg-rose-50 px-2 py-1 text-rose-700 font-medium hover:bg-rose-100"
+                  title="Google Calendar access expired — click to reconnect"
+                >
+                  📅 Re-connect Calendar
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSyncFromGCal}
+                  disabled={gcalSyncStatus === 'syncing'}
+                  className={`rounded-md px-2 py-1 font-medium transition-colors ${
+                    gcalSyncStatus === 'ok'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : gcalSyncStatus === 'error'
+                        ? 'bg-rose-50 text-rose-700'
+                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  }`}
+                  title="Pull latest changes from Google Calendar"
+                >
+                  {gcalSyncStatus === 'syncing' ? '📅 Syncing…' : gcalSyncStatus === 'ok' ? '📅 Synced ✓' : gcalSyncStatus === 'error' ? '📅 Sync failed' : '📅 Sync Calendar'}
+                </button>
+              )
             ) : supabaseConfigured && session ? (
               <button
                 type="button"
@@ -3073,6 +3149,20 @@ function App() {
           </p>
         ) : null}
       </section>
+      {activeScreen === 'today' && gcalSyncStatus === 'auth-error' ? (
+        <div className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <p>
+            <strong>Google Calendar access expired.</strong> Changes you make in Google Calendar won&apos;t sync until you reconnect.
+          </p>
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            className="shrink-0 rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+          >
+            Reconnect
+          </button>
+        </div>
+      ) : null}
       {activeScreen === 'today' ? (
         <section className="grid gap-4 p-4 lg:grid-cols-[1fr_320px]">
         {todayTasks.length > 0 ? (

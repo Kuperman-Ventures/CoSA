@@ -85,6 +85,16 @@ function buildEventBody(task, allTasksInBlock, date, extras = {}) {
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
+// Sentinel errors thrown for token/permission failures — callers can catch these
+// specifically to show the user an actionable re-auth message.
+export class GCalAuthError extends Error {
+  constructor(status, message) {
+    super(message)
+    this.name = 'GCalAuthError'
+    this.status = status
+  }
+}
+
 async function gcalFetch(path, method, providerToken, body, calendarId = CALENDAR_ID) {
   try {
     const res = await fetch(`${BASE_URL}/${encodeURIComponent(calendarId)}/events${path}`, {
@@ -98,10 +108,14 @@ async function gcalFetch(path, method, providerToken, body, calendarId = CALENDA
     if (!res.ok) {
       const text = await res.text()
       console.error(`[googleCalendar ${method} ${path}]`, res.status, text)
+      if (res.status === 401 || res.status === 403) {
+        throw new GCalAuthError(res.status, text)
+      }
       return null
     }
     return method === 'DELETE' ? true : res.json()
   } catch (err) {
+    if (err instanceof GCalAuthError) throw err
     console.error(`[googleCalendar ${method} ${path}]`, err.message)
     return null
   }
