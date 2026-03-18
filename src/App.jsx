@@ -1549,7 +1549,6 @@ function App() {
   function setActiveTask(taskId) {
     const selectedSession = sessions[taskId]
     if (!selectedSession) return
-    if (selectedSession.timerState === TIMER_STATES.running) return
     setActiveTaskId(taskId)
     setStatusMessage('')
     setCompletionInput(selectedSession.actualCompleted ?? '')
