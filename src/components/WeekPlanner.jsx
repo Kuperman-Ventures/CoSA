@@ -853,6 +853,7 @@ export default function WeekPlanner({
   taskLibrary,
   session,
   supabaseConfigured,
+  onTodayEventCreated,
 }) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [weekEvents, setWeekEvents]               = useState([])
@@ -959,6 +960,11 @@ export default function WeekPlanner({
     })
     if (newEv) {
       setWeekEvents((prev) => [...prev, newEv])
+      // Immediately surface the new event in Today queue if it was dropped on today
+      const todayStr = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local TZ
+      if (dateStr === todayStr && typeof onTodayEventCreated === 'function') {
+        onTodayEventCreated(newEv)
+      }
     } else {
       setError('Failed to create calendar event.')
     }

@@ -1042,8 +1042,10 @@ function App() {
     const providerToken = liveSession?.provider_token
     if (!providerToken) return
 
-    const timeMin = `${dateStr}T00:00:00Z`
-    const timeMax = `${dateStr}T23:59:59Z`
+    // Use local-timezone midnight so events late in the evening aren't cut off
+    // by a UTC day boundary (e.g. 9 pm EDT = 1 am UTC next day).
+    const timeMin = new Date(`${dateStr}T00:00:00`).toISOString()
+    const timeMax = new Date(`${dateStr}T23:59:59`).toISOString()
 
     // Build lookup: calendarEventId → task index in currentTasks
     const calIdToIdx = {}
@@ -1171,6 +1173,26 @@ function App() {
         setTimeout(() => setGcalSyncStatus(null), 4000)
       }
     }
+  }
+
+  /**
+   * Called by WeekPlanner when a new GCal event is created for today.
+   * Immediately injects it into the Today queue without a full re-fetch.
+   */
+  function handleTodayEventCreated(gcalEvent) {
+    if (!session?.user?.id) return
+    const task = gcalEventToTodayTask(gcalEvent)
+    setTodayTasks((prev) => {
+      if (prev.some((t) => t.calendarEventId === gcalEvent.id)) return prev
+      const next = [...prev, task]
+      upsertTodayTasks(next, session.user.id, getTodayDateString())
+      return next
+    })
+    setSessions((prev) => {
+      if (prev[task.id]) return prev
+      return { ...prev, [task.id]: getInitialSession(task) }
+    })
+    setQueueDate(getTodayDateString())
   }
 
   const tasksByTrack = useMemo(() => {
@@ -3322,6 +3344,7 @@ function App() {
           taskLibrary={taskLibrary}
           session={session}
           supabaseConfigured={supabaseConfigured}
+          onTodayEventCreated={handleTodayEventCreated}
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
