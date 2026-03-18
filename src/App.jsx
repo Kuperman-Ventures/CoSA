@@ -3181,6 +3181,46 @@ function App() {
             </button>
           </div>
 
+          {(() => {
+            const activeSubtasks = (
+              taskLibrary.find((tl) => tl.id === activeTask.templateId)?.subtasks ?? []
+            ).filter((st) => st.text.trim())
+            if (activeSubtasks.length === 0) return null
+            return (
+              <div className="mb-4 rounded-lg border border-slate-200 p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Checklist</p>
+                <ul className="space-y-1.5">
+                  {activeSubtasks.map((st) => {
+                    const checked = subtaskChecks[activeTask.id]?.[st.id] ?? false
+                    return (
+                      <li key={st.id}>
+                        <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-1 py-1 hover:bg-slate-50">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setSubtaskChecks((prev) => ({
+                                ...prev,
+                                [activeTask.id]: {
+                                  ...(prev[activeTask.id] ?? {}),
+                                  [st.id]: !checked,
+                                },
+                              }))
+                            }
+                            className="h-4 w-4 rounded accent-slate-900"
+                          />
+                          <span className={`text-sm ${checked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                            {st.text}
+                          </span>
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )
+          })()}
+
           <div className="rounded-lg border border-slate-200 p-3">
             <label className="mb-1 block text-sm font-medium text-slate-700">Note (optional)</label>
             <textarea
