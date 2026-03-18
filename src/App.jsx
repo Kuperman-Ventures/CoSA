@@ -901,6 +901,9 @@ function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [libraryMessage, setLibraryMessage] = useState('')
   const [librarySaveStatus, setLibrarySaveStatus] = useState(null) // null | 'saving' | 'saved' | 'error'
+  // Subtasks live in their OWN state — never inside taskLibrary.
+  // This means doSync / onAuthStateChange can never wipe them.
+  const [subtasksMap, setSubtasksMap] = useState(() => loadSubtasksMap()) // { [taskId]: subtask[] }
   const [queueDate, setQueueDate] = useState(bootstrap.queueDate)
   const [libraryFilter, setLibraryFilter] = useState('Active')
   const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
@@ -1477,15 +1480,19 @@ function App() {
   }, [weekOffset, fridayReviews])
 
   function updateLibraryTask(taskId, field, value) {
-    setTaskLibrary((prev) =>
-      prev.map((task) => (task.id === taskId ? { ...task, [field]: value } : task)),
-    )
-    // Subtasks are also persisted in their own localStorage key immediately,
-    // so they survive Supabase sync even if the DB column is missing.
     if (field === 'subtasks') {
-      const map = loadSubtasksMap()
-      map[taskId] = Array.isArray(value) ? value : []
-      saveSubtasksMap(map)
+      // Subtasks live entirely in subtasksMap — never in taskLibrary.
+      // This means doSync / token-refresh can never touch them.
+      const subtasks = Array.isArray(value) ? value : []
+      setSubtasksMap((prev) => {
+        const next = { ...prev, [taskId]: subtasks }
+        saveSubtasksMap(next)
+        return next
+      })
+    } else {
+      setTaskLibrary((prev) =>
+        prev.map((task) => (task.id === taskId ? { ...task, [field]: value } : task)),
+      )
     }
   }
 
@@ -1494,7 +1501,7 @@ function App() {
     setLibrarySaveStatus('saving')
 
     const t = selectedLibraryTask
-    const subtasks = Array.isArray(t.subtasks) ? t.subtasks : []
+    const subtasks = subtasksMap[t.id] ?? []
 
     // 1. Always save subtasks to dedicated localStorage key — guaranteed to work.
     const map = loadSubtasksMap()
@@ -2292,60 +2299,61 @@ function App() {
                 </p>
               </label>
               {/* ── Subtasks ─────────────────────────────────────────── */}
-              <div className="sm:col-span-2">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm text-slate-600">Subtasks <span className="text-xs text-slate-400">(shown as checkboxes in Today Queue)</span></span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newSubtask = { id: `st-${Date.now()}`, text: '' }
-                      updateLibraryTask(selectedLibraryTask.id, 'subtasks', [
-                        ...(selectedLibraryTask.subtasks ?? []),
-                        newSubtask,
-                      ])
-                    }}
-                    className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                  >
-                    + Add subtask
-                  </button>
+              {(() => {
+                const taskSubtasks = subtasksMap[selectedLibraryTask.id] ?? []
+                return (
+                <div className="sm:col-span-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm text-slate-600">Subtasks <span className="text-xs text-slate-400">(shown as checkboxes in Today Queue)</span></span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newSubtask = { id: `st-${Date.now()}`, text: '' }
+                        updateLibraryTask(selectedLibraryTask.id, 'subtasks', [...taskSubtasks, newSubtask])
+                      }}
+                      className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      + Add subtask
+                    </button>
+                  </div>
+                  {taskSubtasks.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-slate-200 p-2 text-xs text-slate-400">
+                      No subtasks yet — click "Add subtask" to create a checklist.
+                    </p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {taskSubtasks.map((st, stIdx) => (
+                        <li key={st.id} className="flex items-center gap-2">
+                          <span className="shrink-0 text-slate-300">☐</span>
+                          <input
+                            type="text"
+                            value={st.text}
+                            placeholder={`Step ${stIdx + 1}`}
+                            onChange={(e) => {
+                              const next = taskSubtasks.map((s) =>
+                                s.id === st.id ? { ...s, text: e.target.value } : s
+                              )
+                              updateLibraryTask(selectedLibraryTask.id, 'subtasks', next)
+                            }}
+                            className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+                          />
+                          <button
+                            type="button"
+                            title="Remove subtask"
+                            onClick={() => {
+                              updateLibraryTask(selectedLibraryTask.id, 'subtasks', taskSubtasks.filter((s) => s.id !== st.id))
+                            }}
+                            className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
-                {(selectedLibraryTask.subtasks ?? []).length === 0 ? (
-                  <p className="rounded-md border border-dashed border-slate-200 p-2 text-xs text-slate-400">
-                    No subtasks yet — click "Add subtask" to create a checklist.
-                  </p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {(selectedLibraryTask.subtasks ?? []).map((st, stIdx) => (
-                      <li key={st.id} className="flex items-center gap-2">
-                        <span className="shrink-0 text-slate-300">☐</span>
-                        <input
-                          type="text"
-                          value={st.text}
-                          placeholder={`Step ${stIdx + 1}`}
-                          onChange={(e) => {
-                            const next = (selectedLibraryTask.subtasks ?? []).map((s) =>
-                              s.id === st.id ? { ...s, text: e.target.value } : s
-                            )
-                            updateLibraryTask(selectedLibraryTask.id, 'subtasks', next)
-                          }}
-                          className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-300"
-                        />
-                        <button
-                          type="button"
-                          title="Remove subtask"
-                          onClick={() => {
-                            const next = (selectedLibraryTask.subtasks ?? []).filter((s) => s.id !== st.id)
-                            updateLibraryTask(selectedLibraryTask.id, 'subtasks', next)
-                          }}
-                          className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
-                        >
-                          ✕
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+                )
+              })()}
 
               {(libraryValidationMap[selectedLibraryTask.id] ?? []).length > 0 && (
                 <div className="sm:col-span-2 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
@@ -3182,9 +3190,7 @@ function App() {
           </div>
 
           {(() => {
-            const activeSubtasks = (
-              taskLibrary.find((tl) => tl.id === activeTask.templateId)?.subtasks ?? []
-            ).filter((st) => st.text.trim())
+            const activeSubtasks = (subtasksMap[activeTask.templateId] ?? []).filter((st) => st.text.trim())
             if (activeSubtasks.length === 0) return null
             return (
               <div className="mb-4 rounded-lg border border-slate-200 p-3">
@@ -3424,13 +3430,9 @@ function App() {
                               )}
                             </div>
 
-                            {/* Subtask checklist — look up template so subtasks are always current */}
+                            {/* Subtask checklist — read from subtasksMap by templateId */}
                             {(() => {
-                              const effectiveSubtasks = (
-                                taskLibrary.find((tl) => tl.id === task.templateId)?.subtasks
-                                ?? task.subtasks
-                                ?? []
-                              ).filter((st) => st.text.trim())
+                              const effectiveSubtasks = (subtasksMap[task.templateId] ?? []).filter((st) => st.text.trim())
                               if (effectiveSubtasks.length === 0) return null
                               return (
                               <ul className="mt-1.5 space-y-0.5 pl-1">
