@@ -875,9 +875,12 @@ function App() {
     const library = Array.isArray(persisted?.taskLibrary)
       ? persisted.taskLibrary
       : INITIAL_TASK_LIBRARY
-    const today = Array.isArray(persisted?.todayTasks)
-      ? persisted.todayTasks
-      : getDefaultTodaySnapshot(library)
+    // Only restore persisted tasks if they belong to today or a future pre-deploy date.
+    // Stale tasks from a previous day are discarded so the queue starts clean.
+    const today = (
+      Array.isArray(persisted?.todayTasks) &&
+      (persisted?.queueDate ?? '') >= getTodayDateString()
+    ) ? persisted.todayTasks : []
     const sessionState =
       persisted?.sessions && typeof persisted.sessions === 'object'
         ? persisted.sessions
@@ -1085,9 +1088,14 @@ function App() {
     let updatedTasks = [...currentTasks]
     let changed = false
 
+    // Track every GCal event ID we confirm exists on today's calendar so we can
+    // prune queue tasks that were calendar-backed but whose event was deleted.
+    const todayGCalIds = new Set()
+
     // a) CoSA-tagged events — add new, refresh existing
     const cosaEvents = await fetchCoSACalendarEvents(providerToken, timeMin, timeMax)
     for (const ev of cosaEvents) {
+      todayGCalIds.add(ev.id)
       const idx = calIdToIdx[ev.id]
       if (idx !== undefined) {
         // Refresh name / duration if GCal changed them
@@ -1120,6 +1128,7 @@ function App() {
       for (const ev of personalEvents) {
         const tag = allTags[ev.id]
         if (!tag) continue
+        todayGCalIds.add(ev.id)
         const startDT = ev.start?.dateTime
         const endDT   = ev.end?.dateTime
         const durationMin = startDT && endDT
@@ -1148,6 +1157,22 @@ function App() {
           changed = true
         }
       }
+    }
+
+    // c) Prune tasks that were calendar-backed but whose GCal event no longer exists
+    //    today. Tasks with timer progress are always kept.
+    const prunedTasks = updatedTasks.filter((task) => {
+      if (!task.calendarEventId) return true           // not calendar-backed → keep
+      if (todayGCalIds.has(task.calendarEventId)) return true  // event still on GCal → keep
+      const sess = sessions[task.id]
+      const hasProgress = sess && (
+        sess.timerState !== TIMER_STATES.notStarted || sess.elapsedSeconds > 0
+      )
+      return hasProgress                               // keep only if work has started
+    })
+    if (prunedTasks.length !== updatedTasks.length) {
+      updatedTasks = prunedTasks
+      changed = true
     }
 
     if (!changed) return
