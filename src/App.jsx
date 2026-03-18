@@ -464,7 +464,11 @@ const TRACK_KPI_INPUTS = {
   ventures: [
     { id: 'alphaTesterTouchpoints', label: 'Alpha tester touchpoints', type: 'count', quickCounts: [1,2,3,4,5,6] },
   ],
-  // networking: TBD — will be added when user provides the KPI list
+  networking: [
+    { id: 'warmReconnectComms', label: 'Warm reconnect communications', type: 'count', quickCounts: [1,2,3,4,5,6] },
+    { id: 'linkedinComments',   label: 'LinkedIn comments posted',      type: 'count', quickCounts: [1,2,3,4,5,6] },
+    { id: 'contentPosts',       label: 'Content posts',                 type: 'count', quickCounts: [1,2,3,4,5,6] },
+  ],
 }
 
 // Weekly-Review KPI definitions — each kpiValueId maps to a key in session.kpiValues.
@@ -475,10 +479,10 @@ const KPI_DEFINITIONS = [
   { id: 'discovery-held',    label: 'Discovery calls held',         kpiValueId: 'discoveryCallHeld',         target: 1, period: 'week',  kpiMapping: 'Discovery calls held',    trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
   { id: 'discovery-booked',  label: 'Discovery calls booked',       kpiValueId: 'discoveryCallBooked',       target: 2, period: 'week',  kpiMapping: 'Discovery calls booked',  trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
   { id: 'networking-meeting',label: 'Networking meetings attended', kpiValueId: 'networkingMeetingAttended', target: 1, period: 'week',  kpiMapping: 'Connective attendance',   trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
-  // ─── Shared (Networking) — KPI list TBD, keeping existing ────────────────
-  { id: 'warm-reconnects',   label: 'Warm reconnects sent',         kpiValueId: 'warmReconnects',            target: 3, period: 'week',  kpiMapping: 'Warm reconnects sent',    trackGroup: 'Shared (Networking)', color: '#C2762A' },
-  { id: 'coffee-chats',      label: 'Coffee chats held',            kpiValueId: 'coffeeChats',               target: 1, period: 'week',  kpiMapping: 'Coffee chats held',       trackGroup: 'Shared (Networking)', color: '#C2762A' },
-  { id: 'linkedin-comments', label: 'LinkedIn comments posted',     kpiValueId: 'linkedinComments',          target: 5, period: 'week',  kpiMapping: 'LinkedIn comments posted',trackGroup: 'Shared (Networking)', color: '#C2762A' },
+  // ─── Shared (Networking) ─────────────────────────────────────────────────
+  { id: 'warm-reconnects',   label: 'Warm reconnect communications', kpiValueId: 'warmReconnectComms', target: 3, period: 'week', kpiMapping: 'Warm reconnects sent',    trackGroup: 'Shared (Networking)', color: '#C2762A' },
+  { id: 'linkedin-comments', label: 'LinkedIn comments posted',      kpiValueId: 'linkedinComments',   target: 5, period: 'week', kpiMapping: 'LinkedIn comments posted',trackGroup: 'Shared (Networking)', color: '#C2762A' },
+  { id: 'content-posts',     label: 'Content posts',                 kpiValueId: 'contentPosts',       target: 1, period: 'week', kpiMapping: 'Content posts',           trackGroup: 'Shared (Networking)', color: '#C2762A' },
   // ─── Job Search ──────────────────────────────────────────────────────────
   { id: 'companies-researched',  label: 'Companies researched',   kpiValueId: 'companiesResearched',  target: 5, period: 'week', kpiMapping: 'Companies researched',   trackGroup: 'Job Search', color: '#2E75B6' },
   { id: 'roles-identified',      label: 'Roles identified',        kpiValueId: 'rolesIdentified',      target: 5, period: 'week', kpiMapping: 'Roles identified',       trackGroup: 'Job Search', color: '#2E75B6' },
@@ -510,9 +514,9 @@ const QUICK_LOG_KPI_GROUPS = [
     color: '#C2762A',
     dot: 'bg-orange-500',
     kpis: [
-      'Warm reconnects sent',
-      'Coffee chats held',
+      'Warm reconnect communications',
       'LinkedIn comments posted',
+      'Content posts',
     ],
   },
   {
