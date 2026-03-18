@@ -1159,16 +1159,16 @@ function App() {
       }
     }
 
-    // c) Prune tasks that were calendar-backed but whose GCal event no longer exists
-    //    today. Tasks with timer progress are always kept.
+    // c) Prune tasks not backed by a GCal event today. The queue is calendar-driven:
+    //    only tasks with a calendarEventId found in today's GCal events belong here.
+    //    Exception: tasks that already have timer progress are always kept.
     const prunedTasks = updatedTasks.filter((task) => {
-      if (!task.calendarEventId) return true           // not calendar-backed → keep
-      if (todayGCalIds.has(task.calendarEventId)) return true  // event still on GCal → keep
       const sess = sessions[task.id]
       const hasProgress = sess && (
         sess.timerState !== TIMER_STATES.notStarted || sess.elapsedSeconds > 0
       )
-      return hasProgress                               // keep only if work has started
+      if (hasProgress) return true                     // never drop a task already worked on
+      return task.calendarEventId && todayGCalIds.has(task.calendarEventId)
     })
     if (prunedTasks.length !== updatedTasks.length) {
       updatedTasks = prunedTasks
