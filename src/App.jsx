@@ -3262,11 +3262,10 @@ function App() {
         {todayTasks.length > 0 ? (
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           {!hasActiveTodayTask ? (
-            <div className="flex h-32 items-center justify-center text-center">
-              <div>
-                <p className="text-sm font-medium text-slate-700">Tasks loaded from your calendar</p>
-                <p className="mt-1 text-xs text-slate-400">Select a task from the queue on the right to start the timer.</p>
-              </div>
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <img src="/logo.png" alt="CoSA" className="h-56 w-auto opacity-80 mb-6" />
+              <p className="text-sm font-medium text-slate-700">Tasks loaded from your calendar</p>
+              <p className="mt-1 text-xs text-slate-400">Select a task from the queue on the right to start the timer.</p>
             </div>
           ) : (<>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
