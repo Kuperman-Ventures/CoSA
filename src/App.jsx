@@ -3503,41 +3503,6 @@ function App() {
                               </button>
                             </div>
 
-                            {/* Subtask checklist — read from subtasksMap by templateId */}
-                            {(() => {
-                              const effectiveSubtasks = (subtasksMap[task.templateId] ?? []).filter((st) => st.text.trim())
-                              if (effectiveSubtasks.length === 0) return null
-                              return (
-                              <ul className="mt-1.5 space-y-0.5 pl-1">
-                                {effectiveSubtasks.map((st) => {
-                                  const checked = subtaskChecks[task.id]?.[st.id] ?? false
-                                  return (
-                                    <li key={st.id}>
-                                      <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-slate-50">
-                                        <input
-                                          type="checkbox"
-                                          checked={checked}
-                                          onChange={() =>
-                                            setSubtaskChecks((prev) => ({
-                                              ...prev,
-                                              [task.id]: {
-                                                ...(prev[task.id] ?? {}),
-                                                [st.id]: !checked,
-                                              },
-                                            }))
-                                          }
-                                          className="h-3.5 w-3.5 rounded accent-slate-900"
-                                        />
-                                        <span className={`text-xs ${checked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                                          {st.text}
-                                        </span>
-                                      </label>
-                                    </li>
-                                  )
-                                })}
-                              </ul>
-                              )
-                            })()}
                           </li>
                         )
                       })}
