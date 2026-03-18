@@ -3493,10 +3493,11 @@ function App() {
           </>)}
         </article>
         ) : (
-        <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold">No tasks scheduled for today</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Tag calendar events with a track, or drag tasks from the <strong>Calendar</strong> view to populate today&apos;s queue.
+        <article className="rounded-xl border border-slate-200 bg-white p-10 shadow-sm flex flex-col items-center justify-center text-center">
+          <img src="/logo.png" alt="CoSA" className="h-56 w-auto opacity-80 mb-6" />
+          <h2 className="text-xl font-semibold text-slate-700">You&apos;re all clear</h2>
+          <p className="mt-2 text-sm text-slate-400 max-w-xs">
+            No tasks in today&apos;s queue. Tag calendar events with a track, or drag tasks from the <strong>Calendar</strong> view to get started.
           </p>
         </article>
         )}
