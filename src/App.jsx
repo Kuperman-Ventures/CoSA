@@ -939,6 +939,7 @@ function App() {
   const [libraryFilter, setLibraryFilter] = useState('Active')
   const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
   const [archiveConfirmId, setArchiveConfirmId] = useState(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   const [completionLog, setCompletionLog] = useState(() => loadCompletionLog())
   const [weekOffset, setWeekOffset] = useState(0)
   const [fridayReviews, setFridayReviews] = useState([])
@@ -1644,6 +1645,27 @@ function App() {
     setSelectedLibraryTaskId(null)
     setLibraryMessage('Task archived and removed from active library.')
     setArchiveConfirmId(null)
+  }
+
+  async function deleteLibraryTask(taskId) {
+    setTaskLibrary((prev) => prev.filter((task) => task.id !== taskId))
+    setSubtasksMap((prev) => { const next = { ...prev }; delete next[taskId]; return next })
+    setSelectedLibraryTaskId(null)
+    setDeleteConfirmId(null)
+    setLibraryMessage('Task permanently deleted.')
+
+    if (supabaseConfigured && session?.user?.id) {
+      try {
+        const { error } = await supabase
+          .from('task_templates')
+          .delete()
+          .eq('id', taskId)
+          .eq('user_id', session.user.id)
+        if (error) console.warn('[deleteLibraryTask]', error.message)
+      } catch (err) {
+        console.warn('[deleteLibraryTask]', err)
+      }
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2460,35 +2482,67 @@ function App() {
                 </div>
               )}
 
-              {/* Save / Archive */}
+              {/* Save / Archive / Delete */}
               <div className="sm:col-span-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
-                {/* Archive side */}
-                {archiveConfirmId === selectedLibraryTask.id ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">Archive this task? It won't be deleted, just hidden.</span>
+                {/* Left side: Archive (active/paused tasks) or Delete (archived tasks) */}
+                {selectedLibraryTask.status === 'Archived' ? (
+                  // ── Delete flow (only available once already archived) ──────
+                  deleteConfirmId === selectedLibraryTask.id ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">Permanently delete this task? This cannot be undone.</span>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmId(null)}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteLibraryTask(selectedLibraryTask.id)}
+                        className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-800"
+                      >
+                        Yes, Delete Permanently
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      onClick={() => setArchiveConfirmId(null)}
-                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                      onClick={() => setDeleteConfirmId(selectedLibraryTask.id)}
+                      className="rounded-md border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:border-red-400 hover:bg-red-50"
                     >
-                      Cancel
+                      Delete Task
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => archiveLibraryTask(selectedLibraryTask.id)}
-                      className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
-                    >
-                      Yes, Archive
-                    </button>
-                  </div>
+                  )
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setArchiveConfirmId(selectedLibraryTask.id)}
-                    className="rounded-md border border-rose-200 px-3 py-1.5 text-xs text-rose-600 hover:border-rose-300 hover:bg-rose-50"
-                  >
-                    Archive Task
-                  </button>
+                  // ── Archive flow (active / paused tasks) ───────────────────
+                  archiveConfirmId === selectedLibraryTask.id ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">Archive this task? It won't be deleted, just hidden.</span>
+                      <button
+                        type="button"
+                        onClick={() => setArchiveConfirmId(null)}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => archiveLibraryTask(selectedLibraryTask.id)}
+                        className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+                      >
+                        Yes, Archive
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setArchiveConfirmId(selectedLibraryTask.id)}
+                      className="rounded-md border border-rose-200 px-3 py-1.5 text-xs text-rose-600 hover:border-rose-300 hover:bg-rose-50"
+                    >
+                      Archive Task
+                    </button>
+                  )
                 )}
 
                 {/* Save side */}
