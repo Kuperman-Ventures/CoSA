@@ -874,6 +874,7 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
   const [libraryMessage, setLibraryMessage] = useState('')
+  const [librarySaveStatus, setLibrarySaveStatus] = useState(null) // null | 'saving' | 'saved' | 'error'
   const [queueDate, setQueueDate] = useState(bootstrap.queueDate)
   const [libraryFilter, setLibraryFilter] = useState('Active')
   const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
@@ -1451,7 +1452,34 @@ function App() {
     setTaskLibrary((prev) =>
       prev.map((task) => (task.id === taskId ? { ...task, [field]: value } : task)),
     )
-    setLibraryMessage('Saved to Task Library template. Changes apply to future deployments only.')
+  }
+
+  async function saveLibraryTask() {
+    if (!selectedLibraryTask || !session?.user?.id) return
+    setLibrarySaveStatus('saving')
+    try {
+      // Build the single latest task object from current state and save immediately.
+      const rows = [selectedLibraryTask].map((t) => ({
+        id: t.id,
+        user_id: session.user.id,
+        name: t.name ?? '',
+        track: t.track ?? 'advisors',
+        sub_track: t.subTrack ?? null,
+        default_estimate_minutes: t.defaultTimeEstimate ?? 25,
+        kpi_mapping: t.kpiMapping ?? '',
+        status: t.status ?? 'Active',
+        subtasks: Array.isArray(t.subtasks) ? t.subtasks : [],
+        updated_at: new Date().toISOString(),
+      }))
+      const { error } = await supabase.from('task_templates').upsert(rows, { onConflict: 'id' })
+      if (error) throw error
+      setLibrarySaveStatus('saved')
+      setTimeout(() => setLibrarySaveStatus(null), 2500)
+    } catch (err) {
+      console.error('[saveLibraryTask]', err)
+      setLibrarySaveStatus('error')
+      setTimeout(() => setLibrarySaveStatus(null), 4000)
+    }
   }
 
   function archiveLibraryTask(taskId) {
@@ -2284,10 +2312,11 @@ function App() {
                 </div>
               )}
 
-              {/* Archive / Delete */}
-              <div className="sm:col-span-2 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+              {/* Save / Archive */}
+              <div className="sm:col-span-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                {/* Archive side */}
                 {archiveConfirmId === selectedLibraryTask.id ? (
-                  <>
+                  <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-500">Archive this task? It won't be deleted, just hidden.</span>
                     <button
                       type="button"
@@ -2303,7 +2332,7 @@ function App() {
                     >
                       Yes, Archive
                     </button>
-                  </>
+                  </div>
                 ) : (
                   <button
                     type="button"
@@ -2313,14 +2342,31 @@ function App() {
                     Archive Task
                   </button>
                 )}
+
+                {/* Save side */}
+                <button
+                  type="button"
+                  onClick={saveLibraryTask}
+                  disabled={librarySaveStatus === 'saving'}
+                  className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                    librarySaveStatus === 'saved'
+                      ? 'bg-green-600 text-white'
+                      : librarySaveStatus === 'error'
+                      ? 'bg-rose-600 text-white'
+                      : 'bg-slate-900 text-white hover:bg-slate-700 active:scale-95'
+                  }`}
+                >
+                  {librarySaveStatus === 'saving'
+                    ? 'Saving…'
+                    : librarySaveStatus === 'saved'
+                    ? '✓ Saved'
+                    : librarySaveStatus === 'error'
+                    ? 'Save failed — retry'
+                    : 'Save Task'}
+                </button>
               </div>
             </div>
           )}
-          {libraryMessage ? (
-            <p className="mt-3 rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">
-              {libraryMessage}
-            </p>
-          ) : null}
         </article>
       </section>
       </>
