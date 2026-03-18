@@ -2381,17 +2381,25 @@ function App() {
               <label className="text-sm">
                 <span className="mb-1 block text-slate-600">Default Time Estimate (minutes)</span>
                 <input
+                  key={selectedLibraryTask.id}
                   type="number"
                   min={5}
                   step={5}
-                  value={selectedLibraryTask.defaultTimeEstimate}
-                  onChange={(event) =>
+                  defaultValue={selectedLibraryTask.defaultTimeEstimate}
+                  onChange={(event) => {
+                    const n = parseInt(event.target.value, 10)
+                    if (!isNaN(n) && n >= 1) {
+                      updateLibraryTask(selectedLibraryTask.id, 'defaultTimeEstimate', n)
+                    }
+                  }}
+                  onBlur={(event) => {
+                    const n = parseInt(event.target.value, 10)
                     updateLibraryTask(
                       selectedLibraryTask.id,
                       'defaultTimeEstimate',
-                      Math.max(5, Number(event.target.value || 5)),
+                      Math.max(5, isNaN(n) ? 5 : n),
                     )
-                  }
+                  }}
                   className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
                 />
               </label>
