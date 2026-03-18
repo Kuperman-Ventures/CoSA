@@ -152,6 +152,9 @@ function sessionToRow(session, task, userId) {
     task_name: task.name ?? '',
     track: task.track ?? 'advisors',
     kpi_mapping: task.kpiMapping ?? '',
+    kpi_values: session.kpiValues && Object.keys(session.kpiValues).length > 0
+      ? session.kpiValues
+      : null,
     quantity: session.quantity ?? 1,
     timer_state: session.timerState ?? 'notStarted',
     completion_type: session.completionType ?? null,
@@ -202,6 +205,7 @@ function rowToLogEntry(row) {
     taskName: row.task_name,
     track: row.track,
     kpiMapping: row.kpi_mapping,
+    kpiValues: row.kpi_values ?? {},
     quantity: row.quantity ?? 1,
     completionType: row.completion_type,
     outcomeAchieved: row.outcome_achieved,

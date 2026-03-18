@@ -444,34 +444,51 @@ const NAV_ITEMS = [
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
 
+// ─── Per-track KPI inputs shown in the active task panel ─────────────────────
+// type 'count'   → quick-select buttons [1..6] + free number field
+// type 'boolean' → single YES toggle
+// type 'venue'   → dropdown with named options
+const TRACK_KPI_INPUTS = {
+  advisors: [
+    { id: 'outreachSent',               label: 'Outreach message sent',       type: 'count',   quickCounts: [1,2,3,4,5,6] },
+    { id: 'discoveryCallHeld',          label: 'Discovery call held',          type: 'boolean' },
+    { id: 'discoveryCallBooked',        label: 'Discovery call booked',        type: 'boolean' },
+    { id: 'networkingMeetingAttended',  label: 'Networking meeting attended',  type: 'venue',   options: ['The Connective', 'Other'] },
+  ],
+  jobSearch: [
+    { id: 'companiesResearched',  label: 'Companies researched',    type: 'count', quickCounts: [1,2,3,4,5,6] },
+    { id: 'rolesIdentified',      label: 'Roles identified',        type: 'count', quickCounts: [1,2,3,4,5,6] },
+    { id: 'applications',         label: 'Applications',            type: 'count', quickCounts: [1,2,3,4,5,6] },
+    { id: 'recruiterTouchpoints', label: 'Recruiter touchpoints',   type: 'count', quickCounts: [1,2,3,4,5,6] },
+  ],
+  ventures: [
+    { id: 'alphaTesterTouchpoints', label: 'Alpha tester touchpoints', type: 'count', quickCounts: [1,2,3,4,5,6] },
+  ],
+  // networking: TBD — will be added when user provides the KPI list
+}
+
+// Weekly-Review KPI definitions — each kpiValueId maps to a key in session.kpiValues.
+// kpiMapping is kept for backward-compat so old sessions still count in countKpi.
 const KPI_DEFINITIONS = [
   // ─── Kuperman Advisors ────────────────────────────────────────────────────
-  { id: 'outreach-messages',  label: 'Outreach messages sent',   target: 6, period: 'week',  kpiMapping: 'Outreach messages sent',  trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
-  { id: 'discovery-held',     label: 'Discovery calls held',      target: 1, period: 'week',  kpiMapping: 'Discovery calls held',    trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
-  { id: 'discovery-booked',   label: 'Discovery calls booked',    target: 2, period: 'week',  kpiMapping: 'Discovery calls booked',  trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
-  { id: 'connective',         label: 'Connective attendance',     target: 1, period: 'week',  kpiMapping: 'Connective attendance',   trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
-  { id: 'case-study',         label: 'Case study progress',       target: 1, period: 'month', kpiMapping: 'Case study progress',     trackGroup: 'Kuperman Advisors',    color: '#1E6B3C' },
-  // ─── Shared (Networking) ─────────────────────────────────────────────────
-  { id: 'warm-reconnects',    label: 'Warm reconnects sent',      target: 3, period: 'week',  kpiMapping: 'Warm reconnects sent',    trackGroup: 'Shared (Networking)',  color: '#2E75B6' },
-  { id: 'coffee-chats',       label: 'Coffee chats held',         target: 1, period: 'week',  kpiMapping: 'Coffee chats held',       trackGroup: 'Shared (Networking)',  color: '#2E75B6' },
-  { id: 'linkedin-comments',  label: 'LinkedIn comments posted',  target: 5, period: 'week',  kpiMapping: 'LinkedIn comments posted',trackGroup: 'Shared (Networking)',  color: '#2E75B6' },
+  { id: 'outreach-messages', label: 'Outreach messages sent',      kpiValueId: 'outreachSent',              target: 6, period: 'week',  kpiMapping: 'Outreach messages sent',  trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
+  { id: 'discovery-held',    label: 'Discovery calls held',         kpiValueId: 'discoveryCallHeld',         target: 1, period: 'week',  kpiMapping: 'Discovery calls held',    trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
+  { id: 'discovery-booked',  label: 'Discovery calls booked',       kpiValueId: 'discoveryCallBooked',       target: 2, period: 'week',  kpiMapping: 'Discovery calls booked',  trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
+  { id: 'networking-meeting',label: 'Networking meetings attended', kpiValueId: 'networkingMeetingAttended', target: 1, period: 'week',  kpiMapping: 'Connective attendance',   trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
+  // ─── Shared (Networking) — KPI list TBD, keeping existing ────────────────
+  { id: 'warm-reconnects',   label: 'Warm reconnects sent',         kpiValueId: 'warmReconnects',            target: 3, period: 'week',  kpiMapping: 'Warm reconnects sent',    trackGroup: 'Shared (Networking)', color: '#C2762A' },
+  { id: 'coffee-chats',      label: 'Coffee chats held',            kpiValueId: 'coffeeChats',               target: 1, period: 'week',  kpiMapping: 'Coffee chats held',       trackGroup: 'Shared (Networking)', color: '#C2762A' },
+  { id: 'linkedin-comments', label: 'LinkedIn comments posted',     kpiValueId: 'linkedinComments',          target: 5, period: 'week',  kpiMapping: 'LinkedIn comments posted',trackGroup: 'Shared (Networking)', color: '#C2762A' },
   // ─── Job Search ──────────────────────────────────────────────────────────
-  { id: 'companies-researched',label:'Companies researched',      target: 2, period: 'week',  kpiMapping: 'Companies researched',    trackGroup: 'Job Search',           color: '#2E75B6' },
-  { id: 'applications',       label: 'Applications submitted',    target: 2, period: 'week',  kpiMapping: 'Applications submitted',  trackGroup: 'Job Search',           color: '#2E75B6' },
-  { id: 'recruiter-touchpoints',label:'Recruiter touchpoints',    target: 3, period: 'week',  kpiMapping: 'Recruiter touchpoints',   trackGroup: 'Job Search',           color: '#2E75B6' },
+  { id: 'companies-researched',  label: 'Companies researched',   kpiValueId: 'companiesResearched',  target: 5, period: 'week', kpiMapping: 'Companies researched',   trackGroup: 'Job Search', color: '#2E75B6' },
+  { id: 'roles-identified',      label: 'Roles identified',        kpiValueId: 'rolesIdentified',      target: 5, period: 'week', kpiMapping: 'Roles identified',       trackGroup: 'Job Search', color: '#2E75B6' },
+  { id: 'applications',          label: 'Applications submitted',  kpiValueId: 'applications',         target: 3, period: 'week', kpiMapping: 'Applications submitted', trackGroup: 'Job Search', color: '#2E75B6' },
+  { id: 'recruiter-touchpoints', label: 'Recruiter touchpoints',   kpiValueId: 'recruiterTouchpoints', target: 3, period: 'week', kpiMapping: 'Recruiter touchpoints',  trackGroup: 'Job Search', color: '#2E75B6' },
   // ─── Kuperman Ventures ───────────────────────────────────────────────────
-  { id: 'tester-touchpoints', label: 'Tester touchpoints',        target: 2, period: 'week',  kpiMapping: 'Tester touchpoints',      trackGroup: 'Kuperman Ventures',    color: '#9B6BAE' },
-  { id: 'definition-used',    label: 'Definition of done used',   target: null,period:'week', kpiMapping: 'Definition of done used', trackGroup: 'Kuperman Ventures',    color: '#9B6BAE', isRate: true },
-  { id: 'things-shipped',     label: 'Things shipped',            target: 1, period: 'week',  kpiMapping: 'Things shipped',          trackGroup: 'Kuperman Ventures',    color: '#9B6BAE' },
+  { id: 'alpha-tester-touchpoints', label: 'Alpha tester touchpoints', kpiValueId: 'alphaTesterTouchpoints', target: 3, period: 'week', kpiMapping: 'Tester touchpoints', trackGroup: 'Kuperman Ventures', color: '#9B6BAE' },
 ]
 
 const KPI_TRACK_GROUPS = ['Kuperman Advisors', 'Shared (Networking)', 'Job Search', 'Kuperman Ventures']
-
-// KPI mappings where a single session can produce more than one unit
-// (e.g. one outreach block = 5 messages). These trigger the quantity prompt.
-const COUNTABLE_KPI_MAPPINGS = new Set(
-  KPI_DEFINITIONS.filter((d) => !d.isRate && (d.target ?? 0) > 1).map((d) => d.kpiMapping)
-)
 
 // Quick Log: KPI options grouped by track, with the track key used for timer_sessions
 const QUICK_LOG_KPI_GROUPS = [
@@ -484,8 +501,7 @@ const QUICK_LOG_KPI_GROUPS = [
       'Outreach messages sent',
       'Discovery calls booked',
       'Discovery calls held',
-      'Connective attendance',
-      'Case study progress',
+      'Networking meeting attended',
     ],
   },
   {
@@ -506,6 +522,7 @@ const QUICK_LOG_KPI_GROUPS = [
     dot: 'bg-blue-600',
     kpis: [
       'Companies researched',
+      'Roles identified',
       'Applications submitted',
       'Recruiter touchpoints',
     ],
@@ -516,9 +533,7 @@ const QUICK_LOG_KPI_GROUPS = [
     color: '#9B6BAE',
     dot: 'bg-purple-500',
     kpis: [
-      'Tester touchpoints',
-      'Things shipped',
-      'Definition of done used',
+      'Alpha tester touchpoints',
     ],
   },
 ]
@@ -622,6 +637,8 @@ function countKpi(log, kpiDef, weekStart, weekEnd, monthStart, monthEnd) {
   const rangeStart = kpiDef.period === 'month' ? monthStart : weekStart
   const rangeEnd = kpiDef.period === 'month' ? monthEnd : weekEnd
 
+  // (isRate KPIs are not part of the new input system and have been phased out
+  //  but we guard just in case legacy data exists.)
   if (kpiDef.isRate) {
     const allVentures = log.filter((e) => {
       const d = new Date(e.completedAt)
@@ -632,15 +649,25 @@ function countKpi(log, kpiDef, weekStart, weekEnd, monthStart, monthEnd) {
     return { count: dodUsed.length, total: allVentures.length }
   }
 
-  const count = log
-    .filter((e) => {
-      const d = new Date(e.completedAt)
-      if (d < rangeStart || d > rangeEnd) return false
-      if (e.kpiMapping !== kpiDef.kpiMapping) return false
-      if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
-      return true
-    })
-    .reduce((sum, e) => sum + (e.quantity ?? 1), 0)
+  let count = 0
+  for (const e of log) {
+    const d = new Date(e.completedAt)
+    if (d < rangeStart || d > rangeEnd) continue
+    if (e.completionType === 'Partial' || e.completionType === 'Cancelled') continue
+
+    // New kpiValues system: entry carries a dict of measured KPI values
+    if (kpiDef.kpiValueId && e.kpiValues && e.kpiValues[kpiDef.kpiValueId] != null) {
+      const val = e.kpiValues[kpiDef.kpiValueId]
+      if (typeof val === 'number' && val > 0) count += val
+      else if (val === true || (typeof val === 'string' && val.trim())) count += 1
+      continue
+    }
+
+    // Legacy kpiMapping system: single kpiMapping string on the entry
+    if (kpiDef.kpiMapping && e.kpiMapping === kpiDef.kpiMapping) {
+      count += e.quantity ?? 1
+    }
+  }
 
   return { count, total: null }
 }
@@ -925,8 +952,10 @@ function App() {
   const [quickLogErrors, setQuickLogErrors] = useState({})
   const [quickLogSubmitting, setQuickLogSubmitting] = useState(false)
   const [quickLogToast, setQuickLogToast] = useState(false)
-  // { taskId: string, qty: number } — shown in Today Queue when completing a countable KPI task
-  const [quantityPrompt, setQuantityPrompt] = useState(null)
+  // KPI values entered inline while the timer is running.
+  // Structure: { [todayTaskId]: { [kpiInputId]: number | boolean | string | null } }
+  // Never reset on sync — only cleared on task complete/cancel.
+  const [kpiSessionValues, setKpiSessionValues] = useState({})
   // { [todayTaskId]: { [subtaskId]: boolean } } — checkbox state for subtasks in Today Queue
   const [subtaskChecks, setSubtaskChecks] = useState({})
   const [quickLogEntries, setQuickLogEntries] = useState(() => {
@@ -1647,6 +1676,7 @@ function App() {
       taskName: activeTask.name,
       track: activeTask.track,
       kpiMapping: activeTask.kpiMapping ?? '',
+      kpiValues: kpiSessionValues[activeTask.id] ?? {},
       completionType: 'Cancelled',
       outcomeAchieved: null,
       definitionOfDoneUsed: false,
@@ -1658,6 +1688,7 @@ function App() {
       cancelledSeconds: current.remainingSeconds,
     }
     setCompletionLog((prev) => [...prev, logEntry])
+    setKpiSessionValues((prev) => { const next = { ...prev }; delete next[activeTask.id]; return next })
 
     setStatusMessage('Task cancelled.')
   }
@@ -1667,7 +1698,7 @@ function App() {
     handleCompleteTask(activeTask.id)
   }
 
-  function handleCompleteTask(taskId, quantity = 1) {
+  function handleCompleteTask(taskId) {
     const task = todayTasks.find((t) => t.id === taskId)
     const current = sessions[taskId]
     if (!task || !current) return
@@ -1683,9 +1714,8 @@ function App() {
       : (current.estimateSeconds ?? task.estimateMinutes * 60)
 
     const now = new Date().toISOString()
-    const safeQty = Math.max(1, Math.round(quantity))
-
     const completionType = current.outcomeAchieved != null ? 'Done + Outcome' : 'Done'
+    const kpiValues = kpiSessionValues[taskId] ?? {}
 
     const nextSession = {
       ...current,
@@ -1696,7 +1726,8 @@ function App() {
       pauseDurationSeconds: (current.pauseDurationSeconds ?? 0) + Math.max(0, pauseDelta),
       currentPauseStartedAtMs: null,
       completionLoggedAtISO: now,
-      quantity: safeQty,
+      quantity: 1,
+      kpiValues,
     }
 
     setSessions((prev) => ({ ...prev, [taskId]: nextSession }))
@@ -1710,8 +1741,9 @@ function App() {
       taskName: task.name,
       track: task.track,
       kpiMapping: task.kpiMapping ?? '',
+      kpiValues,
       completionType,
-      quantity: safeQty,
+      quantity: 1,
       completedAt: now,
       estimateSeconds: current.estimateSeconds,
       elapsedSeconds,
@@ -1719,9 +1751,8 @@ function App() {
       cancelledSeconds: 0,
     }
     setCompletionLog((prev) => [...prev, logEntry])
-    setQuantityPrompt(null)
-    const label = safeQty > 1 ? ` (×${safeQty})` : ''
-    setStatusMessage(`"${task.name}" marked complete${label}.`)
+    setKpiSessionValues((prev) => { const next = { ...prev }; delete next[taskId]; return next })
+    setStatusMessage(`"${task.name}" marked complete.`)
   }
 
   async function handleSaveFridayReview() {
@@ -2265,16 +2296,6 @@ function App() {
                       'defaultTimeEstimate',
                       Math.max(5, Number(event.target.value || 5)),
                     )
-                  }
-                  className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
-                />
-              </label>
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">KPI Mapping</span>
-                <input
-                  value={selectedLibraryTask.kpiMapping}
-                  onChange={(event) =>
-                    updateLibraryTask(selectedLibraryTask.id, 'kpiMapping', event.target.value)
                   }
                   className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
                 />
@@ -3227,6 +3248,95 @@ function App() {
             )
           })()}
 
+          {/* ── Track KPI Inputs ─────────────────────────────────────── */}
+          {(() => {
+            const trackKey = activeTask.track === 'jobsearch' ? 'jobSearch' : activeTask.track
+            const kpiInputs = TRACK_KPI_INPUTS[trackKey] ?? []
+            if (kpiInputs.length === 0 || isCompleted || isCancelled) return null
+            const vals = kpiSessionValues[activeTask.id] ?? {}
+            const setKpiVal = (kpiId, value) =>
+              setKpiSessionValues((prev) => ({
+                ...prev,
+                [activeTask.id]: { ...(prev[activeTask.id] ?? {}), [kpiId]: value },
+              }))
+            return (
+              <div className="rounded-lg border border-slate-200 p-3">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">KPIs this session</p>
+                <div className="space-y-3">
+                  {kpiInputs.map((kpi) => {
+                    const val = vals[kpi.id] ?? null
+                    if (kpi.type === 'count') {
+                      return (
+                        <div key={kpi.id}>
+                          <p className="mb-1 text-xs text-slate-600">{kpi.label}</p>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {kpi.quickCounts.map((n) => (
+                              <button
+                                key={n}
+                                type="button"
+                                onClick={() => setKpiVal(kpi.id, val === n ? null : n)}
+                                className={`h-7 w-7 rounded text-xs font-semibold transition ${val === n ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                              >{n}</button>
+                            ))}
+                            <input
+                              type="number"
+                              min={1}
+                              value={typeof val === 'number' && !kpi.quickCounts.includes(val) ? val : ''}
+                              placeholder="other"
+                              onChange={(e) => {
+                                const n = parseInt(e.target.value, 10)
+                                setKpiVal(kpi.id, isNaN(n) || n < 1 ? null : n)
+                              }}
+                              className="w-16 rounded border border-slate-200 px-1.5 py-0.5 text-center text-xs outline-none focus:ring-1 focus:ring-slate-400"
+                            />
+                            {val != null && (
+                              <button
+                                type="button"
+                                onClick={() => setKpiVal(kpi.id, null)}
+                                className="text-xs text-slate-400 hover:text-slate-600"
+                                title="Clear"
+                              >✕</button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    }
+                    if (kpi.type === 'boolean') {
+                      return (
+                        <div key={kpi.id} className="flex items-center justify-between">
+                          <p className="text-xs text-slate-600">{kpi.label}</p>
+                          <button
+                            type="button"
+                            onClick={() => setKpiVal(kpi.id, val === true ? null : true)}
+                            className={`rounded px-3 py-1 text-xs font-semibold transition ${val === true ? 'bg-emerald-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                          >YES</button>
+                        </div>
+                      )
+                    }
+                    if (kpi.type === 'venue') {
+                      return (
+                        <div key={kpi.id} className="flex items-center justify-between gap-2">
+                          <p className="shrink-0 text-xs text-slate-600">{kpi.label}</p>
+                          <select
+                            value={val ?? ''}
+                            onChange={(e) => setKpiVal(kpi.id, e.target.value || null)}
+                            className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-700 outline-none focus:ring-1 focus:ring-slate-400"
+                          >
+                            <option value="">— none —</option>
+                            {kpi.options.map((o) => (
+                              <option key={o} value={o}>{o}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )
+                    }
+                    return null
+                  })}
+                </div>
+              </div>
+            )
+          })()}
+
           <div className="rounded-lg border border-slate-200 p-3">
             <label className="mb-1 block text-sm font-medium text-slate-700">Note (optional)</label>
             <textarea
@@ -3378,56 +3488,15 @@ function App() {
                                 </div>
                               </button>
 
-                              {/* Completion button — shows quantity prompt for countable KPIs */}
-                              {quantityPrompt?.taskId === task.id ? (
-                                <div className="flex shrink-0 flex-col items-center gap-0.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-1">
-                                  <span className="text-[9px] font-medium text-slate-500 leading-none">How many?</span>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={99}
-                                    value={quantityPrompt.qty}
-                                    onChange={(e) =>
-                                      setQuantityPrompt((p) => ({ ...p, qty: Math.max(1, parseInt(e.target.value) || 1) }))
-                                    }
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') handleCompleteTask(task.id, quantityPrompt.qty)
-                                      if (e.key === 'Escape') setQuantityPrompt(null)
-                                    }}
-                                    className="w-10 rounded border border-slate-200 bg-white py-0.5 text-center text-sm font-medium outline-none focus:border-green-400 focus:ring-1 focus:ring-green-200"
-                                    autoFocus
-                                  />
-                                  <div className="flex gap-0.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleCompleteTask(task.id, quantityPrompt.qty)}
-                                      className="rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-green-700"
-                                    >✓</button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setQuantityPrompt(null)}
-                                      className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-100"
-                                    >✕</button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (task.kpiMapping && COUNTABLE_KPI_MAPPINGS.has(task.kpiMapping)) {
-                                      setQuantityPrompt({ taskId: task.id, qty: 1 })
-                                    } else {
-                                      handleCompleteTask(task.id)
-                                    }
-                                  }}
-                                  title={task.kpiMapping && COUNTABLE_KPI_MAPPINGS.has(task.kpiMapping)
-                                    ? 'Mark complete — you\'ll enter how many'
-                                    : 'Mark complete'}
-                                  className="shrink-0 rounded-md border border-slate-200 bg-white px-2 text-green-600 hover:bg-green-50 hover:border-green-300 text-base"
-                                >
-                                  ✓
-                                </button>
-                              )}
+                              {/* Completion button */}
+                              <button
+                                type="button"
+                                onClick={() => handleCompleteTask(task.id)}
+                                title="Mark complete"
+                                className="shrink-0 rounded-md border border-slate-200 bg-white px-2 text-green-600 hover:bg-green-50 hover:border-green-300 text-base"
+                              >
+                                ✓
+                              </button>
                             </div>
 
                             {/* Subtask checklist — read from subtasksMap by templateId */}
@@ -3594,7 +3663,7 @@ function App() {
                       <div className="space-y-1">
                         {grp.kpis.map((kpi) => {
                           const checked = quickLogForm.kpiCredits.includes(kpi)
-                          const isCountable = COUNTABLE_KPI_MAPPINGS.has(kpi)
+                          const isCountable = true // all Quick Log KPIs support a quantity
                           const qty = quickLogForm.kpiQuantities[kpi] ?? 1
                           return (
                             <div key={kpi} className="flex items-center gap-2">
