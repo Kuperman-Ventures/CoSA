@@ -35,7 +35,7 @@ import {
   loadQuickLogEntries,
   loadCalendarEventTags,
 } from './lib/supabaseSync'
-import { createEventsForSnapshot, fetchCoSACalendarEvents, fetchPersonalCalendarEvents, GCalAuthError } from './lib/googleCalendar'
+import { fetchCoSACalendarEvents, fetchPersonalCalendarEvents, GCalAuthError } from './lib/googleCalendar'
 
 const TRACKS = {
   advisors: {
@@ -714,32 +714,6 @@ function getTrackMeta(trackKey) {
   return Object.values(TRACKS).find((track) => track.key === trackKey)
 }
 
-function mapLibraryTaskToTodayTask(task, deploymentId, index) {
-  return {
-    id: `today-${deploymentId}-${task.id}-${index + 1}`,
-    templateId: task.id,
-    name: task.name,
-    track: task.track,
-    estimateMinutes: task.defaultTimeEstimate,
-    kpiMapping: task.kpiMapping ?? '',
-    subtasks: (task.subtasks ?? []).map((st) => ({ ...st })),
-  }
-}
-
-// Maps a Week Ahead plan task → today_task_instance shape.
-function planTaskToTodayTask(planTask, library, dayName, planId, index) {
-  const libTask = library.find((t) => t.id === planTask.templateId)
-  return {
-    id: `today-plan-${planId ?? 'x'}-${dayName}-${index}`,
-    templateId: planTask.templateId ?? null,
-    name: planTask.name ?? '',
-    track: planTask.track ?? 'advisors',
-    estimateMinutes: planTask.estimateMinutes ?? libTask?.defaultTimeEstimate ?? 25,
-    kpiMapping: planTask.kpiMapping ?? libTask?.kpiMapping ?? '',
-    calendarEventId: planTask.gcalEventId ?? null,
-  }
-}
-
 // Maps a Google Calendar CoSA event → today_task_instance shape.
 function gcalEventToTodayTask(ev) {
   const priv = ev.extendedProperties?.private ?? {}
@@ -789,14 +763,6 @@ function persistState(state) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 }
 
-function getDefaultTodaySnapshot(libraryTasks, targetDate = new Date()) {
-  const deploymentId = Date.now()
-  const todayName = DAY_NAMES[targetDate.getDay()]
-  return libraryTasks
-    .filter((task) => task.status === 'Active')
-    .map((task, index) => mapLibraryTaskToTodayTask(task, deploymentId, index))
-}
-
 function validateLibraryTask(task) {
   const errors = []
   if (!task.name?.trim()) errors.push('Name is required.')
@@ -809,9 +775,9 @@ function validateLibraryTask(task) {
 }
 
 function getStatusBehavior(status) {
-  if (status === 'Active') return 'Active tasks deploy to Today snapshots.'
-  if (status === 'Paused') return 'Paused tasks stay in the library but are excluded from deployment.'
-  return 'Archived tasks are kept for history but hidden from deployment.'
+  if (status === 'Active') return 'Active tasks appear in the Task Library and are tracked in the queue.'
+  if (status === 'Paused') return 'Paused tasks stay in the library but are excluded from the active queue.'
+  return 'Archived tasks are kept for history but hidden from the active library.'
 }
 
 function getInitialSession(task) {
@@ -891,7 +857,6 @@ function App() {
       todayTasks: today,
       sessions: sessionState,
       activeTaskId: persisted?.activeTaskId ?? today[0]?.id ?? null,
-      lastDeploymentAt: persisted?.lastDeploymentAt ?? new Date().toISOString(),
       queueDate: persisted?.queueDate ?? getDeployTargetDate(),
     }
   }, [])
@@ -909,7 +874,6 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
   const [libraryMessage, setLibraryMessage] = useState('')
-  const [lastDeploymentAt, setLastDeploymentAt] = useState(bootstrap.lastDeploymentAt)
   const [queueDate, setQueueDate] = useState(bootstrap.queueDate)
   const [libraryFilter, setLibraryFilter] = useState('Active')
   const [collapsedLibraryTracks, setCollapsedLibraryTracks] = useState({})
@@ -1244,8 +1208,8 @@ function App() {
     return taskLibrary.filter((task) => task.status === libraryFilter)
   }, [libraryFilter, taskLibrary])
 
-  // Set of library task IDs currently (or recently) deployed to the active queue.
-  // Resets automatically the day after the queue date passes.
+  // Set of library task template IDs that are currently in the active today queue.
+  // Drives the "In Today" badge on library task cards.
   const deployedTemplateIds = useMemo(() => {
     if (!queueDate || queueDate < getTodayDateString()) return new Set()
     return new Set(todayTasks.map((t) => t.templateId).filter(Boolean))
@@ -1256,32 +1220,6 @@ function App() {
         acc[task.id] = validateLibraryTask(task)
         return acc
       }, {}),
-    [taskLibrary],
-  )
-  const activeDeployCandidates = useMemo(
-    () =>
-      taskLibrary
-        .filter((task) => task.status === 'Active')
-        .map((task) => ({
-          ...task,
-          errors: libraryValidationMap[task.id] ?? [],
-        })),
-    [libraryValidationMap, taskLibrary],
-  )
-  const deployableCandidates = useMemo(
-    () => activeDeployCandidates.filter((task) => task.errors.length === 0),
-    [activeDeployCandidates],
-  )
-  const blockedActiveCandidates = useMemo(
-    () => activeDeployCandidates.filter((task) => task.errors.length > 0),
-    [activeDeployCandidates],
-  )
-  const pausedCount = useMemo(
-    () => taskLibrary.filter((task) => task.status === 'Paused').length,
-    [taskLibrary],
-  )
-  const archivedCount = useMemo(
-    () => taskLibrary.filter((task) => task.status === 'Archived').length,
     [taskLibrary],
   )
 
@@ -1366,10 +1304,9 @@ function App() {
       todayTasks,
       sessions,
       activeTaskId,
-      lastDeploymentAt,
       queueDate,
     })
-  }, [activeTaskId, lastDeploymentAt, queueDate, sessions, taskLibrary, todayTasks])
+  }, [activeTaskId, queueDate, sessions, taskLibrary, todayTasks])
 
   useEffect(() => {
     saveCompletionLog(completionLog)
@@ -1394,85 +1331,42 @@ function App() {
         upsertTaskTemplates(taskLibrary, userId)
       }
 
-      // 2. Today tasks — load from Supabase, fall back to 9am auto-deploy
-      // Track the effective queue in a local var so GCal merge can dedup cleanly.
+      // 2. Today tasks — load from Supabase; the queue is calendar-driven so
+      //    GCal merge (step 3) will prune any tasks no longer on the calendar.
       let effectiveTodayTasks = []
-      {
-        const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
-        if (remoteTodayTasks && remoteTodayTasks.length > 0) {
-          effectiveTodayTasks = remoteTodayTasks
-          setTodayTasks(remoteTodayTasks)
-          setQueueDate(targetStr)
+      const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
+      if (remoteTodayTasks && remoteTodayTasks.length > 0) {
+        effectiveTodayTasks = remoteTodayTasks
+        setTodayTasks(remoteTodayTasks)
+        setQueueDate(targetStr)
+        setSessions((prev) => {
+          const next = { ...prev }
+          remoteTodayTasks.forEach((task) => {
+            if (!next[task.id]) next[task.id] = getInitialSession(task)
+          })
+          return next
+        })
+        const taskIds = remoteTodayTasks.map((t) => t.id)
+        const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
+        if (remoteTimerSessions) {
           setSessions((prev) => {
             const next = { ...prev }
-            remoteTodayTasks.forEach((task) => {
-              if (!next[task.id]) next[task.id] = getInitialSession(task)
+            remoteTimerSessions.forEach((remoteSession) => {
+              const { taskId } = remoteSession
+              if (!taskId) return
+              const hasProgress =
+                remoteSession.timerState !== 'notStarted' || remoteSession.elapsedSeconds > 0
+              if (hasProgress) {
+                next[taskId] = { ...(next[taskId] ?? {}), ...remoteSession }
+              }
             })
             return next
           })
-          const taskIds = remoteTodayTasks.map((t) => t.id)
-          const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
-          if (remoteTimerSessions) {
-            setSessions((prev) => {
-              const next = { ...prev }
-              remoteTimerSessions.forEach((remoteSession) => {
-                const { taskId } = remoteSession
-                if (!taskId) return
-                const hasProgress =
-                  remoteSession.timerState !== 'notStarted' || remoteSession.elapsedSeconds > 0
-                if (hasProgress) {
-                  next[taskId] = { ...(next[taskId] ?? {}), ...remoteSession }
-                }
-              })
-              return next
-            })
-          }
-          const prefs = await loadUserPreferences(userId)
-          if (prefs?.cleared_dates) {
-            setClearedDates(prefs.cleared_dates)
-            window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
-          }
-        } else {
-          // No plan and no existing tasks — check for 9am auto-population (weekdays only)
-          const nowDate = new Date()
-          const weekday = nowDate.getDay() // 0=Sun, 6=Sat
-          const hour = nowDate.getHours()
-          const lastAutoDate = window.localStorage.getItem('cosa.lastAutoDeployDate')
-          const localCleared = JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]')
-          if (
-            weekday >= 1 && weekday <= 5 &&
-            hour >= 9 &&
-            lastAutoDate !== todayStr &&
-            !localCleared.includes(todayStr)
-          ) {
-            const deployable = activeLibrary.filter((t) => t.status === 'Active')
-            const validDeployable = deployable.filter((t) => validateLibraryTask(t).length === 0)
-            if (validDeployable.length > 0) {
-              const deployId = Date.now()
-              let snapshot = validDeployable.map((t, i) => mapLibraryTaskToTodayTask(t, deployId, i))
-
-              // Create calendar events for auto-deployed tasks
-              const providerToken = (await supabase.auth.getSession()).data.session?.provider_token
-              if (providerToken) {
-                const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, todayStr)
-                if (Object.keys(eventIdMap).length > 0) {
-                  snapshot = snapshot.map((t) => ({
-                    ...t,
-                    calendarEventId: eventIdMap[t.id] ?? null,
-                  }))
-                }
-              }
-
-              effectiveTodayTasks = snapshot
-              setTodayTasks(snapshot)
-              setSessions(buildSessionsFromTodayTasks(snapshot))
-              setActiveTaskId(snapshot[0]?.id ?? null)
-              setQueueDate(todayStr)
-              window.localStorage.setItem('cosa.lastAutoDeployDate', todayStr)
-              upsertTodayTasks(snapshot, userId, todayStr)
-              setStatusMessage("Today's tasks auto-deployed from your library.")
-            }
-          }
+        }
+        const prefs = await loadUserPreferences(userId)
+        if (prefs?.cleared_dates) {
+          setClearedDates(prefs.cleared_dates)
+          window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
         }
       }
 
@@ -1567,71 +1461,6 @@ function App() {
     setTaskLibrary((prev) => [nextTask, ...prev])
     setSelectedLibraryTaskId(nextId)
     setLibraryMessage('New task created.')
-  }
-
-  async function deployLibraryToToday() {
-    if (hasLockedTodayTimers) {
-      setLibraryMessage('Finish, cancel, or pause-proof active timers before deploying a new Today snapshot.')
-      return
-    }
-
-    if (blockedActiveCandidates.length > 0) {
-      setLibraryMessage(
-        `${blockedActiveCandidates.length} Active task(s) have missing required fields. Fix validation errors before deployment.`,
-      )
-      return
-    }
-
-    const dayFilteredCandidates = deployableCandidates
-
-    if (dayFilteredCandidates.length === 0) {
-      setLibraryMessage('No Active tasks in the library to deploy.')
-      return
-    }
-
-    const deploymentId = Date.now()
-    const snapshot = dayFilteredCandidates.map((task, index) =>
-      mapLibraryTaskToTodayTask(task, deploymentId, index),
-    )
-
-    const deployTargetDate = getDeployTargetDate()
-
-    // Create Google Calendar events (if Calendar scope granted)
-    let finalSnapshot = snapshot
-    const providerToken = session?.provider_token
-    if (providerToken) {
-      const eventIdMap = await createEventsForSnapshot(snapshot, providerToken, deployTargetDate)
-      if (Object.keys(eventIdMap).length > 0) {
-        finalSnapshot = snapshot.map((t) => ({
-          ...t,
-          calendarEventId: eventIdMap[t.id] ?? null,
-        }))
-      }
-    }
-
-    setTodayTasks(finalSnapshot)
-    setSessions(buildSessionsFromTodayTasks(finalSnapshot))
-    setActiveTaskId(finalSnapshot[0]?.id ?? null)
-    setDefinitionInput('')
-    setCompletionInput('')
-    setOutcomeSelection(null)
-    setStatusMessage('')
-    setLastDeploymentAt(new Date().toISOString())
-    setQueueDate(deployTargetDate)
-    setLibraryMessage(
-      `Deployed ${finalSnapshot.length} Active task template(s) to Today.${providerToken ? ' Calendar events created.' : ''} Paused (${pausedCount}) and Archived (${archivedCount}) tasks were excluded.`,
-    )
-    if (supabaseConfigured && session?.user?.id) {
-      upsertTodayTasks(finalSnapshot, session.user.id, deployTargetDate)
-    }
-
-    // If this date was manually cleared, un-clear it — intent has changed
-    if (clearedDates.includes(deployTargetDate)) {
-      const next = clearedDates.filter((d) => d !== deployTargetDate)
-      setClearedDates(next)
-      window.localStorage.setItem('cosa.clearedDates', JSON.stringify(next))
-      if (session?.user?.id) upsertUserPreferences({ cleared_dates: next }, session.user.id)
-    }
   }
 
   function setActiveTask(taskId) {
@@ -2262,30 +2091,6 @@ function App() {
               })
             })()}
           </div>
-          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2">
-            <p className="text-[11px] font-semibold uppercase text-slate-500">
-              Today&apos;s Deploy Preview · {DAY_NAMES[new Date().getDay()]}
-            </p>
-            <ul className="mt-1 space-y-1 text-xs text-slate-700">
-              {activeDeployCandidates.map((task) => (
-                <li key={`preview-${task.id}`} className="flex items-center justify-between gap-2">
-                  <span className="truncate">{task.name}</span>
-                  <span
-                    className={
-                      task.errors.length === 0
-                        ? 'rounded bg-emerald-100 px-1 py-0.5 text-[10px] text-emerald-700'
-                        : 'rounded bg-rose-100 px-1 py-0.5 text-[10px] text-rose-700'
-                    }
-                  >
-                    {task.errors.length === 0 ? 'Ready' : 'Blocked'}
-                  </span>
-                </li>
-              ))}
-              {activeDeployCandidates.length === 0 ? (
-                <li className="text-slate-500">No Active tasks in the library.</li>
-              ) : null}
-            </ul>
-          </div>
         </aside>
 
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -2293,13 +2098,6 @@ function App() {
           <p className="mt-1 text-sm text-slate-600">
             Library edits update template data only. They do not retroactively change current Today tasks.
           </p>
-          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-            <p className="font-semibold">Deployment preview</p>
-            <p className="mt-1">
-              Deployable Active: {deployableCandidates.length} | Blocked Active:{' '}
-              {blockedActiveCandidates.length} | Paused: {pausedCount} | Archived: {archivedCount}
-            </p>
-          </div>
 
           {!selectedLibraryTask ? (
             <p className="mt-4 text-sm text-slate-600">Select a task to edit.</p>
@@ -2456,18 +2254,14 @@ function App() {
                 )}
               </div>
 
-              {(libraryValidationMap[selectedLibraryTask.id] ?? []).length > 0 ? (
+              {(libraryValidationMap[selectedLibraryTask.id] ?? []).length > 0 && (
                 <div className="sm:col-span-2 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
-                  <p className="font-semibold">Fix before deployment:</p>
+                  <p className="font-semibold">Validation errors:</p>
                   <ul className="mt-1 space-y-1">
                     {(libraryValidationMap[selectedLibraryTask.id] ?? []).map((errorText) => (
                       <li key={errorText}>- {errorText}</li>
                     ))}
                   </ul>
-                </div>
-              ) : (
-                <div className="sm:col-span-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
-                  Ready to deploy.
                 </div>
               )}
 
@@ -3389,7 +3183,7 @@ function App() {
             ) : (
               <>
                 <p className="mb-2 text-xs text-slate-500">
-                  {queueDate ? `Queue for: ${formatQueueDate(queueDate)}` : `Deployed: ${new Date(lastDeploymentAt).toLocaleDateString()}`}
+                  {queueDate ? `Queue for: ${formatQueueDate(queueDate)}` : 'Today\'s Queue'}
                 </p>
                 {tasksByTrack.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No tasks in queue.</p>
