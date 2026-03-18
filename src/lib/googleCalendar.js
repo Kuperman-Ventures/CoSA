@@ -161,10 +161,10 @@ export async function updateCalendarEventAtTime(eventId, title, track, startISO,
     end:   { dateTime: endISO,   timeZone: userTz },
     extendedProperties: {
       private: {
-        cosaTag:   'cosa-event',
-        cosaTrack: track,
+        cosaTag:      'cosa-event',
+        cosaTrack:    track,
+        cosaSubTrack: extras.subTrack ?? '',
         ...(extras.templateId ? { cosaTemplateId: extras.templateId } : {}),
-        ...(extras.subTrack   ? { cosaSubTrack:   extras.subTrack }   : {}),
       },
     },
   }
