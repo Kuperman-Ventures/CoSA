@@ -85,7 +85,6 @@ const TIMER_STATES = {
 }
 
 const LIBRARY_STATUSES = ['Active', 'Paused', 'Archived']
-const TIME_BLOCK_ORDER = ['BD', 'Networking', 'Job Search', 'Encore OS', 'Friday']
 const ALL_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 // Sub-tracks per track — kept in sync with WeekPlanner TRACK_SUB_TRACKS / DEFAULT_ALLOCATIONS
 const TRACK_SUB_TRACKS = {
@@ -863,7 +862,7 @@ function SortableTaskRow({ task, session, trackMeta }) {
       <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: trackMeta?.color }} />
       <div className="flex-1 min-w-0">
         <p className="truncate font-medium">{task.name}</p>
-        <p className="text-xs text-slate-500">{task.timeBlock} · {task.estimateMinutes}m · {session?.timerState}</p>
+        <p className="text-xs text-slate-500">{task.estimateMinutes}m · {session?.timerState}</p>
       </div>
     </li>
   )
@@ -2346,22 +2345,6 @@ function App() {
                 />
               </label>
               <label className="text-sm">
-                <span className="mb-1 block text-slate-600">Time Block</span>
-                <select
-                  value={selectedLibraryTask.timeBlock}
-                  onChange={(event) =>
-                    updateLibraryTask(selectedLibraryTask.id, 'timeBlock', event.target.value)
-                  }
-                  className="w-full rounded-md border border-slate-300 px-2 py-2 outline-none ring-blue-300 focus:ring-2"
-                >
-                  {TIME_BLOCK_ORDER.map((timeBlock) => (
-                    <option key={timeBlock} value={timeBlock}>
-                      {timeBlock}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm">
                 <span className="mb-1 block text-slate-600">Status</span>
                 <select
                   value={selectedLibraryTask.status}
@@ -3357,7 +3340,7 @@ function App() {
                             <span className="text-slate-700">{task.name ?? lib?.name ?? '—'}</span>
                             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta?.color }} />
                           </div>
-                          <p className="mt-0.5 text-xs text-slate-400">{task.estimateMinutes ?? lib?.defaultTimeEstimate}m · {task.timeBlock}</p>
+                          <p className="mt-0.5 text-xs text-slate-400">{task.estimateMinutes ?? lib?.defaultTimeEstimate}m</p>
                         </li>
                       )
                     })}
