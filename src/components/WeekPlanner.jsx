@@ -159,6 +159,53 @@ function healthColor(assigned, target) {
   return 'red'
 }
 
+/**
+ * Task Library + older GCal events use cosaSubTrack labels that don't always match
+ * the allocation bucket keys in DEFAULT_ALLOCATIONS (e.g. "Business Development"
+ * vs "Networking & Business Development"). Without mapping, minutes accrue under
+ * invisible keys — sub-bars like Kuperman Advisors → Product stay stuck at 0.
+ */
+const SUB_TRACK_TO_ALLOCATION_BUCKET = {
+  advisors: {
+    'Business Development': 'Networking & Business Development',
+    'Networking & Business Development': 'Networking & Business Development',
+    Content: 'Materials',
+    Meetings: 'Client Work',
+  },
+  jobSearch: {
+    Networking: 'Network Development & Outreach',
+    'L&D': 'Searching',
+    Applications: 'Materials',
+    Admin: 'Network Development & Outreach',
+    Boards: 'Searching',
+    'Network Development & Outreach': 'Network Development & Outreach',
+    Searching: 'Searching',
+    Materials: 'Materials',
+  },
+  ventures: {
+    Growth: 'Alpha',
+    Research: 'Product',
+    Subscription: 'Product',
+    Build: 'Product',
+    Alpha: 'Alpha',
+    Product: 'Product',
+    'Beta Prep': 'Beta Prep',
+  },
+}
+
+/** Map a GCal / library sub-track string to a key that exists in trackTargets[track].subTracks */
+function allocationSubTrackKey(track, rawSubTrack, bucketKeys) {
+  if (!rawSubTrack || !bucketKeys?.length) return null
+  const trimmed = String(rawSubTrack).trim()
+  if (!trimmed) return null
+  const aliases = SUB_TRACK_TO_ALLOCATION_BUCKET[track]
+  const mapped = aliases?.[trimmed] ?? trimmed
+  if (bucketKeys.includes(mapped)) return mapped
+  const lower = mapped.toLowerCase()
+  const ciHit = bucketKeys.find((k) => k.toLowerCase() === lower)
+  return ciHit ?? null
+}
+
 // ─── Allocation Editor Modal ──────────────────────────────────────────────────
 
 function AllocationEditor({ allocations, onSave, onClose }) {
@@ -293,8 +340,10 @@ function HealthBars({ weekEvents, calendarTags, trackTargets, onEditAllocations 
     const dur = eventDurationMins(ev)
     if (!totals[track]) totals[track] = { total: 0, sub: {} }
     totals[track].total += dur
-    if (subTrack) {
-      totals[track].sub[subTrack] = (totals[track].sub[subTrack] ?? 0) + dur
+    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
+    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
+    if (subKey) {
+      totals[track].sub[subKey] = (totals[track].sub[subKey] ?? 0) + dur
     }
   }
 
@@ -303,8 +352,10 @@ function HealthBars({ weekEvents, calendarTags, trackTargets, onEditAllocations 
     if (!track || !durationMin) continue
     if (!totals[track]) totals[track] = { total: 0, sub: {} }
     totals[track].total += durationMin
-    if (subTrack) {
-      totals[track].sub[subTrack] = (totals[track].sub[subTrack] ?? 0) + durationMin
+    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
+    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
+    if (subKey) {
+      totals[track].sub[subKey] = (totals[track].sub[subKey] ?? 0) + durationMin
     }
   }
 
