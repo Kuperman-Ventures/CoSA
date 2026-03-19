@@ -90,20 +90,35 @@ const SNAP_MINUTES   = 15       // snap to 15-min intervals
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Calendar date YYYY-MM-DD in the user's local timezone (avoid UTC drift from toISOString). */
+function formatLocalDate(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Local calendar day for a GCal dateTime string (for Supabase tags vs week filter). */
+function dateTimeToLocalYmd(isoStr) {
+  if (!isoStr) return null
+  return formatLocalDate(new Date(isoStr))
+}
+
 function getWeekMondayStr(offsetWeeks = 0) {
   const d = new Date()
   const day = d.getDay()
   const daysToMonday = day === 0 ? 6 : day - 1
   d.setDate(d.getDate() - daysToMonday + offsetWeeks * 7)
   d.setHours(0, 0, 0, 0)
-  return d.toISOString().split('T')[0]
+  return formatLocalDate(d)
 }
 
 function getWeekDates(mondayStr) {
+  const anchor = new Date(`${mondayStr}T12:00:00`)
   return DAY_NAMES.map((name, i) => {
-    const d = new Date(mondayStr + 'T12:00:00')
-    d.setDate(d.getDate() + i)
-    return { name, date: d.toISOString().split('T')[0] }
+    const d = new Date(anchor)
+    d.setDate(anchor.getDate() + i)
+    return { name, date: formatLocalDate(d) }
   })
 }
 
@@ -329,7 +344,7 @@ function AllocationEditor({ allocations, onSave, onClose }) {
 
 // ─── Health Bars ──────────────────────────────────────────────────────────────
 
-function HealthBars({ weekEvents, calendarTags, trackTargets, onEditAllocations }) {
+function HealthBars({ weekEvents, calendarTags, weekRangeStart, weekRangeEnd, trackTargets, onEditAllocations }) {
   const totals = {}
 
   for (const ev of weekEvents) {
@@ -347,9 +362,12 @@ function HealthBars({ weekEvents, calendarTags, trackTargets, onEditAllocations 
     }
   }
 
+  // Only personal-calendar tags for THIS visible week — previously every saved tag
+  // (all time) was summed on every week, which blew up bars when browsing ahead.
   for (const tag of Object.values(calendarTags)) {
-    const { track, subTrack, durationMin } = tag
+    const { track, subTrack, durationMin, date: tagDate } = tag
     if (!track || !durationMin) continue
+    if (!tagDate || tagDate < weekRangeStart || tagDate > weekRangeEnd) continue
     if (!totals[track]) totals[track] = { total: 0, sub: {} }
     totals[track].total += durationMin
     const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
@@ -961,9 +979,11 @@ export default function WeekPlanner({
     setLoading(true)
     setError('')
     try {
-      const friday  = weekDates[4].date
-      const timeMin = `${mondayStr}T00:00:00Z`
-      const timeMax = `${friday}T23:59:59Z`
+      const wd = getWeekDates(mondayStr)
+      const friday = wd[4].date
+      // Local Monday 00:00 → Friday 23:59:59.999 as ISO for Google Calendar API
+      const timeMin = new Date(`${mondayStr}T00:00:00`).toISOString()
+      const timeMax = new Date(`${friday}T23:59:59.999`).toISOString()
 
       const [allCosa, personal] = await Promise.all([
         fetchAllCalendarEvents(providerToken, timeMin, timeMax),
@@ -1069,7 +1089,7 @@ export default function WeekPlanner({
     } else {
       // Personal calendar event — save tag to Supabase only
       const dur = eventDurationMins(ev)
-      const date = ev.start?.dateTime?.slice(0, 10) ?? null
+      const date = dateTimeToLocalYmd(ev.start?.dateTime)
       const tag = { track, subTrack, title: ev.summary, durationMin: dur, date }
       if (supabaseConfigured) {
         await upsertCalendarEventTag(session.user.id, ev.id, tag)
@@ -1173,6 +1193,8 @@ export default function WeekPlanner({
         <HealthBars
           weekEvents={weekEvents}
           calendarTags={calendarTags}
+          weekRangeStart={weekDates[0].date}
+          weekRangeEnd={weekDates[4].date}
           trackTargets={trackTargets}
           onEditAllocations={() => setShowAllocEditor(true)}
         />
