@@ -77,7 +77,8 @@ const DEFAULT_ALLOCATIONS = {
       'Beta Prep': 5,
     },
   },
-  networking:  { weekly: 200, subTracks: {} },
+  // networking track still exists for tasks/GCal; This Week bars split its time into
+  // Advisors · Networking & BD and Job Search · Net Dev & Outreach (no separate row).
   development: { weekly: 60,  subTracks: {} },
   cosaAdmin:   { weekly: 60,  subTracks: {} },
 }
@@ -367,28 +368,64 @@ function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRa
     }
   }
 
+  const ADV_NET_SUB = 'Networking & Business Development'
+  const JS_NET_SUB = 'Network Development & Outreach'
+
+  /** Shared Networking track: half the minutes roll into each parent track + allocation sub-bucket. */
+  function addNetworkingSplit(minutes, metaBase, rawSub) {
+    const h1 = Math.floor(minutes / 2)
+    const h2 = minutes - h1
+    const advBucket = trackTargets.advisors?.subTracks?.[ADV_NET_SUB] != null ? ADV_NET_SUB : null
+    const jsBucket = trackTargets.jobSearch?.subTracks?.[JS_NET_SUB] != null ? JS_NET_SUB : null
+    const note =
+      'Track: Shared Networking — time split 50/50 to Advisors (Networking & BD) and Job Search (Net Dev & Outreach).'
+    addContribution('advisors', h1, {
+      ...metaBase,
+      id: `${metaBase.id}-split-adv`,
+      splitFromNetworking: true,
+      splitNote: note,
+      rawSubTrack: rawSub || null,
+      allocationBucket: advBucket,
+    }, advBucket)
+    addContribution('jobSearch', h2, {
+      ...metaBase,
+      id: `${metaBase.id}-split-js`,
+      splitFromNetworking: true,
+      splitNote: note,
+      rawSubTrack: rawSub || null,
+      allocationBucket: jsBucket,
+    }, jsBucket)
+  }
+
   for (const ev of weekEvents) {
     const priv = ev.extendedProperties?.private ?? {}
     const track = priv.cosaTrack || null
     const subTrack = priv.cosaSubTrack || null
     if (!track) continue
     const dur = eventDurationMins(ev)
-    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
-    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
     const startISO = ev.start?.dateTime ?? null
     const dayLabel = startISO
       ? new Date(startISO).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
       : '—'
+    const metaBase = {
+      id: `gcal-${ev.id}`,
+      source: 'cosa-calendar',
+      title: ev.summary ?? '(untitled)',
+      startISO,
+      sortKey: startISO || '',
+      dayLabel,
+    }
+    if (track === 'networking') {
+      addNetworkingSplit(dur, metaBase, subTrack)
+      continue
+    }
+    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
+    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
     addContribution(
       track,
       dur,
       {
-        id: `gcal-${ev.id}`,
-        source: 'cosa-calendar',
-        title: ev.summary ?? '(untitled)',
-        startISO,
-        sortKey: startISO || '',
-        dayLabel,
+        ...metaBase,
         rawSubTrack: subTrack || null,
         allocationBucket: subKey,
       },
@@ -400,21 +437,28 @@ function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRa
     const { track, subTrack, durationMin, date: tagDate } = tag
     if (!track || !durationMin) continue
     if (!tagDate || tagDate < weekRangeStart || tagDate > weekRangeEnd) continue
-    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
-    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
     const dayLabel = tagDate
       ? new Date(`${tagDate}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
       : '—'
+    const metaBase = {
+      id: `tag-${gcalId}`,
+      source: 'personal-tagged',
+      title: tag.title || '(tagged event)',
+      startISO: null,
+      sortKey: `${tagDate}T12:00:00`,
+      dayLabel,
+    }
+    if (track === 'networking') {
+      addNetworkingSplit(durationMin, metaBase, subTrack)
+      continue
+    }
+    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
+    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
     addContribution(
       track,
       durationMin,
       {
-        id: `tag-${gcalId}`,
-        source: 'personal-tagged',
-        title: tag.title || '(tagged event)',
-        startISO: null,
-        sortKey: `${tagDate}T12:00:00`,
-        dayLabel,
+        ...metaBase,
         rawSubTrack: subTrack || null,
         allocationBucket: subKey,
       },
@@ -562,6 +606,9 @@ function CalendarHealthDetailModal({ detail, onClose }) {
                         <p className="truncate text-xs font-semibold text-slate-800">{it.title}</p>
                         <p className="mt-0.5 text-[11px] text-slate-400">{src}</p>
                         {subLine && <p className="mt-0.5 text-[11px] text-slate-500">{subLine}</p>}
+                        {it.splitNote && (
+                          <p className="mt-0.5 text-[11px] text-amber-800">{it.splitNote}</p>
+                        )}
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-[11px] font-medium text-slate-700">{it.minutes}m</p>
@@ -1109,6 +1156,11 @@ export default function WeekPlanner({
       const parsed = JSON.parse(raw)
       // If stored version doesn't have the new 'development' track, reset to defaults
       if (!parsed.development) return DEFAULT_ALLOCATIONS
+      // Shared Networking no longer has its own allocation row — time splits to Advisors + Job Search
+      if (parsed.networking) {
+        delete parsed.networking
+        try { localStorage.setItem('cosa.allocations', JSON.stringify(parsed)) } catch {}
+      }
       return parsed
     } catch { return DEFAULT_ALLOCATIONS }
   })

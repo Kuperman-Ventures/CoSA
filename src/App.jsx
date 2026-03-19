@@ -480,10 +480,14 @@ const KPI_DEFINITIONS = [
   { id: 'discovery-held',    label: 'Discovery calls held',         kpiValueId: 'discoveryCallHeld',         target: 1, period: 'week',  kpiMapping: 'Discovery calls held',    trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
   { id: 'discovery-booked',  label: 'Discovery calls booked',       kpiValueId: 'discoveryCallBooked',       target: 2, period: 'week',  kpiMapping: 'Discovery calls booked',  trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
   { id: 'networking-meeting',label: 'Networking meetings attended', kpiValueId: 'networkingMeetingAttended', target: 1, period: 'week',  kpiMapping: 'Connective attendance',   trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
-  // ─── Shared (Networking) ─────────────────────────────────────────────────
-  { id: 'warm-reconnects',   label: 'Warm reconnect communications', kpiValueId: 'warmReconnectComms', target: 3, period: 'week', kpiMapping: 'Warm reconnects sent',    trackGroup: 'Shared (Networking)', color: '#C2762A' },
-  { id: 'linkedin-comments', label: 'LinkedIn comments posted',      kpiValueId: 'linkedinComments',   target: 5, period: 'week', kpiMapping: 'LinkedIn comments posted',trackGroup: 'Shared (Networking)', color: '#C2762A' },
-  { id: 'content-posts',     label: 'Content posts',                 kpiValueId: 'contentPosts',       target: 1, period: 'week', kpiMapping: 'Content posts',           trackGroup: 'Shared (Networking)', color: '#C2762A' },
+  // ─── Shared networking metrics (logged on networking track; shown under both groups) ──
+  // countsTowardWeekScore: Job Search copies are display-only so the week score is not doubled.
+  { id: 'warm-reconnects',   label: 'Warm reconnect communications', kpiValueId: 'warmReconnectComms', target: 3, period: 'week', kpiMapping: 'Warm reconnects sent',    trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
+  { id: 'linkedin-comments', label: 'LinkedIn comments posted',      kpiValueId: 'linkedinComments',   target: 5, period: 'week', kpiMapping: 'LinkedIn comments posted',trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
+  { id: 'content-posts',     label: 'Content posts',                 kpiValueId: 'contentPosts',       target: 1, period: 'week', kpiMapping: 'Content posts',           trackGroup: 'Kuperman Advisors', color: '#1E6B3C' },
+  { id: 'warm-reconnects-js',   label: 'Warm reconnect communications', kpiValueId: 'warmReconnectComms', target: 3, period: 'week', kpiMapping: 'Warm reconnects sent',    trackGroup: 'Job Search', color: '#2E75B6', countsTowardWeekScore: false },
+  { id: 'linkedin-comments-js', label: 'LinkedIn comments posted',      kpiValueId: 'linkedinComments',   target: 5, period: 'week', kpiMapping: 'LinkedIn comments posted',trackGroup: 'Job Search', color: '#2E75B6', countsTowardWeekScore: false },
+  { id: 'content-posts-js',     label: 'Content posts',                 kpiValueId: 'contentPosts',       target: 1, period: 'week', kpiMapping: 'Content posts',           trackGroup: 'Job Search', color: '#2E75B6', countsTowardWeekScore: false },
   // ─── Job Search ──────────────────────────────────────────────────────────
   { id: 'companies-researched',  label: 'Companies researched',   kpiValueId: 'companiesResearched',  target: 5, period: 'week', kpiMapping: 'Companies researched',   trackGroup: 'Job Search', color: '#2E75B6' },
   { id: 'company-outreaches',    label: 'Company outreaches',     kpiValueId: 'companyOutreaches',    target: 5, period: 'week', kpiMapping: 'Company outreaches',     trackGroup: 'Job Search', color: '#2E75B6' },
@@ -494,7 +498,7 @@ const KPI_DEFINITIONS = [
   { id: 'alpha-tester-touchpoints', label: 'Alpha tester touchpoints', kpiValueId: 'alphaTesterTouchpoints', target: 3, period: 'week', kpiMapping: 'Tester touchpoints', trackGroup: 'Kuperman Ventures', color: '#9B6BAE' },
 ]
 
-const KPI_TRACK_GROUPS = ['Kuperman Advisors', 'Shared (Networking)', 'Job Search', 'Kuperman Ventures']
+const KPI_TRACK_GROUPS = ['Kuperman Advisors', 'Job Search', 'Kuperman Ventures']
 
 // Quick Log: KPI options grouped by track, with the track key used for timer_sessions
 const QUICK_LOG_KPI_GROUPS = [
@@ -1437,7 +1441,9 @@ function App() {
       const { count, total } = countKpi(completionLog, def, ws, we, ms, me)
       return { ...def, count, total, hit: isKpiHit(count, total, def) }
     })
-    const weekly = results.filter((k) => !k.isRate && k.period === 'week' && k.target)
+    const weekly = results.filter(
+      (k) => !k.isRate && k.period === 'week' && k.target && k.countsTowardWeekScore !== false,
+    )
     const hit = weekly.filter((k) => k.hit).length
     const score = hit >= 7 ? 'green' : hit >= 4 ? 'yellow' : 'red'
     return { kpisHit: hit, kpisTotal: weekly.length, weekScore: score, kpiResults: results }
@@ -2605,7 +2611,9 @@ function App() {
     const isCurrentWeek = weekOffset === 0
 
     const { kpisHit, kpisTotal, weekScore, kpiResults } = kpiSummary
-    const weeklyKpis = kpiResults.filter((k) => !k.isRate && k.period === 'week' && k.target)
+    const weeklyKpis = kpiResults.filter(
+      (k) => !k.isRate && k.period === 'week' && k.target && k.countsTowardWeekScore !== false,
+    )
 
     const scoreConfig = {
       green:  { label: 'Green',  desc: '7+ KPIs hit — strong week',     bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
@@ -2619,32 +2627,62 @@ function App() {
       advisors:    12, // 700 min
       jobSearch:   12, // 700 min
       ventures:     8, // 500 min
-      networking:   3, // 200 min
       development:  1, // 60 min
       cosaAdmin:    1, // 60 min
     }
-    const timeByTrack = Object.values(TRACKS).map((track) => {
-      const entries = completionLog.filter((e) => {
-        const d = new Date(e.completedAt)
-        return d >= weekStart && d <= weekEnd && e.track === track.key
+    const networkingMinutesThisWeek = completionLog.reduce((sum, e) => {
+      const d = new Date(e.completedAt)
+      if (d < weekStart || d > weekEnd) return sum
+      if (e.track !== 'networking') return sum
+      return sum + Math.round((e.elapsedSeconds ?? 0) / 60)
+    }, 0)
+    const halfNetworkingHours = (networkingMinutesThisWeek / 2) / 60
+    const timeByTrack = Object.values(TRACKS)
+      .filter((track) => track.key !== 'networking')
+      .map((track) => {
+        const entries = completionLog.filter((e) => {
+          const d = new Date(e.completedAt)
+          return d >= weekStart && d <= weekEnd && e.track === track.key
+        })
+        let minutesLogged = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
+        if (track.key === 'advisors') minutesLogged += Math.round(networkingMinutesThisWeek / 2)
+        if (track.key === 'jobSearch') minutesLogged += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
+        const hoursLogged = minutesLogged / 60
+        const targetHours = TRACK_HOUR_TARGETS[track.key] ?? 0
+        const pct = targetHours > 0 ? Math.min(100, Math.round((hoursLogged / targetHours) * 100)) : 0
+        const splitEntries =
+          track.key === 'advisors' || track.key === 'jobSearch'
+            ? completionLog.filter((e) => {
+                const d = new Date(e.completedAt)
+                return d >= weekStart && d <= weekEnd && e.track === 'networking'
+              })
+            : []
+        return { track, hoursLogged, targetHours, pct, entries, splitEntries }
       })
-      const minutesLogged = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
-      const hoursLogged = minutesLogged / 60
-      const targetHours = TRACK_HOUR_TARGETS[track.key] ?? 0
-      const pct = targetHours > 0 ? Math.min(100, Math.round((hoursLogged / targetHours) * 100)) : 0
-      return { track, hoursLogged, targetHours, pct, entries }
-    }).filter((t) => t.targetHours > 0)
+      .filter((t) => t.targetHours > 0)
 
     const weekStartStr = weekStart.toISOString().slice(0, 10)
     const savedReview = fridayReviews.find((r) => r.week_start === weekStartStr)
 
     // ── Detail-drawer helpers ────────────────────────────────────────────────
     function openScoreDetail() {
-      setKpiDetail({ type: 'score', title: 'Week Score Breakdown', kpiResults })
+      setKpiDetail({
+        type: 'score',
+        title: 'Week Score Breakdown',
+        kpiResults: kpiResults.filter((k) => k.countsTowardWeekScore !== false),
+      })
     }
 
     function openTrackDetail(trackData) {
-      setKpiDetail({ type: 'track', title: `${trackData.track.label} — Sessions This Week`, trackData })
+      const mergedEntries = [
+        ...trackData.entries,
+        ...(trackData.splitEntries ?? []),
+      ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+      setKpiDetail({
+        type: 'track',
+        title: `${trackData.track.label} — Sessions This Week`,
+        trackData: { ...trackData, entries: mergedEntries },
+      })
     }
 
     function openKpiDetail(kpi) {
@@ -2891,6 +2929,7 @@ function App() {
         {/* KPI scorecard by track group — each row clickable */}
         {KPI_TRACK_GROUPS.map((group) => {
           const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
+          if (groupKpis.length === 0) return null
           return (
             <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${groupKpis[0]?.color}18` }}>
