@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS public.task_templates (
   user_id                     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name                        text        NOT NULL DEFAULT '',
   track                       text        NOT NULL DEFAULT 'advisors'
-    CHECK (track IN ('advisors','jobSearch','ventures','networking')),
+    CHECK (track IN ('advisors','jobSearch','ventures','networking','development','cosaAdmin')),
   time_block                  text        NOT NULL DEFAULT 'BD'
     CHECK (time_block IN ('BD','Networking','Job Search','Encore OS','Friday')),
   default_estimate_minutes    integer     NOT NULL DEFAULT 25,
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS public.today_task_instances (
   queue_order                 integer     NOT NULL DEFAULT 0,
   name_snapshot               text        NOT NULL DEFAULT '',
   track_snapshot              text        NOT NULL DEFAULT 'advisors'
-    CHECK (track_snapshot IN ('advisors','jobSearch','ventures','networking')),
+    CHECK (track_snapshot IN ('advisors','jobSearch','ventures','networking','development','cosaAdmin')),
   time_block_snapshot         text        NOT NULL DEFAULT 'BD'
     CHECK (time_block_snapshot IN ('BD','Networking','Job Search','Encore OS','Friday')),
   estimate_minutes_snapshot   integer     NOT NULL DEFAULT 25,
