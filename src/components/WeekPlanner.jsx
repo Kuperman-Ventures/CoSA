@@ -342,40 +342,93 @@ function AllocationEditor({ allocations, onSave, onClose }) {
   )
 }
 
-// ─── Health Bars ──────────────────────────────────────────────────────────────
+// ─── This Week: totals + per-event contributors (for drill-down modal) ───────
 
-function HealthBars({ weekEvents, calendarTags, weekRangeStart, weekRangeEnd, trackTargets, onEditAllocations }) {
+function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd) {
   const totals = {}
+  const contributors = {}
+
+  function ensureTrack(t) {
+    if (!totals[t]) {
+      totals[t] = { total: 0, sub: {} }
+      contributors[t] = { all: [], bySub: {} }
+    }
+  }
+
+  function addContribution(track, minutes, meta, subKey) {
+    ensureTrack(track)
+    const item = { minutes, ...meta }
+    contributors[track].all.push(item)
+    totals[track].total += minutes
+    if (subKey) {
+      totals[track].sub[subKey] = (totals[track].sub[subKey] ?? 0) + minutes
+      if (!contributors[track].bySub[subKey]) contributors[track].bySub[subKey] = []
+      contributors[track].bySub[subKey].push(item)
+    }
+  }
 
   for (const ev of weekEvents) {
     const priv = ev.extendedProperties?.private ?? {}
-    const track    = priv.cosaTrack    || null
+    const track = priv.cosaTrack || null
     const subTrack = priv.cosaSubTrack || null
     if (!track) continue
     const dur = eventDurationMins(ev)
-    if (!totals[track]) totals[track] = { total: 0, sub: {} }
-    totals[track].total += dur
     const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
     const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
-    if (subKey) {
-      totals[track].sub[subKey] = (totals[track].sub[subKey] ?? 0) + dur
-    }
+    const startISO = ev.start?.dateTime ?? null
+    const dayLabel = startISO
+      ? new Date(startISO).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+      : '—'
+    addContribution(
+      track,
+      dur,
+      {
+        id: `gcal-${ev.id}`,
+        source: 'cosa-calendar',
+        title: ev.summary ?? '(untitled)',
+        startISO,
+        sortKey: startISO || '',
+        dayLabel,
+        rawSubTrack: subTrack || null,
+        allocationBucket: subKey,
+      },
+      subKey,
+    )
   }
 
-  // Only personal-calendar tags for THIS visible week — previously every saved tag
-  // (all time) was summed on every week, which blew up bars when browsing ahead.
-  for (const tag of Object.values(calendarTags)) {
+  for (const [gcalId, tag] of Object.entries(calendarTags)) {
     const { track, subTrack, durationMin, date: tagDate } = tag
     if (!track || !durationMin) continue
     if (!tagDate || tagDate < weekRangeStart || tagDate > weekRangeEnd) continue
-    if (!totals[track]) totals[track] = { total: 0, sub: {} }
-    totals[track].total += durationMin
     const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
     const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
-    if (subKey) {
-      totals[track].sub[subKey] = (totals[track].sub[subKey] ?? 0) + durationMin
-    }
+    const dayLabel = tagDate
+      ? new Date(`${tagDate}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+      : '—'
+    addContribution(
+      track,
+      durationMin,
+      {
+        id: `tag-${gcalId}`,
+        source: 'personal-tagged',
+        title: tag.title || '(tagged event)',
+        startISO: null,
+        sortKey: `${tagDate}T12:00:00`,
+        dayLabel,
+        rawSubTrack: subTrack || null,
+        allocationBucket: subKey,
+      },
+      subKey,
+    )
   }
+
+  return { totals, contributors }
+}
+
+// ─── Health Bars ──────────────────────────────────────────────────────────────
+
+function HealthBars({ healthModel, trackTargets, onEditAllocations, onOpenHealthDetail }) {
+  const { totals, contributors } = healthModel
 
   return (
     <aside className="w-52 shrink-0 space-y-3 overflow-y-auto pb-4">
@@ -398,13 +451,25 @@ function HealthBars({ weekEvents, calendarTags, weekRangeStart, weekRangeEnd, tr
         const textCls = color === 'green' ? 'text-emerald-700' : color === 'yellow' ? 'text-amber-700' : 'text-red-700'
         return (
           <div key={track}>
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="font-medium truncate" style={{ color: TRACK_COLORS[track] }}>{TRACK_LABELS[track]}</span>
-              <span className={`font-semibold shrink-0 ml-1 ${textCls}`}>{assigned}m / {cfg.weekly}m</span>
-            </div>
-            <div className="mt-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-              <div className={`h-full rounded-full transition-all ${barCls}`} style={{ width: `${barW}%` }} />
-            </div>
+            <button
+              type="button"
+              onClick={() =>
+                onOpenHealthDetail({
+                  title: `${TRACK_LABELS[track]} — all calendar time this week`,
+                  targetMins: cfg.weekly,
+                  items: contributors[track]?.all ?? [],
+                })}
+              className="group w-full rounded-md text-left outline-none ring-slate-300 focus-visible:ring-2 hover:bg-slate-50"
+              title="Show events that contribute to this total"
+            >
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-medium truncate group-hover:underline" style={{ color: TRACK_COLORS[track] }}>{TRACK_LABELS[track]}</span>
+                <span className={`font-semibold shrink-0 ml-1 ${textCls}`}>{assigned}m / {cfg.weekly}m</span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${barCls}`} style={{ width: `${barW}%` }} />
+              </div>
+            </button>
             {Object.entries(cfg.subTracks).map(([st, tgt]) => {
               const stAssigned = totals[track]?.sub[st] ?? 0
               const stColor = healthColor(stAssigned, tgt)
@@ -412,13 +477,25 @@ function HealthBars({ weekEvents, calendarTags, weekRangeStart, weekRangeEnd, tr
               const stBarCls = stColor === 'green' ? 'bg-emerald-400' : stColor === 'yellow' ? 'bg-amber-300' : 'bg-red-300'
               return (
                 <div key={st} className="ml-2 mt-1">
-                  <div className="flex items-center justify-between text-[10px] text-slate-500">
-                    <span className="truncate">{st}</span>
-                    <span className="shrink-0 ml-1">{stAssigned}m / {tgt}m</span>
-                  </div>
-                  <div className="mt-0.5 h-1 rounded-full bg-slate-100 overflow-hidden">
-                    <div className={`h-full rounded-full ${stBarCls}`} style={{ width: `${stBarW}%` }} />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenHealthDetail({
+                        title: `${TRACK_LABELS[track]} — ${st}`,
+                        targetMins: tgt,
+                        items: contributors[track]?.bySub[st] ?? [],
+                      })}
+                    className="group w-full rounded-md text-left outline-none ring-slate-300 focus-visible:ring-2 hover:bg-slate-50"
+                    title="Show events counted in this sub-track bucket"
+                  >
+                    <div className="flex items-center justify-between text-[10px] text-slate-500">
+                      <span className="truncate group-hover:underline">{st}</span>
+                      <span className="shrink-0 ml-1">{stAssigned}m / {tgt}m</span>
+                    </div>
+                    <div className="mt-0.5 h-1 rounded-full bg-slate-100 overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${stBarCls}`} style={{ width: `${stBarW}%` }} />
+                    </div>
+                  </button>
                 </div>
               )
             })}
@@ -426,6 +503,89 @@ function HealthBars({ weekEvents, calendarTags, weekRangeStart, weekRangeEnd, tr
         )
       })}
     </aside>
+  )
+}
+
+/** Drill-down list for This Week bars (same UX idea as Weekly Review KPI modal). */
+function CalendarHealthDetailModal({ detail, onClose }) {
+  if (!detail) return null
+  const sorted = [...detail.items].sort((a, b) => (b.sortKey || '').localeCompare(a.sortKey || ''))
+  const sumMins = sorted.reduce((s, it) => s + it.minutes, 0)
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h3 className="pr-2 text-sm font-semibold text-slate-900">{detail.title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {sorted.length === 0 ? (
+            <p className="text-sm italic text-slate-400">
+              No events in this bucket. If the track total is higher, some events may have no sub-track or a
+              sub-track that doesn&apos;t match an allocation row — open the event on the grid and set track /
+              sub-track to match.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {sorted.map((it) => {
+                const src =
+                  it.source === 'cosa-calendar' ? 'CoSA calendar' : 'Personal calendar · tagged'
+                const remap =
+                  it.allocationBucket &&
+                  it.rawSubTrack &&
+                  it.rawSubTrack !== it.allocationBucket
+                    ? ` → counts toward “${it.allocationBucket}”`
+                    : ''
+                const subLine = it.rawSubTrack
+                  ? `Sub-track on event: “${it.rawSubTrack}”${remap}`
+                  : it.allocationBucket
+                    ? `Allocation bucket: “${it.allocationBucket}”`
+                    : null
+                return (
+                  <li key={it.id} className="py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-slate-800">{it.title}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-400">{src}</p>
+                        {subLine && <p className="mt-0.5 text-[11px] text-slate-500">{subLine}</p>}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-[11px] font-medium text-slate-700">{it.minutes}m</p>
+                        <p className="text-[11px] text-slate-400">{it.dayLabel}</p>
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+        {sorted.length > 0 && (
+          <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
+            <span>
+              {sorted.length} event{sorted.length !== 1 ? 's' : ''}
+            </span>
+            <span className="font-semibold">
+              {sumMins}m logged · target {detail.targetMins}m
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -937,6 +1097,8 @@ export default function WeekPlanner({
   const [collapsedTracks, setCollapsedTracks] = useState({})
   const [error, setError]                 = useState('')
   const [showAllocEditor, setShowAllocEditor] = useState(false)
+  /** @type {null | { title: string, targetMins: number, items: object[] }} */
+  const [healthDetail, setHealthDetail] = useState(null)
 
   // Allocation targets — stored as percentages per sub-track in localStorage.
   // Falls back to DEFAULT_ALLOCATIONS when not set or when structure is outdated.
@@ -971,6 +1133,14 @@ export default function WeekPlanner({
 
   const mondayStr  = getWeekMondayStr(weekOffset)
   const weekDates  = getWeekDates(mondayStr)
+  const weekRangeStart = weekDates[0].date
+  const weekRangeEnd = weekDates[4].date
+
+  const healthModel = useMemo(
+    () => buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd),
+    [weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd],
+  )
+
   const providerToken = session?.provider_token ?? null
 
   // ── Fetch GCal events for the displayed week ──────────────────────────────
@@ -1191,16 +1361,15 @@ export default function WeekPlanner({
         </div>
 
         <HealthBars
-          weekEvents={weekEvents}
-          calendarTags={calendarTags}
-          weekRangeStart={weekDates[0].date}
-          weekRangeEnd={weekDates[4].date}
+          healthModel={healthModel}
           trackTargets={trackTargets}
           onEditAllocations={() => setShowAllocEditor(true)}
+          onOpenHealthDetail={setHealthDetail}
         />
       </div>
 
       {/* ── Modals ──────────────────────────────────────────────────────── */}
+      <CalendarHealthDetailModal detail={healthDetail} onClose={() => setHealthDetail(null)} />
       {showAllocEditor && (
         <AllocationEditor
           allocations={allocations}
