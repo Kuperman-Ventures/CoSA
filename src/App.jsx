@@ -457,6 +457,7 @@ const TRACK_KPI_INPUTS = {
   ],
   jobSearch: [
     { id: 'companiesResearched',  label: 'Companies researched',    type: 'count', quickCounts: [1,2,3,4,5,6] },
+    { id: 'companyOutreaches',    label: 'Company outreaches',      type: 'count', quickCounts: [1,2,3,4,5,6] },
     { id: 'rolesIdentified',      label: 'Roles identified',        type: 'count', quickCounts: [1,2,3,4,5,6] },
     { id: 'applications',         label: 'Applications',            type: 'count', quickCounts: [1,2,3,4,5,6] },
     { id: 'recruiterTouchpoints', label: 'Recruiter touchpoints',   type: 'count', quickCounts: [1,2,3,4,5,6] },
@@ -485,6 +486,7 @@ const KPI_DEFINITIONS = [
   { id: 'content-posts',     label: 'Content posts',                 kpiValueId: 'contentPosts',       target: 1, period: 'week', kpiMapping: 'Content posts',           trackGroup: 'Shared (Networking)', color: '#C2762A' },
   // ─── Job Search ──────────────────────────────────────────────────────────
   { id: 'companies-researched',  label: 'Companies researched',   kpiValueId: 'companiesResearched',  target: 5, period: 'week', kpiMapping: 'Companies researched',   trackGroup: 'Job Search', color: '#2E75B6' },
+  { id: 'company-outreaches',    label: 'Company outreaches',     kpiValueId: 'companyOutreaches',    target: 5, period: 'week', kpiMapping: 'Company outreaches',     trackGroup: 'Job Search', color: '#2E75B6' },
   { id: 'roles-identified',      label: 'Roles identified',        kpiValueId: 'rolesIdentified',      target: 5, period: 'week', kpiMapping: 'Roles identified',       trackGroup: 'Job Search', color: '#2E75B6' },
   { id: 'applications',          label: 'Applications submitted',  kpiValueId: 'applications',         target: 3, period: 'week', kpiMapping: 'Applications submitted', trackGroup: 'Job Search', color: '#2E75B6' },
   { id: 'recruiter-touchpoints', label: 'Recruiter touchpoints',   kpiValueId: 'recruiterTouchpoints', target: 3, period: 'week', kpiMapping: 'Recruiter touchpoints',  trackGroup: 'Job Search', color: '#2E75B6' },
@@ -521,11 +523,12 @@ const QUICK_LOG_KPI_GROUPS = [
   },
   {
     group: 'Job Search',
-    track: 'jobsearch',
+    track: 'jobSearch',
     color: '#2E75B6',
     dot: 'bg-blue-600',
     kpis: [
       'Companies researched',
+      'Company outreaches',
       'Roles identified',
       'Applications submitted',
       'Recruiter touchpoints',
@@ -1848,6 +1851,7 @@ function App() {
     setCompletionLog((prev) => [...prev, logEntry])
     setKpiSessionValues((prev) => { const next = { ...prev }; delete next[taskId]; return next })
     setStatusMessage(`"${task.name}" marked complete.`)
+
   }
 
   async function handleSaveFridayReview() {
