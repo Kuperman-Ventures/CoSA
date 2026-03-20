@@ -2852,11 +2852,16 @@ function App() {
 
     function renderKpiGroupCard(group) {
       const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
-      if (groupKpis.length === 0) return null
+      const accentColor =
+        groupKpis[0]?.color
+        ?? KPI_DEFINITIONS.find((d) => d.trackGroup === group)?.color
+        ?? '#64748b'
+      const periodLabel =
+        groupKpis[0]?.period === 'month' ? 'Month' : 'Week'
       return (
         <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${groupKpis[0]?.color}18` }}>
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: groupKpis[0]?.color }} />
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${accentColor}18` }}>
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: accentColor }} />
             <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
           </div>
           <div className="overflow-x-auto">
@@ -2865,38 +2870,46 @@ function App() {
                 <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
                   <th className="px-4 py-2 font-medium">KPI</th>
                   <th className="px-3 py-2 text-center font-medium">Target</th>
-                  <th className="px-3 py-2 text-center font-medium">This {groupKpis[0]?.period === 'month' ? 'Month' : 'Week'}</th>
+                  <th className="px-3 py-2 text-center font-medium">This {periodLabel}</th>
                   <th className="px-3 py-2 text-center font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {groupKpis.map((kpi) => (
-                  <tr
-                    key={kpi.id}
-                    className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
-                    onClick={() => openKpiDetail(kpi)}
-                    title="Click to see contributing sessions"
-                  >
-                    <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
-                    <td className="px-3 py-2.5 text-center text-slate-500">
-                      {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-center font-medium text-slate-900">
-                      {kpi.isRate
-                        ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
-                        : kpi.count}
-                    </td>
-                    <td className="px-3 py-2.5 text-center">
-                      {kpi.isRate && kpi.total === 0 ? (
-                        <span className="text-slate-400 text-xs">No sessions</span>
-                      ) : kpi.hit ? (
-                        <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
-                      ) : (
-                        <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
-                      )}
+                {groupKpis.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-xs text-slate-400 italic">
+                      No KPIs defined for this track yet.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  groupKpis.map((kpi) => (
+                    <tr
+                      key={kpi.id}
+                      className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
+                      onClick={() => openKpiDetail(kpi)}
+                      title="Click to see contributing sessions"
+                    >
+                      <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
+                      <td className="px-3 py-2.5 text-center text-slate-500">
+                        {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-center font-medium text-slate-900">
+                        {kpi.isRate
+                          ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
+                          : kpi.count}
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        {kpi.isRate && kpi.total === 0 ? (
+                          <span className="text-slate-400 text-xs">No sessions</span>
+                        ) : kpi.hit ? (
+                          <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                        ) : (
+                          <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
