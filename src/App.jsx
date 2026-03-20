@@ -2894,94 +2894,101 @@ function App() {
           </p>
         </article>
 
-        {/* Time This Week by Track — each row clickable */}
-        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
-          <div className="space-y-3">
-            {timeByTrack.map((trackData) => {
-              const { track, hoursLogged, targetHours, pct } = trackData
-              return (
-                <button
-                  key={track.key}
-                  type="button"
-                  className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
-                  onClick={() => openTrackDetail(trackData)}
-                >
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="font-medium text-slate-700">{track.label}</span>
-                    <span className={`font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}>
-                      {hoursLogged.toFixed(1)}h <span className="font-normal text-slate-400">/ {targetHours}h target</span>
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{ width: `${pct}%`, backgroundColor: track.color }}
-                    />
-                  </div>
-                </button>
-              )
-            })}
-            {completionLog.filter((e) => { const d = new Date(e.completedAt); return d >= weekStart && d <= weekEnd }).length === 0 && (
-              <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
-            )}
-          </div>
-        </article>
-
-        {/* KPI scorecard by track group — each row clickable */}
-        {KPI_TRACK_GROUPS.map((group) => {
-          const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
-          if (groupKpis.length === 0) return null
-          return (
-            <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${groupKpis[0]?.color}18` }}>
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: groupKpis[0]?.color }} />
-                <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
-              </div>
-              <div className="overflow-x-auto">
-              <table className="w-full min-w-[300px] text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
-                    <th className="px-4 py-2 font-medium">KPI</th>
-                    <th className="px-3 py-2 text-center font-medium">Target</th>
-                    <th className="px-3 py-2 text-center font-medium">This {groupKpis[0]?.period === 'month' ? 'Month' : 'Week'}</th>
-                    <th className="px-3 py-2 text-center font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groupKpis.map((kpi) => (
-                    <tr
-                      key={kpi.id}
-                      className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
-                      onClick={() => openKpiDetail(kpi)}
-                      title="Click to see contributing sessions"
+        {/* Time by track (left) + KPI scorecards by track group (right) */}
+        <div className="grid gap-4 md:grid-cols-2 md:items-start">
+          <div className="min-w-0 space-y-4">
+            {/* Time This Week by Track — each row clickable */}
+            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
+              <div className="space-y-3">
+                {timeByTrack.map((trackData) => {
+                  const { track, hoursLogged, targetHours, pct } = trackData
+                  return (
+                    <button
+                      key={track.key}
+                      type="button"
+                      className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
+                      onClick={() => openTrackDetail(trackData)}
                     >
-                      <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
-                      <td className="px-3 py-2.5 text-center text-slate-500">
-                        {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
-                      </td>
-                      <td className="px-3 py-2.5 text-center font-medium text-slate-900">
-                        {kpi.isRate
-                          ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
-                          : kpi.count}
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
-                        {kpi.isRate && kpi.total === 0 ? (
-                          <span className="text-slate-400 text-xs">No sessions</span>
-                        ) : kpi.hit ? (
-                          <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
-                        ) : (
-                          <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      <div className="mb-1 flex items-center justify-between text-xs">
+                        <span className="font-medium text-slate-700">{track.label}</span>
+                        <span className={`font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}>
+                          {hoursLogged.toFixed(1)}h <span className="font-normal text-slate-400">/ {targetHours}h target</span>
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{ width: `${pct}%`, backgroundColor: track.color }}
+                        />
+                      </div>
+                    </button>
+                  )
+                })}
+                {completionLog.filter((e) => { const d = new Date(e.completedAt); return d >= weekStart && d <= weekEnd }).length === 0 && (
+                  <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
+                )}
               </div>
             </article>
-          )
-        })}
+          </div>
+
+          <div className="min-w-0 space-y-4">
+            {/* KPI scorecard by track group — each row clickable */}
+            {KPI_TRACK_GROUPS.map((group) => {
+              const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
+              if (groupKpis.length === 0) return null
+              return (
+                <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${groupKpis[0]?.color}18` }}>
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: groupKpis[0]?.color }} />
+                    <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
+                  </div>
+                  <div className="overflow-x-auto">
+                  <table className="w-full min-w-[280px] text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
+                        <th className="px-4 py-2 font-medium">KPI</th>
+                        <th className="px-3 py-2 text-center font-medium">Target</th>
+                        <th className="px-3 py-2 text-center font-medium">This {groupKpis[0]?.period === 'month' ? 'Month' : 'Week'}</th>
+                        <th className="px-3 py-2 text-center font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupKpis.map((kpi) => (
+                        <tr
+                          key={kpi.id}
+                          className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
+                          onClick={() => openKpiDetail(kpi)}
+                          title="Click to see contributing sessions"
+                        >
+                          <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
+                          <td className="px-3 py-2.5 text-center text-slate-500">
+                            {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-medium text-slate-900">
+                            {kpi.isRate
+                              ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
+                              : kpi.count}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {kpi.isRate && kpi.total === 0 ? (
+                              <span className="text-slate-400 text-xs">No sessions</span>
+                            ) : kpi.hit ? (
+                              <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                            ) : (
+                              <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </div>
 
         {/* Quick Logs — this week's impromptu activity */}
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
