@@ -2878,6 +2878,8 @@ function App() {
           </button>
         </div>
 
+        <div className="grid gap-4 md:grid-cols-2 md:items-start">
+        <div className="min-w-0 space-y-4">
         {/* Week score — clickable */}
         <article
           className={`rounded-xl border ${score.border} ${score.bg} p-4 cursor-pointer hover:opacity-90 active:scale-[0.99] transition-transform`}
@@ -2936,7 +2938,8 @@ function App() {
                 <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: groupKpis[0]?.color }} />
                 <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
               </div>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[300px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
                     <th className="px-4 py-2 font-medium">KPI</th>
@@ -2975,11 +2978,13 @@ function App() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </article>
           )
         })}
+        </div>
 
-
+        <div className="min-w-0 space-y-4">
         {/* ── Friday Review ─────────────────────────────────────────────── */}
         <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -3142,6 +3147,9 @@ function App() {
             </ul>
           )}
         </article>
+
+        </div>
+        </div>
 
       </section>
       </>
