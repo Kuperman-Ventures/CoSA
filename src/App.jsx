@@ -2850,6 +2850,60 @@ function App() {
       </div>
     ) : null
 
+    function renderKpiGroupCard(group) {
+      const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
+      if (groupKpis.length === 0) return null
+      return (
+        <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${groupKpis[0]?.color}18` }}>
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: groupKpis[0]?.color }} />
+            <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[280px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
+                  <th className="px-4 py-2 font-medium">KPI</th>
+                  <th className="px-3 py-2 text-center font-medium">Target</th>
+                  <th className="px-3 py-2 text-center font-medium">This {groupKpis[0]?.period === 'month' ? 'Month' : 'Week'}</th>
+                  <th className="px-3 py-2 text-center font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupKpis.map((kpi) => (
+                  <tr
+                    key={kpi.id}
+                    className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
+                    onClick={() => openKpiDetail(kpi)}
+                    title="Click to see contributing sessions"
+                  >
+                    <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
+                    <td className="px-3 py-2.5 text-center text-slate-500">
+                      {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-center font-medium text-slate-900">
+                      {kpi.isRate
+                        ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
+                        : kpi.count}
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {kpi.isRate && kpi.total === 0 ? (
+                        <span className="text-slate-400 text-xs">No sessions</span>
+                      ) : kpi.hit ? (
+                        <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                      ) : (
+                        <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      )
+    }
+
     return (
       <>
       {detailModal}
@@ -2894,7 +2948,7 @@ function App() {
           </p>
         </article>
 
-        {/* Time by track (left) + KPI scorecards by track group (right) */}
+        {/* Left: time + Job Search KPIs · Right: other track KPI scorecards */}
         <div className="grid gap-4 md:grid-cols-2 md:items-start">
           <div className="min-w-0 space-y-4">
             {/* Time This Week by Track — each row clickable */}
@@ -2930,63 +2984,12 @@ function App() {
                 )}
               </div>
             </article>
+            {renderKpiGroupCard('Job Search')}
           </div>
 
           <div className="min-w-0 space-y-4">
-            {/* KPI scorecard by track group — each row clickable */}
-            {KPI_TRACK_GROUPS.map((group) => {
-              const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
-              if (groupKpis.length === 0) return null
-              return (
-                <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                  <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${groupKpis[0]?.color}18` }}>
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: groupKpis[0]?.color }} />
-                    <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
-                  </div>
-                  <div className="overflow-x-auto">
-                  <table className="w-full min-w-[280px] text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
-                        <th className="px-4 py-2 font-medium">KPI</th>
-                        <th className="px-3 py-2 text-center font-medium">Target</th>
-                        <th className="px-3 py-2 text-center font-medium">This {groupKpis[0]?.period === 'month' ? 'Month' : 'Week'}</th>
-                        <th className="px-3 py-2 text-center font-medium">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {groupKpis.map((kpi) => (
-                        <tr
-                          key={kpi.id}
-                          className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
-                          onClick={() => openKpiDetail(kpi)}
-                          title="Click to see contributing sessions"
-                        >
-                          <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
-                          <td className="px-3 py-2.5 text-center text-slate-500">
-                            {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
-                          </td>
-                          <td className="px-3 py-2.5 text-center font-medium text-slate-900">
-                            {kpi.isRate
-                              ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
-                              : kpi.count}
-                          </td>
-                          <td className="px-3 py-2.5 text-center">
-                            {kpi.isRate && kpi.total === 0 ? (
-                              <span className="text-slate-400 text-xs">No sessions</span>
-                            ) : kpi.hit ? (
-                              <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
-                            ) : (
-                              <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </div>
-                </article>
-              )
-            })}
+            {/* KPI scorecards: Advisors, Ventures, … (Job Search is in the left column) */}
+            {KPI_TRACK_GROUPS.filter((group) => group !== 'Job Search').map((group) => renderKpiGroupCard(group))}
           </div>
         </div>
 
