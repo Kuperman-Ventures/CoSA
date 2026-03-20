@@ -14,6 +14,7 @@ import {
   fetchAllCalendarEvents,
   fetchPersonalCalendarEvents,
 } from '../lib/googleCalendar'
+import { quickLogGroupsForTrack } from '../lib/quickLogKpis'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -762,32 +763,147 @@ function TagModal({ ev, calendarTags, onSave, onClose }) {
   const existing = ev ? calendarTags[ev.id] : null
   const [track, setTrack] = useState(existing?.track ?? 'advisors')
   const [subTrack, setSubTrack] = useState(existing?.subTrack ?? '')
+  const [kpiCredits, setKpiCredits] = useState(() =>
+    Array.isArray(existing?.kpiCredits) ? [...existing.kpiCredits] : [],
+  )
+  const [kpiQuantities, setKpiQuantities] = useState(() => ({
+    ...(existing?.kpiQuantities && typeof existing.kpiQuantities === 'object' ? existing.kpiQuantities : {}),
+  }))
+
+  const kpiGroups = quickLogGroupsForTrack(track)
+
+  function setTrackAndPruneKpis(nextTrack) {
+    setTrack(nextTrack)
+    setSubTrack('')
+    const valid = new Set(
+      quickLogGroupsForTrack(nextTrack).flatMap((g) => g.kpis.map((k) => k.mapping)),
+    )
+    setKpiCredits((prev) => prev.filter((m) => valid.has(m)))
+    setKpiQuantities((prev) => {
+      const next = {}
+      for (const m of Object.keys(prev)) {
+        if (valid.has(m)) next[m] = prev[m]
+      }
+      return next
+    })
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-80 rounded-xl bg-white p-5 shadow-xl">
-        <h3 className="mb-1 text-sm font-semibold">Tag Calendar Event</h3>
-        <p className="mb-4 text-xs text-slate-500 truncate">{ev?.summary}</p>
-        <label className="mb-1 block text-xs font-medium text-slate-700">Track</label>
-        <select
-          value={track}
-          onChange={(e) => { setTrack(e.target.value); setSubTrack('') }}
-          className="mb-3 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
-        >
-          {Object.entries(TRACK_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <label className="mb-1 block text-xs font-medium text-slate-700">Sub-track (optional)</label>
-        <select
-          value={subTrack}
-          onChange={(e) => setSubTrack(e.target.value)}
-          className="mb-4 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
-        >
-          <option value="">— none —</option>
-          {(TRACK_SUB_TRACKS[track] ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <div className="flex gap-2">
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl">
+        <div className="overflow-y-auto p-5">
+          <h3 className="mb-1 text-sm font-semibold">Tag Calendar Event</h3>
+          <p className="mb-4 text-xs text-slate-500 truncate">{ev?.summary}</p>
+          <label className="mb-1 block text-xs font-medium text-slate-700">Track</label>
+          <select
+            value={track}
+            onChange={(e) => setTrackAndPruneKpis(e.target.value)}
+            className="mb-3 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+          >
+            {Object.entries(TRACK_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <label className="mb-1 block text-xs font-medium text-slate-700">Sub-track (optional)</label>
+          <select
+            value={subTrack}
+            onChange={(e) => setSubTrack(e.target.value)}
+            className="mb-4 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300"
+          >
+            <option value="">— none —</option>
+            {(TRACK_SUB_TRACKS[track] ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+            <p className="mb-2 text-xs font-semibold text-slate-700">KPI credits (optional)</p>
+            <p className="mb-2 text-[11px] text-slate-500">
+              Check any outcomes this calendar block contributed toward for weekly review.
+            </p>
+            {kpiGroups.length === 0 ? (
+              <p className="text-xs italic text-slate-400">No KPI list for this track — time still counts toward allocations.</p>
+            ) : (
+              <div className="max-h-48 space-y-3 overflow-y-auto pr-1">
+                {kpiGroups.map((grp) => (
+                  <div key={grp.group}>
+                    <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: grp.color }} />
+                      {grp.group}
+                    </p>
+                    <div className="space-y-1">
+                      {grp.kpis.map(({ mapping, label }) => {
+                        const checked = kpiCredits.includes(mapping)
+                        const qty = kpiQuantities[mapping] ?? 1
+                        return (
+                          <div key={mapping} className="flex items-center gap-2">
+                            <label className="flex flex-1 cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  setKpiCredits((prev) =>
+                                    checked ? prev.filter((m) => m !== mapping) : [...prev, mapping],
+                                  )
+                                  setKpiQuantities((prev) => {
+                                    if (checked) {
+                                      const { [mapping]: _, ...rest } = prev
+                                      return rest
+                                    }
+                                    return { ...prev, [mapping]: prev[mapping] ?? 1 }
+                                  })
+                                }}
+                                className="h-3.5 w-3.5 rounded accent-slate-900"
+                              />
+                              <span className="text-xs text-slate-700">{label}</span>
+                            </label>
+                            {checked && (
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setKpiQuantities((p) => ({
+                                      ...p,
+                                      [mapping]: Math.max(1, (p[mapping] ?? 1) - 1),
+                                    }))
+                                  }
+                                  className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
+                                >−</button>
+                                <span className="w-6 text-center text-xs font-medium text-slate-800">{qty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setKpiQuantities((p) => ({
+                                      ...p,
+                                      [mapping]: (p[mapping] ?? 1) + 1,
+                                    }))
+                                  }
+                                  className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
+                                >+</button>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-2 border-t border-slate-100 p-4">
           <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-200 py-2 text-sm hover:bg-slate-50">Cancel</button>
-          <button type="button" onClick={() => onSave(track, subTrack || null)} className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700">Save Tag</button>
+          <button
+            type="button"
+            onClick={() =>
+              onSave(track, subTrack || null, {
+                kpiCredits,
+                kpiQuantities: Object.fromEntries(
+                  kpiCredits.map((m) => [m, kpiQuantities[m] ?? 1]),
+                ),
+              })
+            }
+            className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+          >
+            Save Tag
+          </button>
         </div>
       </div>
     </div>
@@ -1130,6 +1246,7 @@ export default function WeekPlanner({
   session,
   supabaseConfigured,
   onTodayEventCreated,
+  onCalendarTagsUpdated,
 }) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [weekEvents, setWeekEvents]               = useState([])
@@ -1287,9 +1404,21 @@ export default function WeekPlanner({
   // ── Tag a personal event ──────────────────────────────────────────────────
   function handleOpenTag(ev) { setTagModal(ev) }
 
-  async function handleSaveTag(track, subTrack) {
+  async function handleSaveTag(track, subTrack, kpiPayload = {}) {
     if (!tagModal || !session?.user?.id) return
     const ev = tagModal
+    const { kpiCredits = [], kpiQuantities = {} } = kpiPayload
+    const dur = eventDurationMins(ev)
+    const date = dateTimeToLocalYmd(ev.start?.dateTime)
+    const tag = {
+      track,
+      subTrack,
+      title: ev.summary,
+      durationMin: dur,
+      date,
+      kpiCredits,
+      kpiQuantities,
+    }
     const isCosaCalendarEvent = untaggedCosaEvents.some((e) => e.id === ev.id)
 
     if (isCosaCalendarEvent && providerToken) {
@@ -1308,16 +1437,14 @@ export default function WeekPlanner({
         setWeekEvents((prev) => [...prev, updated])
         setUntaggedCosaEvents((prev) => prev.filter((e) => e.id !== ev.id))
       }
-    } else {
-      // Personal calendar event — save tag to Supabase only
-      const dur = eventDurationMins(ev)
-      const date = dateTimeToLocalYmd(ev.start?.dateTime)
-      const tag = { track, subTrack, title: ev.summary, durationMin: dur, date }
       if (supabaseConfigured) {
         await upsertCalendarEventTag(session.user.id, ev.id, tag)
       }
-      setCalendarTags((prev) => ({ ...prev, [ev.id]: tag }))
+    } else if (supabaseConfigured) {
+      await upsertCalendarEventTag(session.user.id, ev.id, tag)
     }
+    setCalendarTags((prev) => ({ ...prev, [ev.id]: tag }))
+    onCalendarTagsUpdated?.()
     setTagModal(null)
   }
 
@@ -1431,6 +1558,7 @@ export default function WeekPlanner({
       )}
       {tagModal && (
         <TagModal
+          key={tagModal.id}
           ev={tagModal}
           calendarTags={calendarTags}
           onSave={handleSaveTag}

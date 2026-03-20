@@ -450,7 +450,7 @@ export async function upsertUserPreferences(prefs, userId) {
 
 /**
  * Load all saved calendar event tags for a user.
- * Returns { [gcalEventId]: { track, subTrack, title, durationMin, date } }
+ * Returns { [gcalEventId]: { track, subTrack, title, durationMin, date, kpiCredits?, kpiQuantities? } }
  */
 export async function loadCalendarEventTags(userId) {
   if (!supabase || !userId) return {}
@@ -469,6 +469,11 @@ export async function loadCalendarEventTags(userId) {
           title:       row.event_title ?? '',
           durationMin: row.duration_min ?? 0,
           date:        row.event_date ?? null,
+          kpiCredits:  Array.isArray(row.kpi_credits) ? row.kpi_credits : [],
+          kpiQuantities:
+            row.kpi_quantities && typeof row.kpi_quantities === 'object' && !Array.isArray(row.kpi_quantities)
+              ? row.kpi_quantities
+              : {},
         },
       ]),
     )
@@ -481,8 +486,20 @@ export async function loadCalendarEventTags(userId) {
 /**
  * Create or update a calendar event tag (upsert on user_id + gcal_event_id).
  */
-export async function upsertCalendarEventTag(userId, gcalEventId, { track, subTrack, title, durationMin, date }) {
+export async function upsertCalendarEventTag(userId, gcalEventId, {
+  track,
+  subTrack,
+  title,
+  durationMin,
+  date,
+  kpiCredits = [],
+  kpiQuantities = {},
+}) {
   if (!supabase || !userId || !gcalEventId) return
+  const credits = Array.isArray(kpiCredits) ? kpiCredits : []
+  const quantities = kpiQuantities && typeof kpiQuantities === 'object' && !Array.isArray(kpiQuantities)
+    ? kpiQuantities
+    : {}
   try {
     const { error } = await supabase
       .from('calendar_event_tags')
@@ -495,6 +512,8 @@ export async function upsertCalendarEventTag(userId, gcalEventId, { track, subTr
           event_title:   title ?? null,
           duration_min:  durationMin ?? null,
           event_date:    date ?? null,
+          kpi_credits:   credits,
+          kpi_quantities: quantities,
           updated_at:    new Date().toISOString(),
         },
         { onConflict: 'user_id,gcal_event_id' },

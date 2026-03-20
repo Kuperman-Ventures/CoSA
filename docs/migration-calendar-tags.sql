@@ -32,3 +32,7 @@ CREATE POLICY "Users manage their own calendar event tags"
   FOR ALL
   USING  (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
+
+-- Optional: KPI credits when tagging (see also [20260321_calendar_event_tags_kpi_credits.sql](../supabase/migrations/20260321_calendar_event_tags_kpi_credits.sql))
+-- ALTER TABLE public.calendar_event_tags ADD COLUMN kpi_credits text[] NOT NULL DEFAULT ARRAY[]::text[];
+-- ALTER TABLE public.calendar_event_tags ADD COLUMN kpi_quantities jsonb NOT NULL DEFAULT '{}'::jsonb;

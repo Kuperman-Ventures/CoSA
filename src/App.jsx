@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WeekPlanner from './components/WeekPlanner'
 import { Pause, Play, SquareCheck, StopCircle, GripVertical, AlertTriangle, Clock, Settings, ChevronDown, ChevronRight, X } from 'lucide-react'
 import {
@@ -36,6 +36,7 @@ import {
   loadCalendarEventTags,
 } from './lib/supabaseSync'
 import { fetchCoSACalendarEvents, fetchPersonalCalendarEvents, GCalAuthError } from './lib/googleCalendar'
+import { QUICK_LOG_KPI_GROUPS, KPI_LABEL_TO_TRACK } from './lib/quickLogKpis'
 
 const TRACKS = {
   advisors: {
@@ -500,61 +501,6 @@ const KPI_DEFINITIONS = [
 
 const KPI_TRACK_GROUPS = ['Kuperman Advisors', 'Job Search', 'Kuperman Ventures']
 
-// Quick Log: KPI options grouped by track, with the track key used for timer_sessions
-const QUICK_LOG_KPI_GROUPS = [
-  {
-    group: 'Kuperman Advisors',
-    track: 'advisors',
-    color: '#1E6B3C',
-    dot: 'bg-emerald-700',
-    kpis: [
-      'Outreach messages sent',
-      'Discovery calls booked',
-      'Discovery calls held',
-      'Networking meeting attended',
-    ],
-  },
-  {
-    group: 'Shared Networking',
-    track: 'networking',
-    color: '#C2762A',
-    dot: 'bg-orange-500',
-    kpis: [
-      'Warm reconnect communications',
-      'LinkedIn comments posted',
-      'Content posts',
-    ],
-  },
-  {
-    group: 'Job Search',
-    track: 'jobSearch',
-    color: '#2E75B6',
-    dot: 'bg-blue-600',
-    kpis: [
-      'Companies researched',
-      'Company outreaches',
-      'Roles identified',
-      'Applications submitted',
-      'Recruiter touchpoints',
-    ],
-  },
-  {
-    group: 'Kuperman Ventures',
-    track: 'ventures',
-    color: '#9B6BAE',
-    dot: 'bg-purple-500',
-    kpis: [
-      'Alpha tester touchpoints',
-    ],
-  },
-]
-
-// Map a KPI label → its track key (for creating timer_sessions)
-const KPI_LABEL_TO_TRACK = {}
-for (const g of QUICK_LOG_KPI_GROUPS) {
-  for (const kpi of g.kpis) KPI_LABEL_TO_TRACK[kpi] = g.track
-}
-
 const QUICK_LOG_LOCAL_KEY = 'cosa_quick_logs_v1'
 
 // Subtasks are stored in their own localStorage key, completely decoupled from
@@ -681,6 +627,27 @@ function countKpi(log, kpiDef, weekStart, weekEnd, monthStart, monthEnd) {
   }
 
   return { count, total: null }
+}
+
+/** Extra KPI counts from tagged personal/CoSA calendar events (Supabase calendar_event_tags). */
+function countCalendarTagKpiCredits(tagsByEventId, kpiDef, weekStart, weekEnd, monthStart, monthEnd) {
+  if (kpiDef.isRate || !kpiDef.kpiMapping) return 0
+  const rangeStart = kpiDef.period === 'month' ? monthStart : weekStart
+  const rangeEnd = kpiDef.period === 'month' ? monthEnd : weekEnd
+  let count = 0
+  for (const tag of Object.values(tagsByEventId)) {
+    const credits = tag.kpiCredits
+    if (!tag?.date || !Array.isArray(credits) || credits.length === 0) continue
+    const tagDate = new Date(`${tag.date}T12:00:00`)
+    if (tagDate < rangeStart || tagDate > rangeEnd) continue
+    const qtyMap = tag.kpiQuantities && typeof tag.kpiQuantities === 'object' ? tag.kpiQuantities : {}
+    for (const mapping of credits) {
+      if (mapping !== kpiDef.kpiMapping) continue
+      const q = qtyMap[mapping]
+      count += typeof q === 'number' && q >= 1 ? q : 1
+    }
+  }
+  return count
 }
 
 function isKpiHit(count, total, kpiDef) {
@@ -973,6 +940,8 @@ function App() {
   const [quickLogEntries, setQuickLogEntries] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem(QUICK_LOG_LOCAL_KEY) ?? '[]') } catch { return [] }
   })
+  /** All GCal event id → tag row (including kpiCredits) for weekly KPI merge */
+  const [calendarEventTags, setCalendarEventTags] = useState({})
   const [showClearDayModal, setShowClearDayModal] = useState(false)
   const [clearFrom, setClearFrom] = useState(getTodayDateString())
   const [clearTo, setClearTo] = useState(getTodayDateString())
@@ -994,6 +963,16 @@ function App() {
     () => taskLibrary.find((task) => task.id === effectiveSelectedLibraryTaskId) ?? null,
     [effectiveSelectedLibraryTaskId, taskLibrary],
   )
+
+  const refreshCalendarEventTags = useCallback(async () => {
+    if (!supabaseConfigured || !session?.user?.id) return
+    const t = await loadCalendarEventTags(session.user.id)
+    setCalendarEventTags(t)
+  }, [session?.user?.id, supabaseConfigured])
+
+  useEffect(() => {
+    if (!session?.user?.id) setCalendarEventTags({})
+  }, [session?.user?.id])
 
   useEffect(() => {
     if (!activeSession) return
@@ -1439,7 +1418,9 @@ function App() {
     const { start: ms, end: me } = getMonthBoundsForWeek(weekOffset)
     const results = KPI_DEFINITIONS.map((def) => {
       const { count, total } = countKpi(completionLog, def, ws, we, ms, me)
-      return { ...def, count, total, hit: isKpiHit(count, total, def) }
+      const fromTags = countCalendarTagKpiCredits(calendarEventTags, def, ws, we, ms, me)
+      const merged = count + fromTags
+      return { ...def, count: merged, total, hit: isKpiHit(merged, total, def) }
     })
     const weekly = results.filter(
       (k) => !k.isRate && k.period === 'week' && k.target && k.countsTowardWeekScore !== false,
@@ -1447,7 +1428,7 @@ function App() {
     const hit = weekly.filter((k) => k.hit).length
     const score = hit >= 7 ? 'green' : hit >= 4 ? 'yellow' : 'red'
     return { kpisHit: hit, kpisTotal: weekly.length, weekScore: score, kpiResults: results }
-  }, [completionLog, weekOffset])
+  }, [completionLog, weekOffset, calendarEventTags])
 
   const hasLockedTodayTimers = useMemo(
     () =>
@@ -1562,6 +1543,8 @@ function App() {
       const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
       if (qlEntries.length > 0) setQuickLogEntries(qlEntries)
 
+      const calTags = await loadCalendarEventTags(userId)
+      setCalendarEventTags(calTags)
     }
 
     doSync()
@@ -2069,12 +2052,12 @@ function App() {
     const tracks = [...new Set(quickLogForm.kpiCredits.map((k) => KPI_LABEL_TO_TRACK[k]).filter(Boolean))]
 
     // Build one completion log entry per KPI (preserving individual quantities)
-    const newLogEntries = quickLogForm.kpiCredits.map((kpi, i) => ({
-      id: `ql-${Date.now()}-${i}-${kpi.replace(/\s+/g, '-')}`,
+    const newLogEntries = quickLogForm.kpiCredits.map((mapping, i) => ({
+      id: `ql-${Date.now()}-${i}-${mapping.replace(/\s+/g, '-')}`,
       taskName: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
-      track: KPI_LABEL_TO_TRACK[kpi] ?? tracks[0] ?? '',
-      kpiMapping: kpi,
-      quantity: quickLogForm.kpiQuantities[kpi] ?? 1,
+      track: KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? '',
+      kpiMapping: mapping,
+      quantity: quickLogForm.kpiQuantities[mapping] ?? 1,
       outcomeAchieved: true,
       definitionOfDoneUsed: false,
       completedAt: now,
@@ -2106,16 +2089,16 @@ function App() {
       )
 
       // 2. One timer_sessions record per KPI (with individual quantities)
-      for (const kpi of quickLogForm.kpiCredits) {
-        const track = KPI_LABEL_TO_TRACK[kpi] ?? tracks[0] ?? ''
-        const qty = quickLogForm.kpiQuantities[kpi] ?? 1
+      for (const mapping of quickLogForm.kpiCredits) {
+        const track = KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? ''
+        const qty = quickLogForm.kpiQuantities[mapping] ?? 1
         const row = {
           id: crypto.randomUUID(),
           user_id: userId,
           task_instance_id: null,
           task_name: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
           track,
-          kpi_mapping: kpi,
+          kpi_mapping: mapping,
           quantity: qty,
           timer_state: 'Completed',
           completion_type: 'Done',
@@ -2705,6 +2688,31 @@ function App() {
           if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
           return true
         })
+        const tagContribs = []
+        for (const [gcalId, tag] of Object.entries(calendarEventTags)) {
+          const credits = tag.kpiCredits
+          if (!tag?.date || !Array.isArray(credits) || credits.length === 0) continue
+          const d = new Date(`${tag.date}T12:00:00`)
+          if (d < rangeStart || d > rangeEnd) continue
+          const qtyMap = tag.kpiQuantities && typeof tag.kpiQuantities === 'object' ? tag.kpiQuantities : {}
+          for (const mapping of credits) {
+            if (mapping !== kpi.kpiMapping) continue
+            const qty = typeof qtyMap[mapping] === 'number' && qtyMap[mapping] >= 1 ? qtyMap[mapping] : 1
+            tagContribs.push({
+              id: `cal-tag-${gcalId}-${mapping}`,
+              taskName: tag.title || 'Tagged calendar event',
+              kpiMapping: kpi.kpiMapping,
+              completedAt: `${tag.date}T12:00:00`,
+              elapsedSeconds: Math.round((tag.durationMin ?? 0) * 60),
+              quantity: qty,
+              completionType: 'Done',
+              _fromCalendarTag: true,
+            })
+          }
+        }
+        entries = [...entries, ...tagContribs].sort(
+          (a, b) => new Date(b.completedAt) - new Date(a.completedAt),
+        )
       }
       setKpiDetail({ type: 'kpi', title: kpi.label, kpi, entries })
     }
@@ -3757,6 +3765,7 @@ function App() {
           session={session}
           supabaseConfigured={supabaseConfigured}
           onTodayEventCreated={handleTodayEventCreated}
+          onCalendarTagsUpdated={refreshCalendarEventTags}
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
@@ -3865,12 +3874,14 @@ function App() {
                         {grp.group}
                       </p>
                       <div className="space-y-1">
-                        {grp.kpis.map((kpi) => {
-                          const checked = quickLogForm.kpiCredits.includes(kpi)
+                        {grp.kpis.map((kpiRow) => {
+                          const mapping = typeof kpiRow === 'string' ? kpiRow : kpiRow.mapping
+                          const label = typeof kpiRow === 'string' ? kpiRow : kpiRow.label
+                          const checked = quickLogForm.kpiCredits.includes(mapping)
                           const isCountable = true // all Quick Log KPIs support a quantity
-                          const qty = quickLogForm.kpiQuantities[kpi] ?? 1
+                          const qty = quickLogForm.kpiQuantities[mapping] ?? 1
                           return (
-                            <div key={kpi} className="flex items-center gap-2">
+                            <div key={mapping} className="flex items-center gap-2">
                               <label className="flex flex-1 cursor-pointer items-center gap-2">
                                 <input
                                   type="checkbox"
@@ -3879,29 +3890,29 @@ function App() {
                                     setQuickLogForm((f) => ({
                                       ...f,
                                       kpiCredits: checked
-                                        ? f.kpiCredits.filter((k) => k !== kpi)
-                                        : [...f.kpiCredits, kpi],
+                                        ? f.kpiCredits.filter((k) => k !== mapping)
+                                        : [...f.kpiCredits, mapping],
                                       kpiQuantities: checked
-                                        ? (({ [kpi]: _, ...rest }) => rest)(f.kpiQuantities)
-                                        : { ...f.kpiQuantities, [kpi]: f.kpiQuantities[kpi] ?? 1 },
+                                        ? (({ [mapping]: _, ...rest }) => rest)(f.kpiQuantities)
+                                        : { ...f.kpiQuantities, [mapping]: f.kpiQuantities[mapping] ?? 1 },
                                     }))
                                   }
                                   className="h-3.5 w-3.5 rounded accent-slate-900"
                                 />
-                                <span className="text-xs text-slate-700">{kpi}</span>
+                                <span className="text-xs text-slate-700">{label}</span>
                               </label>
                               {/* Quantity stepper — only for countable KPIs when checked */}
                               {checked && isCountable && (
                                 <div className="flex items-center gap-0.5">
                                   <button
                                     type="button"
-                                    onClick={() => setQuickLogForm((f) => ({ ...f, kpiQuantities: { ...f.kpiQuantities, [kpi]: Math.max(1, qty - 1) } }))}
+                                    onClick={() => setQuickLogForm((f) => ({ ...f, kpiQuantities: { ...f.kpiQuantities, [mapping]: Math.max(1, qty - 1) } }))}
                                     className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
                                   >−</button>
                                   <span className="w-6 text-center text-xs font-medium text-slate-800">{qty}</span>
                                   <button
                                     type="button"
-                                    onClick={() => setQuickLogForm((f) => ({ ...f, kpiQuantities: { ...f.kpiQuantities, [kpi]: qty + 1 } }))}
+                                    onClick={() => setQuickLogForm((f) => ({ ...f, kpiQuantities: { ...f.kpiQuantities, [mapping]: qty + 1 } }))}
                                     className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
                                   >+</button>
                                 </div>
