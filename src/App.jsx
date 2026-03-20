@@ -2164,7 +2164,7 @@ function App() {
 
   if (supabaseConfigured && !session) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-5xl items-center justify-center bg-slate-50 p-4 text-slate-900">
+      <main className="mx-auto flex min-h-screen w-full max-w-[min(1800px,calc(100vw-2rem))] items-center justify-center bg-slate-50 p-4 text-slate-900">
         <section className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <img src="/logo.png" alt="CoSA" className="mb-3 h-16 w-auto" />
           <p className="mt-1 text-sm text-slate-600">Sign in with Google to sync data across devices.</p>
@@ -3160,7 +3160,7 @@ function App() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-5xl bg-slate-50 pb-24 text-slate-900">
+    <main className="mx-auto min-h-screen w-full max-w-[min(1800px,calc(100vw-2rem))] bg-slate-50 pb-24 text-slate-900">
 
       {/* Clear Day Modal */}
       {showClearDayModal ? (
@@ -3914,7 +3914,7 @@ function App() {
       )}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-        <ul className="mx-auto grid max-w-5xl grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
+        <ul className="mx-auto grid w-full max-w-[min(1800px,calc(100vw-2rem))] grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
           {NAV_ITEMS.map((item) => (
             <li key={item.id}>
               <button

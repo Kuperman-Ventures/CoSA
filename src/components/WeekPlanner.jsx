@@ -17,7 +17,7 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 const TRACK_LABELS = {
   advisors:    'Kuperman Advisors',
@@ -125,10 +125,10 @@ function getWeekDates(mondayStr) {
 
 function formatWeekLabel(mondayStr) {
   const d = new Date(mondayStr + 'T12:00:00')
-  const fri = new Date(d)
-  fri.setDate(fri.getDate() + 4)
+  const sun = new Date(d)
+  sun.setDate(d.getDate() + 6)
   const opts = { month: 'short', day: 'numeric' }
-  return `${d.toLocaleDateString('en-US', opts)} – ${fri.toLocaleDateString('en-US', opts)}, ${fri.getFullYear()}`
+  return `${d.toLocaleDateString('en-US', opts)} – ${sun.toLocaleDateString('en-US', opts)}, ${sun.getFullYear()}`
 }
 
 function isoToMinutes(isoStr) {
@@ -1056,7 +1056,7 @@ function TimeGrid({ weekDates, weekEvents, untaggedCosaEvents = [], personalEven
       {weekDates.map(({ name, date }) => {
         const isToday = date === today
         return (
-          <div key={date} className="flex-1 min-w-0 border-l border-slate-200">
+          <div key={date} className="min-w-[100px] flex-1 border-l border-slate-200">
             {/* Day header */}
             <div className={`sticky top-0 z-10 border-b border-slate-200 px-1 py-1 text-center text-xs font-semibold
               ${isToday ? 'bg-slate-900 text-white' : 'bg-white text-slate-600'}`}>
@@ -1186,7 +1186,7 @@ export default function WeekPlanner({
   const mondayStr  = getWeekMondayStr(weekOffset)
   const weekDates  = getWeekDates(mondayStr)
   const weekRangeStart = weekDates[0].date
-  const weekRangeEnd = weekDates[4].date
+  const weekRangeEnd = weekDates[weekDates.length - 1].date
 
   const healthModel = useMemo(
     () => buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd),
@@ -1202,10 +1202,10 @@ export default function WeekPlanner({
     setError('')
     try {
       const wd = getWeekDates(mondayStr)
-      const friday = wd[4].date
-      // Local Monday 00:00 → Friday 23:59:59.999 as ISO for Google Calendar API
+      const sunday = wd[wd.length - 1].date
+      // Local Monday 00:00 → Sunday 23:59:59.999 as ISO for Google Calendar API
       const timeMin = new Date(`${mondayStr}T00:00:00`).toISOString()
-      const timeMax = new Date(`${friday}T23:59:59.999`).toISOString()
+      const timeMax = new Date(`${sunday}T23:59:59.999`).toISOString()
 
       const [allCosa, personal] = await Promise.all([
         fetchAllCalendarEvents(providerToken, timeMin, timeMax),
