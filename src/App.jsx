@@ -3390,127 +3390,134 @@ function App() {
 
           {(() => {
             const activeSubtasks = (subtasksMap[activeTask.templateId] ?? []).filter((st) => st.text.trim())
-            if (activeSubtasks.length === 0) return null
-            return (
-              <div className="mb-4 rounded-lg border border-slate-200 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Checklist</p>
-                <ul className="space-y-1.5">
-                  {activeSubtasks.map((st) => {
-                    const checked = subtaskChecks[activeTask.id]?.[st.id] ?? false
-                    return (
-                      <li key={st.id}>
-                        <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-1 py-1 hover:bg-slate-50">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() =>
-                              setSubtaskChecks((prev) => ({
-                                ...prev,
-                                [activeTask.id]: {
-                                  ...(prev[activeTask.id] ?? {}),
-                                  [st.id]: !checked,
-                                },
-                              }))
-                            }
-                            className="h-4 w-4 rounded accent-slate-900"
-                          />
-                          <span className={`text-sm ${checked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                            {st.text}
-                          </span>
-                        </label>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            )
-          })()}
-
-          {/* ── Track KPI Inputs ─────────────────────────────────────── */}
-          {(() => {
             const trackKey = activeTask.track === 'jobsearch' ? 'jobSearch' : activeTask.track
             const kpiInputs = TRACK_KPI_INPUTS[trackKey] ?? []
-            if (kpiInputs.length === 0 || isCompleted || isCancelled) return null
+            const showChecklist = activeSubtasks.length > 0
+            const showKpis = kpiInputs.length > 0 && !isCompleted && !isCancelled
+            if (!showChecklist && !showKpis) return null
+
             const vals = kpiSessionValues[activeTask.id] ?? {}
             const setKpiVal = (kpiId, value) =>
               setKpiSessionValues((prev) => ({
                 ...prev,
                 [activeTask.id]: { ...(prev[activeTask.id] ?? {}), [kpiId]: value },
               }))
+
             return (
-              <div className="rounded-lg border border-slate-200 p-3">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">KPIs this session</p>
-                <div className="space-y-3">
-                  {kpiInputs.map((kpi) => {
-                    const val = vals[kpi.id] ?? null
-                    if (kpi.type === 'count') {
-                      return (
-                        <div key={kpi.id}>
-                          <p className="mb-1 text-xs text-slate-600">{kpi.label}</p>
-                          <div className="flex flex-wrap items-center gap-1">
-                            {kpi.quickCounts.map((n) => (
+              <div
+                className={`mb-4 grid gap-4 ${showChecklist && showKpis ? 'md:grid-cols-2' : ''}`}
+              >
+                {showChecklist ? (
+                  <div className="min-w-0 rounded-lg border border-slate-200 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Checklist</p>
+                    <ul className="space-y-1.5">
+                      {activeSubtasks.map((st) => {
+                        const checked = subtaskChecks[activeTask.id]?.[st.id] ?? false
+                        return (
+                          <li key={st.id}>
+                            <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-1 py-1 hover:bg-slate-50">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setSubtaskChecks((prev) => ({
+                                    ...prev,
+                                    [activeTask.id]: {
+                                      ...(prev[activeTask.id] ?? {}),
+                                      [st.id]: !checked,
+                                    },
+                                  }))
+                                }
+                                className="h-4 w-4 shrink-0 rounded accent-slate-900"
+                              />
+                              <span className={`text-sm ${checked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                                {st.text}
+                              </span>
+                            </label>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {showKpis ? (
+                  <div className="min-w-0 rounded-lg border border-slate-200 p-3">
+                    {/* No CSS uppercase — preserves "KPIs" (lowercase s) */}
+                    <p className="mb-3 text-xs font-semibold tracking-wide text-slate-500">KPIs THIS SESSION</p>
+                    <div className="space-y-3">
+                      {kpiInputs.map((kpi) => {
+                        const val = vals[kpi.id] ?? null
+                        if (kpi.type === 'count') {
+                          return (
+                            <div key={kpi.id}>
+                              <p className="mb-1 text-xs text-slate-600">{kpi.label}</p>
+                              <div className="flex flex-wrap items-center gap-1">
+                                {kpi.quickCounts.map((n) => (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    onClick={() => setKpiVal(kpi.id, val === n ? null : n)}
+                                    className={`h-7 w-7 rounded text-xs font-semibold transition ${val === n ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                                  >{n}</button>
+                                ))}
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={typeof val === 'number' && !kpi.quickCounts.includes(val) ? val : ''}
+                                  placeholder="other"
+                                  onChange={(e) => {
+                                    const n = parseInt(e.target.value, 10)
+                                    setKpiVal(kpi.id, isNaN(n) || n < 1 ? null : n)
+                                  }}
+                                  className="w-16 rounded border border-slate-200 px-1.5 py-0.5 text-center text-xs outline-none focus:ring-1 focus:ring-slate-400"
+                                />
+                                {val != null && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setKpiVal(kpi.id, null)}
+                                    className="text-xs text-slate-400 hover:text-slate-600"
+                                    title="Clear"
+                                  >✕</button>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        }
+                        if (kpi.type === 'boolean') {
+                          return (
+                            <div key={kpi.id} className="flex items-center justify-between">
+                              <p className="text-xs text-slate-600">{kpi.label}</p>
                               <button
-                                key={n}
                                 type="button"
-                                onClick={() => setKpiVal(kpi.id, val === n ? null : n)}
-                                className={`h-7 w-7 rounded text-xs font-semibold transition ${val === n ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-                              >{n}</button>
-                            ))}
-                            <input
-                              type="number"
-                              min={1}
-                              value={typeof val === 'number' && !kpi.quickCounts.includes(val) ? val : ''}
-                              placeholder="other"
-                              onChange={(e) => {
-                                const n = parseInt(e.target.value, 10)
-                                setKpiVal(kpi.id, isNaN(n) || n < 1 ? null : n)
-                              }}
-                              className="w-16 rounded border border-slate-200 px-1.5 py-0.5 text-center text-xs outline-none focus:ring-1 focus:ring-slate-400"
-                            />
-                            {val != null && (
-                              <button
-                                type="button"
-                                onClick={() => setKpiVal(kpi.id, null)}
-                                className="text-xs text-slate-400 hover:text-slate-600"
-                                title="Clear"
-                              >✕</button>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    }
-                    if (kpi.type === 'boolean') {
-                      return (
-                        <div key={kpi.id} className="flex items-center justify-between">
-                          <p className="text-xs text-slate-600">{kpi.label}</p>
-                          <button
-                            type="button"
-                            onClick={() => setKpiVal(kpi.id, val === true ? null : true)}
-                            className={`rounded px-3 py-1 text-xs font-semibold transition ${val === true ? 'bg-emerald-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-                          >YES</button>
-                        </div>
-                      )
-                    }
-                    if (kpi.type === 'venue') {
-                      return (
-                        <div key={kpi.id} className="flex items-center justify-between gap-2">
-                          <p className="shrink-0 text-xs text-slate-600">{kpi.label}</p>
-                          <select
-                            value={val ?? ''}
-                            onChange={(e) => setKpiVal(kpi.id, e.target.value || null)}
-                            className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-700 outline-none focus:ring-1 focus:ring-slate-400"
-                          >
-                            <option value="">— none —</option>
-                            {kpi.options.map((o) => (
-                              <option key={o} value={o}>{o}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )
-                    }
-                    return null
-                  })}
-                </div>
+                                onClick={() => setKpiVal(kpi.id, val === true ? null : true)}
+                                className={`rounded px-3 py-1 text-xs font-semibold transition ${val === true ? 'bg-emerald-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                              >YES</button>
+                            </div>
+                          )
+                        }
+                        if (kpi.type === 'venue') {
+                          return (
+                            <div key={kpi.id} className="flex items-center justify-between gap-2">
+                              <p className="shrink-0 text-xs text-slate-600">{kpi.label}</p>
+                              <select
+                                value={val ?? ''}
+                                onChange={(e) => setKpiVal(kpi.id, e.target.value || null)}
+                                className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-700 outline-none focus:ring-1 focus:ring-slate-400"
+                              >
+                                <option value="">— none —</option>
+                                {kpi.options.map((o) => (
+                                  <option key={o} value={o}>{o}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        }
+                        return null
+                      })}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )
           })()}
