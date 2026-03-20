@@ -2878,8 +2878,8 @@ function App() {
           </button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 md:items-start">
-        <div className="min-w-0 space-y-4">
+        {/* Week score, time by track, KPI tables, quick logs */}
+        <div className="space-y-4">
         {/* Week score — clickable */}
         <article
           className={`rounded-xl border ${score.border} ${score.bg} p-4 cursor-pointer hover:opacity-90 active:scale-[0.99] transition-transform`}
@@ -2982,9 +2982,51 @@ function App() {
             </article>
           )
         })}
+
+        {/* Quick Logs — this week's impromptu activity */}
+        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold uppercase text-slate-500">Quick Logs — This Week</h2>
+          {quickLogEntries.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">No quick logs this week. Use the ⚡ button to log an impromptu call, coffee chat, or message.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {quickLogEntries.map((entry, i) => {
+                const loggedAt = entry.logged_at ?? entry.loggedAt
+                const timeStr = loggedAt
+                  ? new Date(loggedAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                  : ''
+                const kpis = Array.isArray(entry.kpi_credits ?? entry.kpiCredits)
+                  ? (entry.kpi_credits ?? entry.kpiCredits)
+                  : []
+                return (
+                  <li key={entry.id ?? i} className="py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-slate-800">
+                          {entry.activity_type ?? entry.activityType}
+                          <span className="ml-1 font-normal text-slate-500">with {entry.who}</span>
+                          <span className="ml-1 text-slate-400">· {entry.duration_minutes ?? entry.durationMinutes}m</span>
+                        </p>
+                        {kpis.length > 0 && (
+                          <p className="mt-0.5 text-[11px] text-slate-500">{kpis.join(' · ')}</p>
+                        )}
+                        {(entry.note) && (
+                          <p className="mt-0.5 text-[11px] italic text-slate-400">"{entry.note}"</p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-[11px] text-slate-400">{timeStr}</span>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </article>
+
         </div>
 
-        <div className="min-w-0 space-y-4">
+        {/* Friday Review & past reviews */}
+        <div className="mt-8 space-y-4 border-t border-slate-200 pt-8">
         {/* ── Friday Review ─────────────────────────────────────────────── */}
         <article className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -3108,47 +3150,6 @@ function App() {
           </article>
         ) : null}
 
-        {/* Quick Logs — this week's impromptu activity */}
-        <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold uppercase text-slate-500">Quick Logs — This Week</h2>
-          {quickLogEntries.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">No quick logs this week. Use the ⚡ button to log an impromptu call, coffee chat, or message.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {quickLogEntries.map((entry, i) => {
-                const loggedAt = entry.logged_at ?? entry.loggedAt
-                const timeStr = loggedAt
-                  ? new Date(loggedAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                  : ''
-                const kpis = Array.isArray(entry.kpi_credits ?? entry.kpiCredits)
-                  ? (entry.kpi_credits ?? entry.kpiCredits)
-                  : []
-                return (
-                  <li key={entry.id ?? i} className="py-2.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-slate-800">
-                          {entry.activity_type ?? entry.activityType}
-                          <span className="ml-1 font-normal text-slate-500">with {entry.who}</span>
-                          <span className="ml-1 text-slate-400">· {entry.duration_minutes ?? entry.durationMinutes}m</span>
-                        </p>
-                        {kpis.length > 0 && (
-                          <p className="mt-0.5 text-[11px] text-slate-500">{kpis.join(' · ')}</p>
-                        )}
-                        {(entry.note) && (
-                          <p className="mt-0.5 text-[11px] italic text-slate-400">"{entry.note}"</p>
-                        )}
-                      </div>
-                      <span className="shrink-0 text-[11px] text-slate-400">{timeStr}</span>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </article>
-
-        </div>
         </div>
 
       </section>
