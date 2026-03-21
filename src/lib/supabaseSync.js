@@ -196,6 +196,7 @@ function rowToSession(row) {
     actualCompleted: row.actual_completed ?? '',
     outcomeAchieved: row.outcome_achieved ?? null,
     completionLoggedAtISO: row.completed_at ?? null,
+    kpiValues: row.kpi_values && typeof row.kpi_values === 'object' ? row.kpi_values : {},
   }
 }
 

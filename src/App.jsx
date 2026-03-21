@@ -1087,7 +1087,12 @@ function App() {
    *   duration are updated if GCal changed them since the last load.
    * Throws GCalAuthError if the token is expired/invalid so callers can react.
    */
-  async function mergeGCalIntoQueue(currentTasks, dateStr, userId) {
+  /**
+   * @param {Record<string, object>} [sessionsForPrune] Optional map of task id → session used when
+   *   pruning the queue (avoids stale React closure during sign-in doSync). Defaults to current `sessions`.
+   */
+  async function mergeGCalIntoQueue(currentTasks, dateStr, userId, sessionsForPrune = null) {
+    const pruneMap = sessionsForPrune ?? sessions
     const { data: { session: liveSession } } = await supabase.auth.getSession()
     const providerToken = liveSession?.provider_token
     if (!providerToken) return
@@ -1177,13 +1182,17 @@ function App() {
 
     // c) Prune tasks not backed by a GCal event today. The queue is calendar-driven:
     //    only tasks with a calendarEventId found in today's GCal events belong here.
-    //    Exception: tasks that already have timer progress are always kept.
+    //    Exception: tasks with timer progress, completed, or cancelled are always kept.
     const prunedTasks = updatedTasks.filter((task) => {
-      const sess = sessions[task.id]
+      const sess = pruneMap[task.id]
       const hasProgress = sess && (
-        sess.timerState !== TIMER_STATES.notStarted || sess.elapsedSeconds > 0
+        sess.timerState !== TIMER_STATES.notStarted || (sess.elapsedSeconds ?? 0) > 0
       )
-      if (hasProgress) return true                     // never drop a task already worked on
+      const isFinished = sess && (
+        sess.timerState === TIMER_STATES.completed || sess.timerState === TIMER_STATES.cancelled
+      )
+      if (isFinished) return true
+      if (hasProgress) return true
       return task.calendarEventId && todayGCalIds.has(task.calendarEventId)
     })
     if (prunedTasks.length !== updatedTasks.length) {
@@ -1477,36 +1486,43 @@ function App() {
 
       // 2. Today tasks — load from Supabase; the queue is calendar-driven so
       //    GCal merge (step 3) will prune any tasks no longer on the calendar.
+      //    Build a session snapshot synchronously so merge does not read a stale
+      //    `sessions` closure (which would ignore completed/cancelled and reset UI).
       let effectiveTodayTasks = []
+      let signInSessionsSnapshot = null
+
       const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
       if (remoteTodayTasks && remoteTodayTasks.length > 0) {
         effectiveTodayTasks = remoteTodayTasks
-        setTodayTasks(remoteTodayTasks)
-        setQueueDate(targetStr)
-        setSessions((prev) => {
-          const next = { ...prev }
-          remoteTodayTasks.forEach((task) => {
-            if (!next[task.id]) next[task.id] = getInitialSession(task)
-          })
-          return next
+        const taskById = Object.fromEntries(remoteTodayTasks.map((t) => [t.id, t]))
+        signInSessionsSnapshot = {}
+        remoteTodayTasks.forEach((task) => {
+          signInSessionsSnapshot[task.id] = getInitialSession(task)
         })
         const taskIds = remoteTodayTasks.map((t) => t.id)
         const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
         if (remoteTimerSessions) {
-          setSessions((prev) => {
-            const next = { ...prev }
-            remoteTimerSessions.forEach((remoteSession) => {
-              const { taskId } = remoteSession
-              if (!taskId) return
-              const hasProgress =
-                remoteSession.timerState !== 'notStarted' || remoteSession.elapsedSeconds > 0
-              if (hasProgress) {
-                next[taskId] = { ...(next[taskId] ?? {}), ...remoteSession }
-              }
-            })
-            return next
+          remoteTimerSessions.forEach((rs) => {
+            const tid = rs.taskId
+            if (!tid || !taskById[tid]) return
+            signInSessionsSnapshot[tid] = {
+              ...(signInSessionsSnapshot[tid] ?? getInitialSession(taskById[tid])),
+              ...rs,
+            }
           })
         }
+
+        setTodayTasks(remoteTodayTasks)
+        setQueueDate(targetStr)
+        setSessions((prev) => {
+          const next = { ...prev }
+          for (const task of remoteTodayTasks) {
+            const snap = signInSessionsSnapshot[task.id]
+            next[task.id] = snap ? { ...snap } : getInitialSession(task)
+          }
+          return next
+        })
+
         const prefs = await loadUserPreferences(userId)
         if (prefs?.cleared_dates) {
           setClearedDates(prefs.cleared_dates)
@@ -1516,7 +1532,7 @@ function App() {
 
       // 3. Merge today's calendar events into the queue (add new + refresh changed)
       try {
-        await mergeGCalIntoQueue(effectiveTodayTasks, todayStr, userId)
+        await mergeGCalIntoQueue(effectiveTodayTasks, todayStr, userId, signInSessionsSnapshot)
       } catch (err) {
         if (err instanceof GCalAuthError) setGcalSyncStatus('auth-error')
         else console.error('[sign-in GCal merge]', err)
