@@ -3024,34 +3024,52 @@ function App() {
                       const rowId = `log-${e.id ?? i}`
                       const isExpanded = reconcileExpandedId === rowId
                       const mins = Math.round((e.elapsedSeconds ?? 0) / 60)
-                      const dayStr = e.completedAt
-                        ? new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      const completedDate = e.completedAt ? new Date(e.completedAt) : null
+                      const dayStr = completedDate
+                        ? completedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
                         : '—'
+                      const timeStr = completedDate
+                        ? completedDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                        : null
                       const isReconciled = !!e.sourceCalendarId
                       return (
                         <li key={e.id ?? i} className={`${isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50/60'} transition-colors`}>
                           <button
                             type="button"
-                            className="w-full text-left px-3 py-2.5"
+                            className="w-full text-left px-3 py-2.5 flex items-start justify-between gap-2"
                             onClick={() => setReconcileExpandedId(isExpanded ? null : rowId)}
                           >
-                            <p className="text-xs font-medium text-slate-800 leading-snug">{e.taskName}</p>
-                            <p className="text-[11px] text-slate-500 mt-0.5">
-                              {dayStr} · {mins}m
-                              {isReconciled && <span className="ml-1 text-amber-700"> · reconciled</span>}
-                            </p>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium text-slate-800 leading-snug">{e.taskName}</p>
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                {dayStr}{timeStr ? ` · ${timeStr}` : ''} · {mins}m
+                                {isReconciled && <span className="ml-1 text-amber-700"> · reconciled</span>}
+                              </p>
+                            </div>
+                            {isExpanded
+                              ? <ChevronDown size={13} className="shrink-0 mt-0.5 text-slate-400" />
+                              : <ChevronRight size={13} className="shrink-0 mt-0.5 text-slate-300" />}
                           </button>
                           {isExpanded && (
                             <div className="px-3 pb-3 space-y-2">
                               <p className="text-[11px] text-slate-500">{e.kpiMapping || 'No KPI mapping'}</p>
                               <p className="text-[11px] text-slate-500">{e.completionType || 'Done'} · {mins}m elapsed</p>
-                              <button
-                                type="button"
-                                onClick={() => deleteLoggedEntry(e.id)}
-                                className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
-                              >
-                                Remove from log
-                              </button>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => deleteLoggedEntry(e.id)}
+                                  className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                                >
+                                  Remove from log
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReconcileExpandedId(null)}
+                                  className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-100"
+                                >
+                                  Close
+                                </button>
+                              </div>
                             </div>
                           )}
                         </li>
@@ -3097,6 +3115,19 @@ function App() {
                       const checked = !!calendarAllocateSelected[item.id]
                       const src = item.source === 'cosa-calendar' ? 'CoSA' : 'Personal'
                       const sub = item.splitNote ? ' · net. split' : ''
+                      const startDate = item.startISO ? new Date(item.startISO) : null
+                      const startTimeStr = startDate
+                        ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                        : null
+                      const endDate = item.startISO && item.minutes
+                        ? new Date(new Date(item.startISO).getTime() + item.minutes * 60000)
+                        : null
+                      const endTimeStr = endDate
+                        ? endDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                        : null
+                      const timeRange = startTimeStr && endTimeStr
+                        ? `${startTimeStr} – ${endTimeStr}`
+                        : startTimeStr ?? null
                       return (
                         <li key={item.id} className={`${checked ? 'bg-amber-50/60' : isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50/60'} transition-colors`}>
                           <div className="flex items-start gap-2 px-3 py-2.5">
@@ -3120,21 +3151,35 @@ function App() {
                                 {item.title || '(Untitled)'}{sub}
                               </p>
                               <p className="text-[11px] text-slate-500 mt-0.5">
-                                {src} · {item.dayLabel ?? '—'} · {item.minutes ?? 0}m
+                                {src} · {item.dayLabel ?? '—'}
+                                {timeRange ? ` · ${timeRange}` : ` · ${item.minutes ?? 0}m`}
                               </p>
                             </button>
+                            {isExpanded
+                              ? <ChevronDown size={13} className="shrink-0 mt-0.5 text-slate-400" />
+                              : <ChevronRight size={13} className="shrink-0 mt-0.5 text-slate-300" />}
                           </div>
                           {isExpanded && (
                             <div className="px-3 pb-3 space-y-2 pl-9">
+                              {timeRange && <p className="text-[11px] font-medium text-slate-700">{item.dayLabel} · {timeRange} ({item.minutes}m)</p>}
                               {item.rawSubTrack && <p className="text-[11px] text-slate-500">Sub-track: {item.rawSubTrack}</p>}
                               {item.splitNote && <p className="text-[11px] text-slate-500 italic">{item.splitNote}</p>}
-                              <button
-                                type="button"
-                                onClick={() => dismissCalendarItem(item)}
-                                className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200"
-                              >
-                                Dismiss — don't show again
-                              </button>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => dismissCalendarItem(item)}
+                                  className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200"
+                                >
+                                  Dismiss
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReconcileExpandedId(null)}
+                                  className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-100"
+                                >
+                                  Close
+                                </button>
+                              </div>
                             </div>
                           )}
                         </li>
