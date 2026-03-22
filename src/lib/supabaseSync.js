@@ -151,6 +151,7 @@ function sessionToRow(session, task, userId) {
     task_instance_id: task.id,
     task_name: task.name ?? '',
     track: task.track ?? 'advisors',
+    sub_track: task.subTrack ?? '',
     kpi_mapping: task.kpiMapping ?? '',
     kpi_values: session.kpiValues && Object.keys(session.kpiValues).length > 0
       ? session.kpiValues
@@ -205,6 +206,7 @@ function rowToLogEntry(row) {
     id: row.id,
     taskName: row.task_name,
     track: row.track,
+    subTrack: row.sub_track ?? '',
     kpiMapping: row.kpi_mapping,
     kpiValues: row.kpi_values ?? {},
     quantity: row.quantity ?? 1,
@@ -250,6 +252,7 @@ export async function upsertCalendarReconcileEntries(entries, userId) {
     task_instance_id: null,
     task_name: e.taskName ?? '(Calendar block)',
     track: e.track ?? '',
+    sub_track: e.subTrack ?? '',
     kpi_mapping: e.kpiMapping ?? '',
     kpi_values: e.kpiValues && Object.keys(e.kpiValues).length > 0 ? e.kpiValues : null,
     quantity: e.quantity ?? 1,

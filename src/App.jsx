@@ -1604,7 +1604,7 @@ function App() {
       }
 
       // Always load user preferences regardless of whether today tasks exist —
-      // cleared dates and dismissed keys must sync even on a fresh machine.
+      // cleared dates, dismissed keys, and allocations must sync on every machine.
       const prefs = await loadUserPreferences(userId)
       if (prefs?.cleared_dates) {
         setClearedDates(prefs.cleared_dates)
@@ -1614,6 +1614,10 @@ function App() {
         const loaded = new Set(prefs.dismissed_calendar_keys)
         setDismissedCalendarKeys(loaded)
         window.localStorage.setItem('cosa.dismissedCalendarKeys', JSON.stringify([...loaded]))
+      }
+      if (prefs?.allocations && typeof prefs.allocations === 'object') {
+        // Write to localStorage so WeekPlanner picks it up on next render
+        try { window.localStorage.setItem('cosa.allocations', JSON.stringify(prefs.allocations)) } catch {}
       }
 
       // 3. Merge today's calendar events into the queue (add new + refresh changed)
@@ -1864,6 +1868,7 @@ function App() {
       id: current.sessionId ?? `log-${Date.now()}`,
       taskName: activeTask.name,
       track: activeTask.track,
+      subTrack: activeTask.subTrack ?? '',
       kpiMapping: activeTask.kpiMapping ?? '',
       kpiValues: kpiSessionValues[activeTask.id] ?? {},
       completionType: 'Cancelled',
@@ -1885,6 +1890,60 @@ function App() {
   function handleComplete() {
     if (!activeTask || !activeSession) return
     handleCompleteTask(activeTask.id)
+  }
+
+  /** Complete the active task and credit the full time estimate regardless of elapsed. */
+  function handleFullCredit() {
+    if (!activeTask || !activeSession) return
+    const current = sessions[activeTask.id]
+    if (!current) return
+
+    const pauseDelta =
+      current.timerState === TIMER_STATES.paused && current.currentPauseStartedAtMs
+        ? Math.floor((Date.now() - current.currentPauseStartedAtMs) / 1000)
+        : 0
+
+    const fullSeconds = current.estimateSeconds ?? activeTask.estimateMinutes * 60
+    const now = new Date().toISOString()
+    const completionType = current.outcomeAchieved != null ? 'Done + Outcome' : 'Done'
+    const kpiValues = kpiSessionValues[activeTask.id] ?? {}
+
+    const nextSession = {
+      ...current,
+      timerState: TIMER_STATES.completed,
+      completionType,
+      actualCompleted: completionInput.trim() || '(full credit)',
+      elapsedSeconds: fullSeconds,
+      pauseDurationSeconds: (current.pauseDurationSeconds ?? 0) + Math.max(0, pauseDelta),
+      currentPauseStartedAtMs: null,
+      completionLoggedAtISO: now,
+      quantity: 1,
+      kpiValues,
+    }
+
+    setSessions((prev) => ({ ...prev, [activeTask.id]: nextSession }))
+    if (supabaseConfigured && session?.user?.id) {
+      upsertTimerSession(nextSession, activeTask, session.user.id)
+    }
+
+    const logEntry = {
+      id: current.sessionId ?? `log-${Date.now()}`,
+      taskName: activeTask.name,
+      track: activeTask.track,
+      subTrack: activeTask.subTrack ?? '',
+      kpiMapping: activeTask.kpiMapping ?? '',
+      kpiValues,
+      completionType,
+      quantity: 1,
+      completedAt: now,
+      estimateSeconds: fullSeconds,
+      elapsedSeconds: fullSeconds,
+      pauseDurationSeconds: (current.pauseDurationSeconds ?? 0) + Math.max(0, pauseDelta),
+      cancelledSeconds: 0,
+    }
+    setCompletionLog((prev) => [...prev, logEntry])
+    setKpiSessionValues((prev) => { const next = { ...prev }; delete next[activeTask.id]; return next })
+    setStatusMessage(`"${activeTask.name}" — full ${Math.round(fullSeconds / 60)}m credited.`)
   }
 
   function handleCompleteTask(taskId) {
@@ -1929,6 +1988,7 @@ function App() {
       id: current.sessionId ?? `log-${Date.now()}`,
       taskName: task.name,
       track: task.track,
+      subTrack: task.subTrack ?? '',
       kpiMapping: task.kpiMapping ?? '',
       kpiValues,
       completionType,
@@ -2764,6 +2824,17 @@ function App() {
                 return d >= weekStart && d <= weekEnd && e.track === 'networking'
               })
             : []
+
+        // Sub-track breakdown from completion log entries
+        const subTrackTotals = {}
+        for (const e of entries) {
+          const st = e.subTrack
+          if (!st) continue
+          subTrackTotals[st] = (subTrackTotals[st] ?? 0) + Math.round((e.elapsedSeconds ?? 0) / 60)
+        }
+        const subTrackRows = Object.entries(subTrackTotals)
+          .sort((a, b) => b[1] - a[1])
+
         return {
           track,
           minutesLogged,
@@ -2774,6 +2845,7 @@ function App() {
           calendarMins,
           minutesFromSessions,
           unallocatedCalendarMins,
+          subTrackRows,
         }
       })
       .filter((t) => t.targetMins > 0)
@@ -3515,39 +3587,62 @@ function App() {
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
-                  const { track, minutesLogged, targetMins, pct, calendarMins } = trackData
+                  const { track, minutesLogged, targetMins, pct, calendarMins, subTrackRows } = trackData
                   return (
-                    <button
-                      key={track.key}
-                      type="button"
-                      className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
-                      onClick={() => openCalendarAllocateModal(trackData)}
-                    >
-                      <div className="mb-1 flex items-center justify-between text-xs gap-2">
-                        <span className="font-medium text-slate-700">{track.label}</span>
-                        <span
-                          className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
-                        >
-                          {minutesLogged}m{' '}
-                          <span className="font-normal text-slate-400">/ {targetMins}m target</span>
-                        </span>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{ width: `${pct}%`, backgroundColor: track.color }}
-                        />
-                      </div>
-                      {calendarMins > 0 && (
-                        <p className="mt-1 text-[11px] text-slate-500">
-                          Calendar:{' '}
-                          <span className="font-medium text-slate-700">{calendarMins}m</span>
-                          {minutesLogged < calendarMins - 0.5 && (
-                            <span className="text-amber-800/90"> &middot; more than logged &mdash; click to reconcile</span>
-                          )}
-                        </p>
+                    <div key={track.key}>
+                      <button
+                        type="button"
+                        className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
+                        onClick={() => openCalendarAllocateModal(trackData)}
+                      >
+                        <div className="mb-1 flex items-center justify-between text-xs gap-2">
+                          <span className="font-medium text-slate-700">{track.label}</span>
+                          <span
+                            className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
+                          >
+                            {minutesLogged}m{' '}
+                            <span className="font-normal text-slate-400">/ {targetMins}m target</span>
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{ width: `${pct}%`, backgroundColor: track.color }}
+                          />
+                        </div>
+                        {calendarMins > 0 && (
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            Calendar:{' '}
+                            <span className="font-medium text-slate-700">{calendarMins}m</span>
+                            {minutesLogged < calendarMins - 0.5 && (
+                              <span className="text-amber-800/90"> &middot; more than logged &mdash; click to reconcile</span>
+                            )}
+                          </p>
+                        )}
+                      </button>
+                      {/* Sub-track breakdown */}
+                      {subTrackRows.length > 0 && (
+                        <ul className="mt-1 ml-2 space-y-1">
+                          {subTrackRows.map(([st, mins]) => {
+                            const stPct = targetMins > 0 ? Math.min(100, Math.round((mins / targetMins) * 100)) : 0
+                            return (
+                              <li key={st}>
+                                <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                  <span className="truncate">{st}</span>
+                                  <span className="shrink-0 ml-2 font-medium">{mins}m</span>
+                                </div>
+                                <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-slate-100">
+                                  <div
+                                    className="h-full rounded-full opacity-60"
+                                    style={{ width: `${stPct}%`, backgroundColor: track.color }}
+                                  />
+                                </div>
+                              </li>
+                            )
+                          })}
+                        </ul>
                       )}
-                    </button>
+                    </div>
                   )
                 })}
                 {timeByTrack.every((t) => t.minutesLogged < 1 && t.calendarMins < 1) && (
@@ -3939,7 +4034,7 @@ function App() {
             )}
           </div>
 
-          <div className="mb-4 grid gap-2 sm:grid-cols-4">
+          <div className="mb-4 grid gap-2 grid-cols-2 sm:grid-cols-5">
             <button
               type="button"
               className="flex items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed active:scale-95"
@@ -3966,6 +4061,16 @@ function App() {
             >
               <SquareCheck size={16} />
               Complete
+            </button>
+            <button
+              type="button"
+              title={`Credit full ${activeTask.estimateMinutes}m regardless of elapsed time`}
+              className="flex items-center justify-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
+              onClick={handleFullCredit}
+              disabled={isCompleted || isCancelled || activeSession.timerState === TIMER_STATES.notStarted}
+            >
+              <SquareCheck size={16} />
+              Full Credit
             </button>
             <button
               type="button"
@@ -4316,6 +4421,7 @@ function App() {
           supabaseConfigured={supabaseConfigured}
           onTodayEventCreated={handleTodayEventCreated}
           onCalendarTagsUpdated={refreshCalendarEventTags}
+          completionLog={completionLog}
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
