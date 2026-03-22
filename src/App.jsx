@@ -34,7 +34,6 @@ import {
   upsertQuickLogEntry,
   loadQuickLogEntries,
   loadCalendarEventTags,
-  upsertCalendarReconcileEntries,
 } from './lib/supabaseSync'
 import {
   fetchAllCalendarEvents,
@@ -553,18 +552,6 @@ function saveCompletionLog(log) {
   window.localStorage.setItem(COMPLETION_LOG_KEY, JSON.stringify(log))
 }
 
-/** Calendar blocks already pulled into the completion log (Weekly Review reconcile). */
-function getSourceCalendarIdsAllocatedInWeek(log, weekStart, weekEnd) {
-  const ids = new Set()
-  if (!Array.isArray(log)) return ids
-  for (const e of log) {
-    if (!e?.sourceCalendarId) continue
-    const d = new Date(e.completedAt)
-    if (Number.isNaN(d.getTime()) || d < weekStart || d > weekEnd) continue
-    ids.add(e.sourceCalendarId)
-  }
-  return ids
-}
 
 // ─── Weekly Planner helpers ───────────────────────────────────────────────────
 
@@ -962,15 +949,6 @@ function App() {
   const [reviewDraft, setReviewDraft] = useState({ q1: '', q2: '', q3: '', mondayIntention: '' })
   const [reviewSaving, setReviewSaving] = useState(false)
   const [kpiDetail, setKpiDetail] = useState(null)
-  /** Weekly Review: opt-in “calendar → completion log” picker (null | { track, items, weekStart, weekEnd }). */
-  const [calendarAllocateModal, setCalendarAllocateModal] = useState(null)
-  const [calendarAllocateSelected, setCalendarAllocateSelected] = useState({})
-  /** Which row is expanded in the reconcile modal. */
-  const [reconcileExpandedId, setReconcileExpandedId] = useState(null)
-  /** Calendar item keys dismissed from right column — persisted to localStorage. */
-  const [dismissedCalendarKeys, setDismissedCalendarKeys] = useState(() => {
-    try { return new Set(JSON.parse(window.localStorage.getItem('cosa.dismissedCalendarKeys') ?? '[]')) } catch { return new Set() }
-  })
   const [gcalSyncStatus, setGcalSyncStatus] = useState(null) // null | 'syncing' | 'ok' | 'auth-error' | 'error'
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
@@ -1609,11 +1587,6 @@ function App() {
       if (prefs?.cleared_dates) {
         setClearedDates(prefs.cleared_dates)
         window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
-      }
-      if (Array.isArray(prefs?.dismissed_calendar_keys)) {
-        const loaded = new Set(prefs.dismissed_calendar_keys)
-        setDismissedCalendarKeys(loaded)
-        window.localStorage.setItem('cosa.dismissedCalendarKeys', JSON.stringify([...loaded]))
       }
       if (prefs?.allocations && typeof prefs.allocations === 'object') {
         // Write to localStorage so WeekPlanner picks it up on next render
@@ -2767,7 +2740,6 @@ function App() {
     }
     const score = scoreConfig[weekScore]
 
-    // Calendar “This Week” model (reference only) — not auto-applied to logged time; user reconciles via modal.
     const weekRangeStart = formatLocalDate(weekStart)
     const weekRangeEnd = formatLocalDate(weekEnd)
     const reviewTrackTargets = allocationsPercentToTrackTargets(loadMergedAllocationsForHealth())
@@ -2777,11 +2749,6 @@ function App() {
       reviewTrackTargets,
       weekRangeStart,
       weekRangeEnd,
-    )
-    const allocatedCalendarIdsThisWeek = getSourceCalendarIdsAllocatedInWeek(
-      completionLog,
-      weekStart,
-      weekEnd,
     )
 
     const TRACK_MIN_TARGETS = {
@@ -2810,10 +2777,6 @@ function App() {
           minutesFromSessions += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
         }
         const calendarMins = calendarHealth.totals[track.key]?.total ?? 0
-        const calItems = calendarHealth.contributors[track.key]?.all ?? []
-        const unallocatedCalendarMins = calItems
-          .filter((item) => !allocatedCalendarIdsThisWeek.has(item.id))
-          .reduce((sum, item) => sum + (item.minutes ?? 0), 0)
         const minutesLogged = minutesFromSessions
         const targetMins = TRACK_MIN_TARGETS[track.key] ?? 0
         const pct = targetMins > 0 ? Math.min(100, Math.round((minutesLogged / targetMins) * 100)) : 0
@@ -2844,7 +2807,6 @@ function App() {
           splitEntries,
           calendarMins,
           minutesFromSessions,
-          unallocatedCalendarMins,
           subTrackRows,
         }
       })
@@ -2883,144 +2845,6 @@ function App() {
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 30)
-    }
-
-    function openCalendarAllocateModal(trackData) {
-      // Already-counted: timer sessions + networking splits.
-      // trackData.entries already includes ALL completion-log entries for this track
-      // (including previously reconciled calendar blocks), so no extra filter needed.
-      const seenLogIds = new Set()
-      const loggedEntries = [
-        ...trackData.entries,
-        ...(trackData.splitEntries ?? []),
-      ]
-        .filter((e) => {
-          const key = e.id ?? JSON.stringify(e)
-          if (seenLogIds.has(key)) return false
-          seenLogIds.add(key)
-          return true
-        })
-        .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
-
-      // Build a set of "day|normalised-title" keys that are already logged
-      const coveredKeys = new Set(
-        loggedEntries.map((e) => {
-          const day = e.completedAt
-            ? new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-            : '—'
-          return `${day}|${normTitle(e.taskName)}`
-        }),
-      )
-
-      // Strip known prefixes/suffixes to get the raw GCal event ID so we can
-      // deduplicate an event that appears in BOTH the CoSA-calendar loop (id:
-      // gcal-{id} or gcal-{id}-split-adv) AND the personal-tagged loop (id:
-      // tag-{id} or tag-{id}-split-adv).
-      function rawEventId(itemId) {
-        return String(itemId ?? '')
-          .replace(/^gcal-/, '')
-          .replace(/^tag-/, '')
-          .replace(/-split-adv$/, '')
-          .replace(/-split-js$/, '')
-      }
-
-      const seenItemIds = new Set()
-      const seenEventIds = new Set()
-      const seenTitleDayKeys = new Set()
-      const rawContributors = calendarHealth.contributors[trackData.track.key]?.all ?? []
-      // Debug: log all raw contributors so duplicate sources are visible in the console
-      console.log('[reconcile] raw contributors for', trackData.track.key, rawContributors.map((c) => ({ id: c.id, title: c.title, day: c.dayLabel, mins: c.minutes })))
-      const items = rawContributors.filter((item) => {
-        // Guard 1: exact item.id already seen (catches identical duplicates first)
-        if (seenItemIds.has(item.id)) { console.log('[reconcile] dup item.id:', item.id); return false }
-        seenItemIds.add(item.id)
-        if (allocatedCalendarIdsThisWeek.has(item.id)) return false
-        const titleDayKey = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
-        if (coveredKeys.has(titleDayKey)) return false
-        if (dismissedCalendarKeys.has(titleDayKey)) return false
-        // Guard 2: same underlying GCal event ID (strips gcal-/tag- prefix + split suffix)
-        const evId = rawEventId(item.id)
-        if (seenEventIds.has(evId)) { console.log('[reconcile] dup rawEventId:', evId, item.id); return false }
-        seenEventIds.add(evId)
-        // Guard 3: same title+day combo
-        if (seenTitleDayKeys.has(titleDayKey)) { console.log('[reconcile] dup titleDayKey:', titleDayKey, item.id); return false }
-        seenTitleDayKeys.add(titleDayKey)
-        return true
-      })
-
-      if (items.length === 0 && loggedEntries.length === 0) return
-      setReconcileExpandedId(null)
-      setCalendarAllocateSelected({})
-      setCalendarAllocateModal({
-        track: trackData.track,
-        items,
-        loggedEntries,
-        weekEnd,
-      })
-    }
-
-    function deleteLoggedEntry(entryId) {
-      setCompletionLog((prev) => prev.filter((e) => e.id !== entryId))
-      setCalendarAllocateModal((prev) =>
-        prev ? { ...prev, loggedEntries: prev.loggedEntries.filter((e) => e.id !== entryId) } : prev,
-      )
-      setReconcileExpandedId(null)
-    }
-
-    function dismissCalendarItem(item) {
-      const key = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
-      setDismissedCalendarKeys((prev) => {
-        const next = new Set(prev)
-        next.add(key)
-        const arr = [...next]
-        window.localStorage.setItem('cosa.dismissedCalendarKeys', JSON.stringify(arr))
-        // Persist to Supabase so the dismissed list survives cross-device sign-ins
-        if (session?.user?.id) {
-          upsertUserPreferences({ dismissed_calendar_keys: arr }, session.user.id)
-        }
-        return next
-      })
-      setCalendarAllocateModal((prev) =>
-        prev ? { ...prev, items: prev.items.filter((i) => i.id !== item.id) } : prev,
-      )
-      setCalendarAllocateSelected((prev) => { const n = { ...prev }; delete n[item.id]; return n })
-      setReconcileExpandedId(null)
-    }
-
-    function confirmCalendarAllocation() {
-      if (!calendarAllocateModal) return
-      const selected = calendarAllocateModal.items.filter((item) => calendarAllocateSelected[item.id])
-      if (selected.length === 0) return
-      const { weekEnd: we, track } = calendarAllocateModal
-      const completedAtCap = new Date(Math.min(Date.now(), we.getTime())).toISOString()
-      const newEntries = selected.map((item, idx) => ({
-        id: `weekly-review-cal-${item.id}-${Date.now()}-${idx}`,
-        taskName: item.title || '(Calendar block)',
-        track: track.key,
-        kpiMapping:
-          item.source === 'cosa-calendar'
-            ? 'CoSA calendar → weekly review'
-            : 'Tagged personal calendar → weekly review',
-        kpiValues: {},
-        completionType: 'Done',
-        quantity: 1,
-        completedAt: item.startISO || completedAtCap,
-        estimateSeconds: Math.round((item.minutes ?? 0) * 60),
-        elapsedSeconds: Math.round((item.minutes ?? 0) * 60),
-        pauseCount: 0,
-        pauseDurationSeconds: 0,
-        cancelledSeconds: 0,
-        sourceCalendarId: item.id,
-        fromWeeklyReviewCalendarAllocation: true,
-      }))
-      setCompletionLog((prev) => [...prev, ...newEntries])
-      setCalendarAllocateModal(null)
-      setCalendarAllocateSelected({})
-
-      // Persist so the entries survive sign-in on a new machine
-      if (supabaseConfigured && session?.user?.id) {
-        upsertCalendarReconcileEntries(newEntries, session.user.id)
-      }
     }
 
     function openKpiDetail(kpi) {
@@ -3072,514 +2896,8 @@ function App() {
       setKpiDetail({ type: 'kpi', title: kpi.label, kpi, entries })
     }
 
-    // ── Calendar → completion reconcile (opt-in) ────────────────────────────
-    const calendarAllocateModalEl = calendarAllocateModal ? (
-      <div
-        className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-4"
-        onClick={() => {
-          setCalendarAllocateModal(null)
-          setCalendarAllocateSelected({})
-        }}
-      >
-        <div
-          className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[88vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-900">
-                Reconcile — {calendarAllocateModal.track.label}
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Compare what's already logged with what's on the calendar. Check any calendar blocks you want to add.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setCalendarAllocateModal(null)
-                setCalendarAllocateSelected({})
-              }}
-              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            >
-              <X size={16} />
-            </button>
-          </div>
 
-          {/* Two-column body */}
-          <div className="overflow-y-auto flex-1">
-            <div className="grid grid-cols-2 divide-x divide-slate-100 min-h-full">
-
-              {/* LEFT — Already logged */}
-              <div className="p-4 space-y-2">
-                <div className="flex items-baseline justify-between mb-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Already logged</p>
-                  <p className="text-[11px] text-slate-400">
-                    {calendarAllocateModal.loggedEntries.reduce((s, e) => s + Math.round((e.elapsedSeconds ?? 0) / 60), 0)}m total
-                  </p>
-                </div>
-                {calendarAllocateModal.loggedEntries.length === 0 ? (
-                  <p className="text-[11px] text-slate-400 italic">Nothing logged yet for this track this week.</p>
-                ) : (
-                  <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg overflow-hidden">
-                    {calendarAllocateModal.loggedEntries.map((e, i) => {
-                      const rowId = `log-${e.id ?? i}`
-                      const isExpanded = reconcileExpandedId === rowId
-                      const mins = Math.round((e.elapsedSeconds ?? 0) / 60)
-                      const completedDate = e.completedAt ? new Date(e.completedAt) : null
-                      const dayStr = completedDate
-                        ? completedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                        : '—'
-                      const timeStr = completedDate
-                        ? completedDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-                        : null
-                      const isReconciled = !!e.sourceCalendarId
-                      return (
-                        <li key={e.id ?? i} className={`${isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50/60'} transition-colors`}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2.5 flex items-start justify-between gap-2"
-                            onClick={() => setReconcileExpandedId(isExpanded ? null : rowId)}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-medium text-slate-800 leading-snug">{e.taskName}</p>
-                              <p className="text-[11px] text-slate-500 mt-0.5">
-                                {dayStr}{timeStr ? ` · ${timeStr}` : ''} · {mins}m
-                                {isReconciled && <span className="ml-1 text-amber-700"> · reconciled</span>}
-                              </p>
-                            </div>
-                            {isExpanded
-                              ? <ChevronDown size={13} className="shrink-0 mt-0.5 text-slate-400" />
-                              : <ChevronRight size={13} className="shrink-0 mt-0.5 text-slate-300" />}
-                          </button>
-                          {isExpanded && (
-                            <div className="px-3 pb-3 space-y-2">
-                              <p className="text-[11px] text-slate-500">{e.kpiMapping || 'No KPI mapping'}</p>
-                              <p className="text-[11px] text-slate-500">{e.completionType || 'Done'} · {mins}m elapsed</p>
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => deleteLoggedEntry(e.id)}
-                                  className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
-                                >
-                                  Remove from log
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setReconcileExpandedId(null)}
-                                  className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-100"
-                                >
-                                  Close
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
-
-              {/* RIGHT — Calendar not yet logged */}
-              <div className="p-4 space-y-2">
-                <div className="flex items-baseline justify-between mb-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">On calendar · not logged</p>
-                  <div className="flex gap-2 text-[11px]">
-                    <button
-                      type="button"
-                      className="text-amber-900 underline font-medium"
-                      onClick={() => {
-                        const all = {}
-                        for (const it of calendarAllocateModal.items) all[it.id] = true
-                        setCalendarAllocateSelected(all)
-                      }}
-                    >
-                      All
-                    </button>
-                    <span className="text-slate-300">|</span>
-                    <button
-                      type="button"
-                      className="text-slate-500 underline"
-                      onClick={() => setCalendarAllocateSelected({})}
-                    >
-                      None
-                    </button>
-                  </div>
-                </div>
-                {calendarAllocateModal.items.length === 0 ? (
-                  <p className="text-[11px] text-slate-400 italic">All calendar blocks are accounted for.</p>
-                ) : (
-                  <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg overflow-hidden">
-                    {calendarAllocateModal.items.map((item) => {
-                      const rowId = `cal-${item.id}`
-                      const isExpanded = reconcileExpandedId === rowId
-                      const checked = !!calendarAllocateSelected[item.id]
-                      const src = item.source === 'cosa-calendar' ? 'CoSA' : 'Personal'
-                      const sub = item.splitNote ? ' · net. split' : ''
-                      const startDate = item.startISO ? new Date(item.startISO) : null
-                      const startTimeStr = startDate
-                        ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-                        : null
-                      const endDate = item.startISO && item.minutes
-                        ? new Date(new Date(item.startISO).getTime() + item.minutes * 60000)
-                        : null
-                      const endTimeStr = endDate
-                        ? endDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-                        : null
-                      const timeRange = startTimeStr && endTimeStr
-                        ? `${startTimeStr} – ${endTimeStr}`
-                        : startTimeStr ?? null
-                      return (
-                        <li key={item.id} className={`${checked ? 'bg-amber-50/60' : isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50/60'} transition-colors`}>
-                          <div className="flex items-start gap-2 px-3 py-2.5">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 shrink-0 rounded border-slate-300 accent-amber-700"
-                              checked={checked}
-                              onChange={() =>
-                                setCalendarAllocateSelected((prev) => ({
-                                  ...prev,
-                                  [item.id]: !prev[item.id],
-                                }))
-                              }
-                            />
-                            <button
-                              type="button"
-                              className="min-w-0 flex-1 text-left"
-                              onClick={() => setReconcileExpandedId(isExpanded ? null : rowId)}
-                            >
-                              <p className="text-xs font-medium text-slate-800 leading-snug">
-                                {item.title || '(Untitled)'}{sub}
-                              </p>
-                              <p className="text-[11px] text-slate-500 mt-0.5">
-                                {src} · {item.dayLabel ?? '—'}
-                                {timeRange ? ` · ${timeRange}` : ` · ${item.minutes ?? 0}m`}
-                              </p>
-                            </button>
-                            {isExpanded
-                              ? <ChevronDown size={13} className="shrink-0 mt-0.5 text-slate-400" />
-                              : <ChevronRight size={13} className="shrink-0 mt-0.5 text-slate-300" />}
-                          </div>
-                          {isExpanded && (
-                            <div className="px-3 pb-3 space-y-2 pl-9">
-                              {timeRange && <p className="text-[11px] font-medium text-slate-700">{item.dayLabel} · {timeRange} ({item.minutes}m)</p>}
-                              {item.rawSubTrack && <p className="text-[11px] text-slate-500">Sub-track: {item.rawSubTrack}</p>}
-                              {item.splitNote && <p className="text-[11px] text-slate-500 italic">{item.splitNote}</p>}
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => dismissCalendarItem(item)}
-                                  className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200"
-                                >
-                                  Dismiss
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setReconcileExpandedId(null)}
-                                  className="rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-100"
-                                >
-                                  Close
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div className="border-t border-slate-100 px-4 py-3 bg-slate-50 flex items-center justify-between gap-2">
-            <span className="text-xs text-slate-600">
-              Adding:{' '}
-              <strong>
-                {calendarAllocateModal.items
-                  .filter((it) => calendarAllocateSelected[it.id])
-                  .reduce((s, it) => s + (it.minutes ?? 0), 0)}m
-              </strong>
-              {' '}to completion log
-            </span>
-            <button
-              type="button"
-              disabled={
-                calendarAllocateModal.items.filter((it) => calendarAllocateSelected[it.id]).length === 0
-              }
-              onClick={confirmCalendarAllocation}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-800"
-            >
-              Add to log
-            </button>
-          </div>
-        </div>
-      </div>
-    ) : null
-
-    // ── Detail modal ─────────────────────────────────────────────────────────
-    const detailModal = kpiDetail ? (
-      <div
-        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
-        onClick={() => setKpiDetail(null)}
-      >
-        <div
-          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-900">{kpiDetail.title}</h3>
-            <button
-              type="button"
-              onClick={() => setKpiDetail(null)}
-              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="overflow-y-auto flex-1 p-4">
-
-            {/* Score breakdown */}
-            {kpiDetail.type === 'score' && (
-              <div className="space-y-1.5">
-                {kpiDetail.kpiResults.map((k) => (
-                  <div key={k.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
-                    <div>
-                      <p className="text-xs font-medium text-slate-800">{k.label}</p>
-                      <p className="text-[11px] text-slate-400">{k.trackGroup} · {k.period}</p>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="text-slate-500">
-                        {k.isRate
-                          ? k.total > 0 ? `${k.count}/${k.total}` : '—'
-                          : `${k.count}${k.target ? ` / ${k.target}` : ''}`}
-                      </span>
-                      {k.isRate && k.total === 0 ? (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-400">—</span>
-                      ) : k.hit ? (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
-                      ) : (
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Track sessions */}
-            {kpiDetail.type === 'track' && (
-              kpiDetail.trackData.entries.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">No sessions logged for this track in this period.</p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {[...kpiDetail.trackData.entries]
-                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
-                    .map((e, i) => {
-                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
-                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                      return (
-                        <li key={e.id ?? i} className="py-2.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
-                              <p className="text-[11px] text-slate-400">{e.kpiMapping || '—'}</p>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
-                              <p className="text-[11px] text-slate-400">{dayStr}</p>
-                            </div>
-                          </div>
-                        </li>
-                      )
-                    })}
-                </ul>
-              )
-            )}
-
-            {/* KPI entries */}
-            {kpiDetail.type === 'kpi' && (
-              kpiDetail.entries.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">No logged entries for this KPI in this period.</p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {[...kpiDetail.entries]
-                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
-                    .map((e, i) => {
-                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
-                      return (
-                        <li key={e.id ?? i} className="py-2.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
-                              {kpiDetail.kpi.isRate && (
-                                <p className="text-[11px] text-slate-400">
-                                  {e._dodUsed ? '✓ Definition of done used' : '✗ No definition of done'}
-                                </p>
-                              )}
-                              {!kpiDetail.kpi.isRate && (e.quantity ?? 1) > 1 && (
-                                <p className="text-[11px] text-slate-400">×{e.quantity} units</p>
-                              )}
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
-                              <p className="text-[11px] text-slate-400">{dayStr}</p>
-                            </div>
-                          </div>
-                        </li>
-                      )
-                    })}
-                </ul>
-              )
-            )}
-          </div>
-
-          {/* Footer total for track / kpi */}
-          {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
-            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
-              <span>
-                {kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}{' '}
-                <span className="font-normal text-slate-400">(completion log)</span>
-              </span>
-              <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
-            </div>
-          )}
-          {kpiDetail.type === 'kpi' && kpiDetail.entries.length > 0 && !kpiDetail.kpi.isRate && (
-            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
-              <span>{kpiDetail.entries.length} session{kpiDetail.entries.length !== 1 ? 's' : ''}</span>
-              <span className="font-semibold">
-                {kpiDetail.entries.reduce((s, e) => s + (e.quantity ?? 1), 0)} total
-                {kpiDetail.kpi.target ? ` / ${kpiDetail.kpi.target} target` : ''}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-    ) : null
-
-    function renderKpiGroupCard(group) {
-      const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
-      const accentColor =
-        groupKpis[0]?.color
-        ?? KPI_DEFINITIONS.find((d) => d.trackGroup === group)?.color
-        ?? '#64748b'
-      const periodLabel =
-        groupKpis[0]?.period === 'month' ? 'Month' : 'Week'
-      return (
-        <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${accentColor}18` }}>
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: accentColor }} />
-            <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[280px] text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
-                  <th className="px-4 py-2 font-medium">KPI</th>
-                  <th className="px-3 py-2 text-center font-medium">Target</th>
-                  <th className="px-3 py-2 text-center font-medium">This {periodLabel}</th>
-                  <th className="px-3 py-2 text-center font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groupKpis.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-xs text-slate-400 italic">
-                      No KPIs defined for this track yet.
-                    </td>
-                  </tr>
-                ) : (
-                  groupKpis.map((kpi) => (
-                    <tr
-                      key={kpi.id}
-                      className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
-                      onClick={() => openKpiDetail(kpi)}
-                      title="Click to see contributing sessions"
-                    >
-                      <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
-                      <td className="px-3 py-2.5 text-center text-slate-500">
-                        {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
-                      </td>
-                      <td className="px-3 py-2.5 text-center font-medium text-slate-900">
-                        {kpi.isRate
-                          ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
-                          : kpi.count}
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
-                        {kpi.isRate && kpi.total === 0 ? (
-                          <span className="text-slate-400 text-xs">No sessions</span>
-                        ) : kpi.hit ? (
-                          <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
-                        ) : (
-                          <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      )
-    }
-
-    return (
-      <>
-      {calendarAllocateModalEl}
-      {detailModal}
-      <section className="space-y-4 p-4">
-        {/* Week navigation */}
-        <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <button
-            type="button"
-            onClick={() => setWeekOffset((o) => o - 1)}
-            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
-          >
-            ← Prev
-          </button>
-          <div className="text-center">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Weekly Review</p>
-            <p className="text-sm font-semibold text-slate-900">{formatWeekLabel(weekStart, weekEnd)}</p>
-            {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
-          </div>
-          <button
-            type="button"
-            onClick={() => setWeekOffset((o) => Math.min(0, o + 1))}
-            disabled={isCurrentWeek}
-            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-30"
-          >
-            Next →
-          </button>
-        </div>
-
-        {/* Week score, time by track, KPI tables, quick logs */}
-        <div className="space-y-4">
-        {/* Week score — clickable */}
-        <article
-          className={`rounded-xl border ${score.border} ${score.bg} p-4 cursor-pointer hover:opacity-90 active:scale-[0.99] transition-transform`}
-          onClick={openScoreDetail}
-          title="Click to see KPI breakdown"
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide opacity-70">Week Score</p>
-          <p className={`mt-1 text-2xl font-bold ${score.text}`}>{score.label}</p>
-          <p className={`text-sm ${score.text}`}>{score.desc}</p>
-          <p className={`mt-1 text-xs ${score.text} opacity-80`}>
-            {kpisHit} of {weeklyKpis.length} weekly KPIs hit · <span className="underline underline-offset-2">see breakdown</span>
-          </p>
-        </article>
-
-        {/* Left: time + Job Search KPIs · Right: other track KPI scorecards */}
-        <div className="grid gap-4 md:grid-cols-2 md:items-start">
-          <div className="min-w-0 space-y-4">
-            {/* Time This Week by Track — each row clickable */}
+    // ── Detail modalable */}
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
               <p className="mb-3 text-[11px] text-slate-500">
@@ -3590,10 +2908,8 @@ function App() {
                   const { track, minutesLogged, targetMins, pct, calendarMins, subTrackRows } = trackData
                   return (
                     <div key={track.key}>
-                      <button
-                        type="button"
-                        className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
-                        onClick={() => openCalendarAllocateModal(trackData)}
+                      <div
+                        className="w-full text-left rounded-lg p-2 -mx-2"
                       >
                         <div className="mb-1 flex items-center justify-between text-xs gap-2">
                           <span className="font-medium text-slate-700">{track.label}</span>
@@ -3614,12 +2930,9 @@ function App() {
                           <p className="mt-1 text-[11px] text-slate-500">
                             Calendar:{' '}
                             <span className="font-medium text-slate-700">{calendarMins}m</span>
-                            {minutesLogged < calendarMins - 0.5 && (
-                              <span className="text-amber-800/90"> &middot; more than logged &mdash; click to reconcile</span>
-                            )}
                           </p>
                         )}
-                      </button>
+                      </div>
                       {/* Sub-track breakdown */}
                       {subTrackRows.length > 0 && (
                         <ul className="mt-1 ml-2 space-y-1">
