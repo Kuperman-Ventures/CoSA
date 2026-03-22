@@ -1055,7 +1055,8 @@ export default function WeekPlanner({
   onCalendarTagsUpdated,
   completionLog = [],
 }) {
-  const [weekOffset, setWeekOffset] = useState(0)
+  // Default to next week on Sunday so the planner opens ready for planning
+  const [weekOffset, setWeekOffset] = useState(() => new Date().getDay() === 0 ? 1 : 0)
   const [weekEvents, setWeekEvents]               = useState([])
   const [untaggedCosaEvents, setUntaggedCosaEvents] = useState([])
   const [personalEvents, setPersonalEvents]         = useState([])
@@ -1126,12 +1127,19 @@ export default function WeekPlanner({
   // Actual logged time from the completion log — drives the HealthBars primary bars.
   // Mirrors healthModel.totals shape: { [track]: { total: number, sub: { [st]: number } } }
   const loggedTotals = useMemo(() => {
+    // Use proper local-time Date objects spanning Mon 00:00:00 → Sun 23:59:59 so that
+    // entries logged on Saturday/Sunday and after UTC-midnight on Friday are included.
+    const weekStart = new Date(`${weekRangeStart}T00:00:00`)
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekStart.getDate() + 6)
+    weekEnd.setHours(23, 59, 59, 999)
+
     const bucketKeys = (track) => Object.keys(trackTargets[track]?.subTracks ?? {})
     const totals = {}
     for (const e of completionLog) {
       if (!e?.completedAt || !e.track) continue
       const d = new Date(e.completedAt)
-      if (d < weekRangeStart || d > weekRangeEnd) continue
+      if (d < weekStart || d > weekEnd) continue
       if (e.completionType === 'Cancelled') continue
       const mins = Math.round((e.elapsedSeconds ?? 0) / 60)
       if (!totals[e.track]) totals[e.track] = { total: 0, sub: {} }
@@ -1144,7 +1152,7 @@ export default function WeekPlanner({
       }
     }
     return totals
-  }, [completionLog, weekRangeStart, weekRangeEnd, trackTargets])
+  }, [completionLog, weekRangeStart, trackTargets])
 
   const providerToken = session?.provider_token ?? null
 
