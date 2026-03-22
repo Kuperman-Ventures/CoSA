@@ -2822,12 +2822,17 @@ function App() {
         }),
       )
 
-      // Exclude calendar items that were already explicitly reconciled OR whose
-      // title+day match a logged entry (e.g. timer session for the same meeting).
+      // Exclude items already reconciled or whose title+day matches a logged entry.
+      // Then deduplicate within the remaining list (same event can appear from both
+      // the CoSA-calendar loop and the personal-tagged loop in the health model).
+      const seenItemKeys = new Set()
       const items = (calendarHealth.contributors[trackData.track.key]?.all ?? []).filter((item) => {
         if (allocatedCalendarIdsThisWeek.has(item.id)) return false
         const key = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
-        return !coveredKeys.has(key)
+        if (coveredKeys.has(key)) return false
+        if (seenItemKeys.has(key)) return false
+        seenItemKeys.add(key)
+        return true
       })
 
       if (items.length === 0 && loggedEntries.length === 0) return
