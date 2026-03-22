@@ -219,6 +219,7 @@ function rowToLogEntry(row) {
     pauseCount: row.pause_count,
     pauseDurationSeconds: row.pause_duration_seconds,
     cancelledSeconds: row.cancelled_seconds,
+    isQuickLog: Boolean(row.is_quick_log),
   }
 }
 

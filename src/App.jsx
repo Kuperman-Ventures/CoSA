@@ -1606,7 +1606,12 @@ function App() {
       if (remoteSessions && remoteSessions.length > 0) {
         setCompletionLog((prev) => {
           const remoteIds = new Set(remoteSessions.map((s) => s.id))
-          const localOnly = prev.filter((e) => !remoteIds.has(e.id))
+          // Drop ql- prefixed local entries: Supabase holds the canonical UUID copy.
+          // This prevents double-counting when the same quick log exists both as a
+          // temporary ql- local ID and as a synced UUID in timer_sessions.
+          const localOnly = prev.filter(
+            (e) => !remoteIds.has(e.id) && !String(e.id).startsWith('ql-'),
+          )
           return [...remoteSessions, ...localOnly]
         })
       }
@@ -2786,6 +2791,7 @@ function App() {
     const mergedEntries = [
       ...trackData.entries,
       ...(trackData.splitEntries ?? []),
+      ...(trackData.calendarEntries ?? []),
     ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
     setKpiDetail({
       type: 'track',
@@ -2874,6 +2880,18 @@ function App() {
         const subTrackRows = Object.entries(subTrackTotals)
           .sort((a, b) => b[1] - a[1])
 
+        // Calendar contributors for the detail drawer (CoSA events + tagged events)
+        const calendarEntries = (calendarHealth.contributors[track.key]?.all ?? []).map((c) => ({
+          id: c.id,
+          taskName: c.title,
+          elapsedSeconds: (c.minutes ?? 0) * 60,
+          completedAt: c.startISO ?? c.sortKey ?? new Date().toISOString(),
+          track: track.key,
+          kpiMapping: '',
+          _fromCalendar: true,
+          _calendarSource: c.source, // 'cosa-calendar' | 'personal-tagged'
+        }))
+
         return {
           track,
           minutesLogged,
@@ -2884,6 +2902,7 @@ function App() {
           calendarMins,
           minutesFromSessions,
           subTrackRows,
+          calendarEntries,
         }
       })
       .filter((t) => t.targetMins > 0)
@@ -3343,12 +3362,19 @@ function App() {
                       .map((e, i) => {
                         const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
                         const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                        const sourceLabel = e._fromCalendar
+                          ? e._calendarSource === 'personal-tagged'
+                            ? { text: '📅 Tagged event', cls: 'bg-indigo-50 text-indigo-600' }
+                            : { text: '📅 CoSA event', cls: 'bg-violet-50 text-violet-600' }
+                          : e.isQuickLog
+                          ? { text: '⚡ Quick log', cls: 'bg-amber-50 text-amber-700' }
+                          : { text: '⏱ Timer', cls: 'bg-slate-100 text-slate-500' }
                         return (
                           <li key={e.id ?? i} className="py-2.5">
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
-                                <p className="text-[11px] text-slate-400">{e.kpiMapping || '—'}</p>
+                                <span className={`mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${sourceLabel.cls}`}>{sourceLabel.text}</span>
                               </div>
                               <div className="shrink-0 text-right">
                                 <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
@@ -3418,8 +3444,8 @@ function App() {
             {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
               <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
                 <span>
-                  {kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}{' '}
-                  <span className="font-normal text-slate-400">(completion log)</span>
+                  {kpiDetail.trackData.entries.filter(e => !e._fromCalendar).length} timer{' '}
+                  + {kpiDetail.trackData.entries.filter(e => e._fromCalendar).length} calendar
                 </span>
                 <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
               </div>
