@@ -1136,6 +1136,8 @@ export default function WeekPlanner({
 
     const bucketKeys = (track) => Object.keys(trackTargets[track]?.subTracks ?? {})
     const totals = {}
+
+    // Timer sessions and Quick Logs
     for (const e of completionLog) {
       if (!e?.completedAt || !e.track) continue
       const d = new Date(e.completedAt)
@@ -1151,8 +1153,23 @@ export default function WeekPlanner({
         totals[e.track].sub[bucket] = (totals[e.track].sub[bucket] ?? 0) + mins
       }
     }
+
+    // Tagged calendar events count as logged — no reconcile step needed
+    for (const tag of Object.values(calendarTags)) {
+      if (!tag.track || !tag.date) continue
+      const d = new Date(tag.date + 'T12:00:00')
+      if (d < weekStart || d > weekEnd) continue
+      const mins = tag.durationMin ?? 0
+      if (!totals[tag.track]) totals[tag.track] = { total: 0, sub: {} }
+      totals[tag.track].total += mins
+      if (tag.subTrack) {
+        const bucket = allocationSubTrackKey(tag.track, tag.subTrack, bucketKeys(tag.track)) ?? tag.subTrack
+        totals[tag.track].sub[bucket] = (totals[tag.track].sub[bucket] ?? 0) + mins
+      }
+    }
+
     return totals
-  }, [completionLog, weekRangeStart, trackTargets])
+  }, [completionLog, calendarTags, weekRangeStart, trackTargets])
 
   const providerToken = session?.provider_token ?? null
 

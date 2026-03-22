@@ -2777,7 +2777,16 @@ function App() {
           minutesFromSessions += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
         }
         const calendarMins = calendarHealth.totals[track.key]?.total ?? 0
-        const minutesLogged = minutesFromSessions
+
+        // Tagged calendar events count as logged time — no reconcile step needed.
+        // KPI credits from those same tags are counted separately via countCalendarTagKpiCredits.
+        const taggedMinsForTrack = Object.values(calendarEventTags).reduce((sum, tag) => {
+          if (!tag.date || tag.track !== track.key) return sum
+          const d = new Date(tag.date + 'T12:00:00')
+          if (d < weekStart || d > weekEnd) return sum
+          return sum + (tag.durationMin ?? 0)
+        }, 0)
+        const minutesLogged = minutesFromSessions + taggedMinsForTrack
         const targetMins = TRACK_MIN_TARGETS[track.key] ?? 0
         const pct = targetMins > 0 ? Math.min(100, Math.round((minutesLogged / targetMins) * 100)) : 0
         const splitEntries =
@@ -2788,12 +2797,18 @@ function App() {
               })
             : []
 
-        // Sub-track breakdown from completion log entries
+        // Sub-track breakdown from completion log entries + tagged events
         const subTrackTotals = {}
         for (const e of entries) {
           const st = e.subTrack
           if (!st) continue
           subTrackTotals[st] = (subTrackTotals[st] ?? 0) + Math.round((e.elapsedSeconds ?? 0) / 60)
+        }
+        for (const tag of Object.values(calendarEventTags)) {
+          if (!tag.date || tag.track !== track.key || !tag.subTrack) continue
+          const d = new Date(tag.date + 'T12:00:00')
+          if (d < weekStart || d > weekEnd) continue
+          subTrackTotals[tag.subTrack] = (subTrackTotals[tag.subTrack] ?? 0) + (tag.durationMin ?? 0)
         }
         const subTrackRows = Object.entries(subTrackTotals)
           .sort((a, b) => b[1] - a[1])
