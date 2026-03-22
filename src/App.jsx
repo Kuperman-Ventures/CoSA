@@ -2721,6 +2721,79 @@ function App() {
     )
   }
 
+  // ── KPI detail handlers (App-level so they always have fresh state) ─────────
+  function openKpiDetail(kpi) {
+    const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
+    const { start: monthStart, end: monthEnd } = getMonthBoundsForWeek(weekOffset)
+    const rangeStart = kpi.period === 'month' ? monthStart : weekStart
+    const rangeEnd   = kpi.period === 'month' ? monthEnd   : weekEnd
+
+    let entries
+    if (kpi.isRate) {
+      const allVentures = completionLog.filter((e) => {
+        const d = new Date(e.completedAt)
+        return d >= rangeStart && d <= rangeEnd && e.track === 'ventures' &&
+          (e.completionType === 'Done' || e.completionType === 'Done + Outcome')
+      })
+      entries = allVentures.map((e) => ({ ...e, _dodUsed: !!e.definitionOfDoneUsed }))
+    } else {
+      entries = completionLog.filter((e) => {
+        const d = new Date(e.completedAt)
+        if (d < rangeStart || d > rangeEnd) return false
+        if (e.kpiMapping !== kpi.kpiMapping) return false
+        if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
+        return true
+      })
+      const tagContribs = []
+      for (const [gcalId, tag] of Object.entries(calendarEventTags)) {
+        const credits = tag.kpiCredits
+        if (!tag?.date || !Array.isArray(credits) || credits.length === 0) continue
+        const d = new Date(`${tag.date}T12:00:00`)
+        if (d < rangeStart || d > rangeEnd) continue
+        const qtyMap = tag.kpiQuantities && typeof tag.kpiQuantities === 'object' ? tag.kpiQuantities : {}
+        for (const mapping of credits) {
+          if (mapping !== kpi.kpiMapping) continue
+          const qty = typeof qtyMap[mapping] === 'number' && qtyMap[mapping] >= 1 ? qtyMap[mapping] : 1
+          tagContribs.push({
+            id: `cal-tag-${gcalId}-${mapping}`,
+            taskName: tag.title || 'Tagged calendar event',
+            kpiMapping: kpi.kpiMapping,
+            completedAt: `${tag.date}T12:00:00`,
+            elapsedSeconds: Math.round((tag.durationMin ?? 0) * 60),
+            quantity: qty,
+            completionType: 'Done',
+            _fromCalendarTag: true,
+          })
+        }
+      }
+      entries = [...entries, ...tagContribs].sort(
+        (a, b) => new Date(b.completedAt) - new Date(a.completedAt),
+      )
+    }
+    setKpiDetail({ type: 'kpi', title: kpi.label, kpi, entries })
+  }
+
+  function openScoreDetail() {
+    const { kpiResults } = kpiSummary
+    setKpiDetail({
+      type: 'score',
+      title: 'Week Score Breakdown',
+      kpiResults: kpiResults.filter((k) => k.countsTowardWeekScore !== false),
+    })
+  }
+
+  function openTrackDetail(trackData) {
+    const mergedEntries = [
+      ...trackData.entries,
+      ...(trackData.splitEntries ?? []),
+    ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+    setKpiDetail({
+      type: 'track',
+      title: `${trackData.track.label} — Logged This Week`,
+      trackData: { ...trackData, entries: mergedEntries },
+    })
+  }
+
   function renderKpiDashboard() {
     const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
     const { start: monthStart, end: monthEnd } = getMonthBoundsForWeek(weekOffset)
@@ -2829,26 +2902,6 @@ function App() {
     const savedReview = fridayReviews.find((r) => r.week_start === weekStartStr)
 
     // ── Detail-drawer helpers ────────────────────────────────────────────────
-    function openScoreDetail() {
-      setKpiDetail({
-        type: 'score',
-        title: 'Week Score Breakdown',
-        kpiResults: kpiResults.filter((k) => k.countsTowardWeekScore !== false),
-      })
-    }
-
-    function openTrackDetail(trackData) {
-      const mergedEntries = [
-        ...trackData.entries,
-        ...(trackData.splitEntries ?? []),
-      ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
-      setKpiDetail({
-        type: 'track',
-        title: `${trackData.track.label} — Logged This Week`,
-        trackData: { ...trackData, entries: mergedEntries },
-      })
-    }
-
     /** Normalise a task/event title for fuzzy deduplication. */
     function normTitle(s) {
       return String(s ?? '')
@@ -2859,209 +2912,6 @@ function App() {
         .trim()
         .slice(0, 30)
     }
-
-    function openKpiDetail(kpi) {
-      const rangeStart = kpi.period === 'month' ? monthStart : weekStart
-      const rangeEnd   = kpi.period === 'month' ? monthEnd   : weekEnd
-
-      let entries
-      if (kpi.isRate) {
-        const allVentures = completionLog.filter((e) => {
-          const d = new Date(e.completedAt)
-          return d >= rangeStart && d <= rangeEnd && e.track === 'ventures' &&
-            (e.completionType === 'Done' || e.completionType === 'Done + Outcome')
-        })
-        entries = allVentures.map((e) => ({ ...e, _dodUsed: !!e.definitionOfDoneUsed }))
-      } else {
-        entries = completionLog.filter((e) => {
-          const d = new Date(e.completedAt)
-          if (d < rangeStart || d > rangeEnd) return false
-          if (e.kpiMapping !== kpi.kpiMapping) return false
-          if (e.completionType === 'Partial' || e.completionType === 'Cancelled') return false
-          return true
-        })
-        const tagContribs = []
-        for (const [gcalId, tag] of Object.entries(calendarEventTags)) {
-          const credits = tag.kpiCredits
-          if (!tag?.date || !Array.isArray(credits) || credits.length === 0) continue
-          const d = new Date(`${tag.date}T12:00:00`)
-          if (d < rangeStart || d > rangeEnd) continue
-          const qtyMap = tag.kpiQuantities && typeof tag.kpiQuantities === 'object' ? tag.kpiQuantities : {}
-          for (const mapping of credits) {
-            if (mapping !== kpi.kpiMapping) continue
-            const qty = typeof qtyMap[mapping] === 'number' && qtyMap[mapping] >= 1 ? qtyMap[mapping] : 1
-            tagContribs.push({
-              id: `cal-tag-${gcalId}-${mapping}`,
-              taskName: tag.title || 'Tagged calendar event',
-              kpiMapping: kpi.kpiMapping,
-              completedAt: `${tag.date}T12:00:00`,
-              elapsedSeconds: Math.round((tag.durationMin ?? 0) * 60),
-              quantity: qty,
-              completionType: 'Done',
-              _fromCalendarTag: true,
-            })
-          }
-        }
-        entries = [...entries, ...tagContribs].sort(
-          (a, b) => new Date(b.completedAt) - new Date(a.completedAt),
-        )
-      }
-      setKpiDetail({ type: 'kpi', title: kpi.label, kpi, entries })
-    }
-
-
-    // ── Detail modal ─────────────────────────────────────────────────────────
-    const detailModal = kpiDetail ? (
-      <div
-        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
-        onClick={() => setKpiDetail(null)}
-      >
-        <div
-          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-900">{kpiDetail.title}</h3>
-            <button
-              type="button"
-              onClick={() => setKpiDetail(null)}
-              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          <div className="overflow-y-auto flex-1 p-4">
-            {kpiDetail.type === 'score' && (
-              <div className="space-y-1.5">
-                {kpiDetail.kpiResults.map((k) => (
-                  <div key={k.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
-                    <div>
-                      <p className="text-xs font-medium text-slate-800">{k.label}</p>
-                      <p className="text-[11px] text-slate-400">{k.trackGroup} · {k.period}</p>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="text-slate-500">
-                        {k.isRate
-                          ? k.total > 0 ? `${k.count}/${k.total}` : '—'
-                          : `${k.count}${k.target ? ` / ${k.target}` : ''}`}
-                      </span>
-                      {k.isRate && k.total === 0 ? (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-400">—</span>
-                      ) : k.hit ? (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
-                      ) : (
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {kpiDetail.type === 'track' && (
-              kpiDetail.trackData.entries.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">No sessions logged for this track in this period.</p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {[...kpiDetail.trackData.entries]
-                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
-                    .map((e, i) => {
-                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
-                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                      return (
-                        <li key={e.id ?? i} className="py-2.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
-                              <p className="text-[11px] text-slate-400">{e.kpiMapping || '—'}</p>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
-                              <p className="text-[11px] text-slate-400">{dayStr}</p>
-                            </div>
-                          </div>
-                        </li>
-                      )
-                    })}
-                </ul>
-              )
-            )}
-
-            {kpiDetail.type === 'kpi' && (
-              kpiDetail.entries.length === 0 ? (
-                <div className="space-y-2 py-2">
-                  <p className="text-sm text-slate-400 italic">Nothing logged for this KPI yet this period.</p>
-                  <p className="text-[11px] text-slate-400">
-                    Credits come from: timer completions on tasks mapped to this KPI, Quick Log entries, or calendar events tagged with this KPI credit.
-                  </p>
-                </div>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {[...kpiDetail.entries]
-                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
-                    .map((e, i) => {
-                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
-                      const sourceLabel = e._fromCalendarTag
-                        ? { text: '📅 Calendar tag', cls: 'bg-indigo-50 text-indigo-600' }
-                        : e.isQuickLog
-                        ? { text: '⚡ Quick log', cls: 'bg-amber-50 text-amber-700' }
-                        : { text: '⏱ Timer', cls: 'bg-slate-100 text-slate-500' }
-                      return (
-                        <li key={e.id ?? i} className="py-2.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
-                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${sourceLabel.cls}`}>{sourceLabel.text}</span>
-                                {e.subTrack && (
-                                  <span className="text-[10px] text-slate-400">{e.subTrack}</span>
-                                )}
-                                {!kpiDetail.kpi.isRate && (e.quantity ?? 1) > 1 && (
-                                  <span className="text-[10px] text-slate-400">×{e.quantity} units</span>
-                                )}
-                                {kpiDetail.kpi.isRate && (
-                                  <span className="text-[10px] text-slate-400">
-                                    {e._dodUsed ? '✓ DoD used' : '✗ No DoD'}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <p className="text-[11px] font-medium text-slate-700">{elapsed > 0 ? `${elapsed}m` : '—'}</p>
-                              <p className="text-[11px] text-slate-400">{dayStr}</p>
-                            </div>
-                          </div>
-                        </li>
-                      )
-                    })}
-                </ul>
-              )
-            )}
-          </div>
-
-          {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
-            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
-              <span>
-                {kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}{' '}
-                <span className="font-normal text-slate-400">(completion log)</span>
-              </span>
-              <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
-            </div>
-          )}
-          {kpiDetail.type === 'kpi' && kpiDetail.entries.length > 0 && !kpiDetail.kpi.isRate && (
-            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
-              <span>{kpiDetail.entries.length} session{kpiDetail.entries.length !== 1 ? 's' : ''}</span>
-              <span className="font-semibold">
-                {kpiDetail.entries.reduce((s, e) => s + (e.quantity ?? 1), 0)} total
-                {kpiDetail.kpi.target ? ` / ${kpiDetail.kpi.target} target` : ''}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-    ) : null
 
     function renderKpiGroupCard(group) {
       const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
@@ -3134,8 +2984,6 @@ function App() {
     }
 
     return (
-      <>
-      {detailModal}
       <section className="space-y-4 p-4">
         {/* Week navigation */}
         <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -3191,7 +3039,12 @@ function App() {
                   return (
                     <div key={track.key}>
                       <div
-                        className="w-full text-left rounded-lg p-2 -mx-2"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openTrackDetail(trackData)}
+                        onKeyDown={(e) => e.key === 'Enter' && openTrackDetail(trackData)}
+                        className="w-full cursor-pointer text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
+                        title="Click to see contributing sessions"
                       >
                         <div className="mb-1 flex items-center justify-between text-xs gap-2">
                           <span className="font-medium text-slate-700">{track.label}</span>
@@ -3424,7 +3277,6 @@ function App() {
         </div>
 
       </section>
-      </>
     )
   }
 
@@ -3441,6 +3293,159 @@ function App() {
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-[min(1800px,calc(100vw-2rem))] bg-slate-50 pb-24 text-slate-900">
+
+      {/* KPI / Track detail modal — rendered at root so z-index always wins */}
+      {kpiDetail ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
+          onClick={() => setKpiDetail(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <h3 className="text-sm font-semibold text-slate-900">{kpiDetail.title}</h3>
+              <button
+                type="button"
+                onClick={() => setKpiDetail(null)}
+                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-4">
+              {kpiDetail.type === 'score' && (
+                <div className="space-y-1.5">
+                  {kpiDetail.kpiResults.map((k) => (
+                    <div key={k.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                      <div>
+                        <p className="text-xs font-medium text-slate-800">{k.label}</p>
+                        <p className="text-[11px] text-slate-400">{k.trackGroup} · {k.period}</p>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-slate-500">
+                          {k.isRate
+                            ? k.total > 0 ? `${k.count}/${k.total}` : '—'
+                            : `${k.count}${k.target ? ` / ${k.target}` : ''}`}
+                        </span>
+                        {k.isRate && k.total === 0 ? (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-400">—</span>
+                        ) : k.hit ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                        ) : (
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {kpiDetail.type === 'track' && (
+                kpiDetail.trackData.entries.length === 0 ? (
+                  <p className="text-sm text-slate-400 italic">No sessions logged for this track in this period.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {[...kpiDetail.trackData.entries]
+                      .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+                      .map((e, i) => {
+                        const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
+                        const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                        return (
+                          <li key={e.id ?? i} className="py-2.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
+                                <p className="text-[11px] text-slate-400">{e.kpiMapping || '—'}</p>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
+                                <p className="text-[11px] text-slate-400">{dayStr}</p>
+                              </div>
+                            </div>
+                          </li>
+                        )
+                      })}
+                  </ul>
+                )
+              )}
+
+              {kpiDetail.type === 'kpi' && (
+                kpiDetail.entries.length === 0 ? (
+                  <div className="space-y-2 py-2">
+                    <p className="text-sm text-slate-400 italic">Nothing logged for this KPI yet this period.</p>
+                    <p className="text-[11px] text-slate-400">
+                      Credits come from: timer completions on tasks mapped to this KPI, Quick Log entries, or calendar events tagged with this KPI credit.
+                    </p>
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {[...kpiDetail.entries]
+                      .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+                      .map((e, i) => {
+                        const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                        const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
+                        const sourceLabel = e._fromCalendarTag
+                          ? { text: '📅 Calendar tag', cls: 'bg-indigo-50 text-indigo-600' }
+                          : e.isQuickLog
+                          ? { text: '⚡ Quick log', cls: 'bg-amber-50 text-amber-700' }
+                          : { text: '⏱ Timer', cls: 'bg-slate-100 text-slate-500' }
+                        return (
+                          <li key={e.id ?? i} className="py-2.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${sourceLabel.cls}`}>{sourceLabel.text}</span>
+                                  {e.subTrack && (
+                                    <span className="text-[10px] text-slate-400">{e.subTrack}</span>
+                                  )}
+                                  {!kpiDetail.kpi.isRate && (e.quantity ?? 1) > 1 && (
+                                    <span className="text-[10px] text-slate-400">×{e.quantity} units</span>
+                                  )}
+                                  {kpiDetail.kpi.isRate && (
+                                    <span className="text-[10px] text-slate-400">
+                                      {e._dodUsed ? '✓ DoD used' : '✗ No DoD'}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <p className="text-[11px] font-medium text-slate-700">{elapsed > 0 ? `${elapsed}m` : '—'}</p>
+                                <p className="text-[11px] text-slate-400">{dayStr}</p>
+                              </div>
+                            </div>
+                          </li>
+                        )
+                      })}
+                  </ul>
+                )
+              )}
+            </div>
+
+            {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
+              <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
+                <span>
+                  {kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}{' '}
+                  <span className="font-normal text-slate-400">(completion log)</span>
+                </span>
+                <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
+              </div>
+            )}
+            {kpiDetail.type === 'kpi' && kpiDetail.entries.length > 0 && !kpiDetail.kpi?.isRate && (
+              <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
+                <span>{kpiDetail.entries.length} entr{kpiDetail.entries.length !== 1 ? 'ies' : 'y'}</span>
+                <span className="font-semibold">
+                  {kpiDetail.entries.reduce((s, e) => s + (e.quantity ?? 1), 0)} total
+                  {kpiDetail.kpi?.target ? ` / ${kpiDetail.kpi.target} target` : ''}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {/* Clear Day Modal */}
       {showClearDayModal ? (
