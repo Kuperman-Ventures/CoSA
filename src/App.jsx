@@ -2897,11 +2897,240 @@ function App() {
     }
 
 
-    // ── Detail modalable */}
+    // ── Detail modal ─────────────────────────────────────────────────────────
+    const detailModal = kpiDetail ? (
+      <div
+        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
+        onClick={() => setKpiDetail(null)}
+      >
+        <div
+          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <h3 className="text-sm font-semibold text-slate-900">{kpiDetail.title}</h3>
+            <button
+              type="button"
+              onClick={() => setKpiDetail(null)}
+              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto flex-1 p-4">
+            {kpiDetail.type === 'score' && (
+              <div className="space-y-1.5">
+                {kpiDetail.kpiResults.map((k) => (
+                  <div key={k.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                    <div>
+                      <p className="text-xs font-medium text-slate-800">{k.label}</p>
+                      <p className="text-[11px] text-slate-400">{k.trackGroup} · {k.period}</p>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-slate-500">
+                        {k.isRate
+                          ? k.total > 0 ? `${k.count}/${k.total}` : '—'
+                          : `${k.count}${k.target ? ` / ${k.target}` : ''}`}
+                      </span>
+                      {k.isRate && k.total === 0 ? (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-400">—</span>
+                      ) : k.hit ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                      ) : (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {kpiDetail.type === 'track' && (
+              kpiDetail.trackData.entries.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">No sessions logged for this track in this period.</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {[...kpiDetail.trackData.entries]
+                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+                    .map((e, i) => {
+                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
+                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      return (
+                        <li key={e.id ?? i} className="py-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
+                              <p className="text-[11px] text-slate-400">{e.kpiMapping || '—'}</p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
+                              <p className="text-[11px] text-slate-400">{dayStr}</p>
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                </ul>
+              )
+            )}
+
+            {kpiDetail.type === 'kpi' && (
+              kpiDetail.entries.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">No logged entries for this KPI in this period.</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {[...kpiDetail.entries]
+                    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+                    .map((e, i) => {
+                      const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
+                      return (
+                        <li key={e.id ?? i} className="py-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
+                              {kpiDetail.kpi.isRate && (
+                                <p className="text-[11px] text-slate-400">
+                                  {e._dodUsed ? '✓ Definition of done used' : '✗ No definition of done'}
+                                </p>
+                              )}
+                              {!kpiDetail.kpi.isRate && (e.quantity ?? 1) > 1 && (
+                                <p className="text-[11px] text-slate-400">×{e.quantity} units</p>
+                              )}
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
+                              <p className="text-[11px] text-slate-400">{dayStr}</p>
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                </ul>
+              )
+            )}
+          </div>
+
+          {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
+            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
+              <span>
+                {kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}{' '}
+                <span className="font-normal text-slate-400">(completion log)</span>
+              </span>
+              <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
+            </div>
+          )}
+          {kpiDetail.type === 'kpi' && kpiDetail.entries.length > 0 && !kpiDetail.kpi.isRate && (
+            <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
+              <span>{kpiDetail.entries.length} session{kpiDetail.entries.length !== 1 ? 's' : ''}</span>
+              <span className="font-semibold">
+                {kpiDetail.entries.reduce((s, e) => s + (e.quantity ?? 1), 0)} total
+                {kpiDetail.kpi.target ? ` / ${kpiDetail.kpi.target} target` : ''}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    ) : null
+
+    function renderKpiGroupCard(group) {
+      const groupKpis = kpiResults.filter((k) => k.trackGroup === group)
+      const accentColor =
+        groupKpis[0]?.color
+        ?? KPI_DEFINITIONS.find((d) => d.trackGroup === group)?.color
+        ?? '#64748b'
+      const periodLabel =
+        groupKpis[0]?.period === 'month' ? 'Month' : 'Week'
+      return (
+        <article key={group} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2" style={{ backgroundColor: `${accentColor}18` }}>
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: accentColor }} />
+            <h2 className="text-sm font-semibold text-slate-800">{group}</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[280px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
+                  <th className="px-4 py-2 font-medium">KPI</th>
+                  <th className="px-3 py-2 text-center font-medium">Target</th>
+                  <th className="px-3 py-2 text-center font-medium">This {periodLabel}</th>
+                  <th className="px-3 py-2 text-center font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupKpis.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-xs text-slate-400 italic">
+                      No KPIs defined for this track yet.
+                    </td>
+                  </tr>
+                ) : (
+                  groupKpis.map((kpi) => (
+                    <tr
+                      key={kpi.id}
+                      className="border-b border-slate-50 last:border-0 cursor-pointer hover:bg-slate-50 transition-colors"
+                      onClick={() => openKpiDetail(kpi)}
+                      title="Click to see contributing sessions"
+                    >
+                      <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
+                      <td className="px-3 py-2.5 text-center text-slate-500">
+                        {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-center font-medium text-slate-900">
+                        {kpi.isRate
+                          ? kpi.total > 0 ? `${kpi.count}/${kpi.total}` : '—'
+                          : kpi.count}
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        {kpi.isRate && kpi.total === 0 ? (
+                          <span className="text-slate-400 text-xs">No sessions</span>
+                        ) : kpi.hit ? (
+                          <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Hit</span>
+                        ) : (
+                          <span className="inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">✗ Miss</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      )
+    }
+
+    return (
+      <>
+      {detailModal}
+      <section className="space-y-4 p-4">
+        {/* Week navigation */}
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setWeekOffset((o) => o - 1)}
+            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            ← Prev
+          </button>
+          <p className="text-sm font-semibold text-slate-800">{formatWeekLabel(weekStart, weekEnd)}</p>
+          <button
+            type="button"
+            onClick={() => setWeekOffset((o) => o + 1)}
+            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+          >
+            Next →
+          </button>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Left column */}
+          <div className="min-w-0 space-y-4">
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
               <p className="mb-3 text-[11px] text-slate-500">
-                Bars reflect your completion log. Click any track to compare with calendar time and add blocks.
+                Bars reflect your completion log.
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
