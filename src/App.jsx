@@ -2789,12 +2789,19 @@ function App() {
       })
     }
 
+    /** Normalise a task/event title for fuzzy deduplication. */
+    function normTitle(s) {
+      return String(s ?? '')
+        .toLowerCase()
+        .replace(/^meeting:\s*/i, '')
+        .replace(/[^a-z0-9 ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 30)
+    }
+
     function openCalendarAllocateModal(trackData) {
-      const items = (calendarHealth.contributors[trackData.track.key]?.all ?? []).filter(
-        (item) => !allocatedCalendarIdsThisWeek.has(item.id),
-      )
-      if (items.length === 0) return
-      // Already-counted: timer sessions + previously reconciled calendar blocks for this track this week
+      // Already-counted: timer sessions + networking splits + prior reconciled calendar blocks
       const loggedEntries = [
         ...trackData.entries,
         ...(trackData.splitEntries ?? []),
@@ -2804,6 +2811,26 @@ function App() {
           return d >= weekStart && d <= weekEnd && e.track === trackData.track.key
         }),
       ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+
+      // Build a set of "day|normalised-title" keys that are already logged
+      const coveredKeys = new Set(
+        loggedEntries.map((e) => {
+          const day = e.completedAt
+            ? new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+            : '—'
+          return `${day}|${normTitle(e.taskName)}`
+        }),
+      )
+
+      // Exclude calendar items that were already explicitly reconciled OR whose
+      // title+day match a logged entry (e.g. timer session for the same meeting).
+      const items = (calendarHealth.contributors[trackData.track.key]?.all ?? []).filter((item) => {
+        if (allocatedCalendarIdsThisWeek.has(item.id)) return false
+        const key = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
+        return !coveredKeys.has(key)
+      })
+
+      if (items.length === 0 && loggedEntries.length === 0) return
       setCalendarAllocateSelected({})
       setCalendarAllocateModal({
         track: trackData.track,
@@ -3313,73 +3340,49 @@ function App() {
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
               <p className="mb-3 text-[11px] text-slate-500">
-                Bars use your <span className="font-medium text-slate-700">completion log</span> only (timers &amp; anything you explicitly add). Calendar time is shown for comparison — use <span className="font-medium">Reconcile</span> if you want it to count.
+                Bars reflect your completion log. Click any track to compare with calendar time and add blocks.
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
-                  const { track, hoursLogged, targetHours, pct, calendarMins, unallocatedCalendarMins } =
-                    trackData
+                  const { track, hoursLogged, targetHours, pct, calendarMins } = trackData
                   const calH = calendarMins / 60
                   return (
-                    <div key={track.key} className="rounded-lg p-2 -mx-2 space-y-1.5">
-                      <button
-                        type="button"
-                        className="w-full text-left rounded-lg p-0 hover:opacity-90 transition-opacity"
-                        onClick={() => openTrackDetail(trackData)}
-                      >
-                        <div className="mb-1 flex items-center justify-between text-xs gap-2">
-                          <span className="font-medium text-slate-700">{track.label}</span>
-                          <span
-                            className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
-                          >
-                            {hoursLogged.toFixed(1)}h{' '}
-                            <span className="font-normal text-slate-400">/ {targetHours}h target</span>
-                          </span>
-                        </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{ width: `${pct}%`, backgroundColor: track.color }}
-                          />
-                        </div>
-                        {calendarMins > 0 && (
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            Calendar (this week):{' '}
-                            <span className="font-medium text-slate-700">{calH.toFixed(1)}h</span>
-                            {hoursLogged * 60 < calendarMins - 0.5 && (
-                              <span className="text-amber-800/90"> · more than logged</span>
-                            )}
-                          </p>
-                        )}
-                      </button>
-                      {unallocatedCalendarMins > 0 && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200/80 bg-amber-50/80 px-2.5 py-2">
-                          <p className="text-[11px] text-amber-950/90">
-                            <span className="font-semibold">{unallocatedCalendarMins}m</span> on the calendar isn’t in your completion log yet for this track.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => openCalendarAllocateModal(trackData)}
-                            className="shrink-0 rounded-md bg-amber-900/90 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-amber-950"
-                          >
-                            Reconcile…
-                          </button>
-                        </div>
+                    <button
+                      key={track.key}
+                      type="button"
+                      className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
+                      onClick={() => openCalendarAllocateModal(trackData)}
+                    >
+                      <div className="mb-1 flex items-center justify-between text-xs gap-2">
+                        <span className="font-medium text-slate-700">{track.label}</span>
+                        <span
+                          className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
+                        >
+                          {hoursLogged.toFixed(1)}h{' '}
+                          <span className="font-normal text-slate-400">/ {targetHours}h target</span>
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{ width: `${pct}%`, backgroundColor: track.color }}
+                        />
+                      </div>
+                      {calendarMins > 0 && (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Calendar:{' '}
+                          <span className="font-medium text-slate-700">{calH.toFixed(1)}h</span>
+                          {hoursLogged * 60 < calendarMins - 0.5 && (
+                            <span className="text-amber-800/90"> &middot; more than logged &mdash; click to reconcile</span>
+                          )}
+                        </p>
                       )}
-                    </div>
+                    </button>
                   )
                 })}
-                {timeByTrack.every((t) => t.hoursLogged < 0.001) &&
-                  !timeByTrack.some((t) => t.calendarMins > 0) && (
-                    <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
-                  )}
-                {timeByTrack.every((t) => t.hoursLogged < 0.001) &&
-                  timeByTrack.some((t) => t.calendarMins > 0) && (
-                    <p className="text-xs text-amber-900/90">
-                      Your calendar shows time this week, but nothing is in the completion log yet. Use{' '}
-                      <strong>Reconcile</strong> on a track if you want that time to count.
-                    </p>
-                  )}
+                {timeByTrack.every((t) => t.hoursLogged < 0.001 && t.calendarMins < 1) && (
+                  <p className="text-xs text-slate-400 italic">No logged sessions or calendar time this week yet.</p>
+                )}
               </div>
             </article>
             {renderKpiGroupCard('Job Search')}
