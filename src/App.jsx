@@ -2822,16 +2822,31 @@ function App() {
         }),
       )
 
-      // Exclude items already reconciled or whose title+day matches a logged entry.
-      // Then deduplicate within the remaining list (same event can appear from both
-      // the CoSA-calendar loop and the personal-tagged loop in the health model).
-      const seenItemKeys = new Set()
+      // Strip known prefixes/suffixes to get the raw GCal event ID so we can
+      // deduplicate an event that appears in BOTH the CoSA-calendar loop (id:
+      // gcal-{id} or gcal-{id}-split-adv) AND the personal-tagged loop (id:
+      // tag-{id} or tag-{id}-split-adv).
+      function rawEventId(itemId) {
+        return String(itemId ?? '')
+          .replace(/^gcal-/, '')
+          .replace(/^tag-/, '')
+          .replace(/-split-adv$/, '')
+          .replace(/-split-js$/, '')
+      }
+
+      const seenEventIds = new Set()
+      const seenTitleDayKeys = new Set()
       const items = (calendarHealth.contributors[trackData.track.key]?.all ?? []).filter((item) => {
         if (allocatedCalendarIdsThisWeek.has(item.id)) return false
-        const key = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
-        if (coveredKeys.has(key)) return false
-        if (seenItemKeys.has(key)) return false
-        seenItemKeys.add(key)
+        const titleDayKey = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
+        if (coveredKeys.has(titleDayKey)) return false
+        // Deduplicate same GCal event appearing from multiple sources
+        const evId = rawEventId(item.id)
+        if (seenEventIds.has(evId)) return false
+        seenEventIds.add(evId)
+        // Deduplicate by title+day (catches genuinely separate events with identical names)
+        if (seenTitleDayKeys.has(titleDayKey)) return false
+        seenTitleDayKeys.add(titleDayKey)
         return true
       })
 
