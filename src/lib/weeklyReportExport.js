@@ -41,7 +41,7 @@ function scoreMeta(weekScore) {
  * @param {object[]} opts.timeByTrack      from renderKpiDashboard
  * @param {object[]} opts.completionLog    full filtered week entries (already merged)
  */
-export function exportWeeklyReportHTML({ weekStart, weekEnd, kpiSummary, kpiTrackGroups, timeByTrack, completionLog }) {
+export function exportWeeklyReportHTML({ weekStart, weekEnd, kpiSummary, kpiTrackGroups, timeByTrack, completionLog, fridayReview }) {
   const { kpisHit, kpisTotal, weekScore, kpiResults } = kpiSummary
   const sm = scoreMeta(weekScore)
 
@@ -356,6 +356,24 @@ export function exportWeeklyReportHTML({ weekStart, weekEnd, kpiSummary, kpiTrac
     <div class="section-title">Work Log — Tasks &amp; Events</div>
     ${workLog()}
   </div>
+
+  <!-- Friday Review -->
+  ${fridayReview ? `
+  <div class="section">
+    <div class="section-title">Friday Review</div>
+    <div class="card" style="overflow:visible">
+      ${[
+        { q: 'What actually got in the way this week?',  val: fridayReview.q1 },
+        { q: 'One thing to do differently next week?',   val: fridayReview.q2 },
+        { q: 'One thing you did well this week?',        val: fridayReview.q3 },
+        { q: 'Monday intention',                         val: fridayReview.monday_intention },
+      ].filter(({ val }) => val && val.trim()).map(({ q, val }, i, arr) => `
+        <div style="padding:14px 18px;${i < arr.length - 1 ? 'border-bottom:1px solid #f1f5f9' : ''}">
+          <p style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">${q}</p>
+          <p style="font-size:13px;color:#1e293b;line-height:1.6;white-space:pre-wrap">${val.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>
+        </div>`).join('')}
+    </div>
+  </div>` : ''}
 
   <div class="footer">
     <span>CoSA — Command of Strategic Action</span>

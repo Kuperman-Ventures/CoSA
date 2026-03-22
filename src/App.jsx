@@ -3008,6 +3008,7 @@ function App() {
           const d = new Date(e.completedAt)
           return d >= weekStart && d <= weekEnd
         }),
+        fridayReview: savedReview ?? null,
       })
     }
 
