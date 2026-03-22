@@ -14,6 +14,12 @@ import {
   fetchAllCalendarEvents,
   fetchPersonalCalendarEvents,
 } from '../lib/googleCalendar'
+import {
+  buildCalendarHealthModel,
+  COSA_ALLOCATION_DEFAULTS,
+  eventDurationMins,
+  formatLocalDate,
+} from '../lib/calendarWeekHealthModel'
 import { quickLogGroupsForTrack } from '../lib/quickLogKpis'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -51,38 +57,7 @@ const TRACK_SUB_TRACKS = {
 // Persisted to localStorage as 'cosa.allocations'; bump ALLOC_VERSION when structure changes
 // to force a reset of stale cached data.
 const ALLOC_VERSION = 'v2'
-const DEFAULT_ALLOCATIONS = {
-  advisors: {
-    weekly: 700,
-    subTracks: {
-      'Networking & Business Development': 60,
-      'Materials': 20,
-      'Product': 10,
-      'Client Work': 5,
-      'Back Office': 5,
-    },
-  },
-  jobSearch: {
-    weekly: 700,
-    subTracks: {
-      'Network Development & Outreach': 75,
-      'Searching': 15,
-      'Materials': 10,
-    },
-  },
-  ventures: {
-    weekly: 500,
-    subTracks: {
-      'Alpha': 70,
-      'Product': 25,
-      'Beta Prep': 5,
-    },
-  },
-  // networking track still exists for tasks/GCal; This Week bars split its time into
-  // Advisors · Networking & BD and Job Search · Net Dev & Outreach (no separate row).
-  development: { weekly: 60,  subTracks: {} },
-  cosaAdmin:   { weekly: 60,  subTracks: {} },
-}
+const DEFAULT_ALLOCATIONS = COSA_ALLOCATION_DEFAULTS
 
 // Calendar display parameters
 const GRID_START_HOUR = 8       // 8am
@@ -91,14 +66,6 @@ const PX_PER_HOUR    = 64       // pixels per hour
 const SNAP_MINUTES   = 15       // snap to 15-min intervals
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Calendar date YYYY-MM-DD in the user's local timezone (avoid UTC drift from toISOString). */
-function formatLocalDate(d) {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 /** Local calendar day for a GCal dateTime string (for Supabase tags vs week filter). */
 function dateTimeToLocalYmd(isoStr) {
@@ -163,64 +130,12 @@ function buildISO(dateStr, totalMins) {
   return `${dateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
 }
 
-function eventDurationMins(ev) {
-  if (!ev.start?.dateTime || !ev.end?.dateTime) return 30
-  return Math.max(15, Math.round((new Date(ev.end.dateTime) - new Date(ev.start.dateTime)) / 60000))
-}
-
 function healthColor(assigned, target) {
   if (target === 0) return 'green'
   const pct = assigned / target
   if (pct >= 0.9) return 'green'
   if (pct >= 0.6) return 'yellow'
   return 'red'
-}
-
-/**
- * Task Library + older GCal events use cosaSubTrack labels that don't always match
- * the allocation bucket keys in DEFAULT_ALLOCATIONS (e.g. "Business Development"
- * vs "Networking & Business Development"). Without mapping, minutes accrue under
- * invisible keys — sub-bars like Kuperman Advisors → Product stay stuck at 0.
- */
-const SUB_TRACK_TO_ALLOCATION_BUCKET = {
-  advisors: {
-    'Business Development': 'Networking & Business Development',
-    'Networking & Business Development': 'Networking & Business Development',
-    Content: 'Materials',
-    Meetings: 'Client Work',
-  },
-  jobSearch: {
-    Networking: 'Network Development & Outreach',
-    'L&D': 'Searching',
-    Applications: 'Materials',
-    Admin: 'Network Development & Outreach',
-    Boards: 'Searching',
-    'Network Development & Outreach': 'Network Development & Outreach',
-    Searching: 'Searching',
-    Materials: 'Materials',
-  },
-  ventures: {
-    Growth: 'Alpha',
-    Research: 'Product',
-    Subscription: 'Product',
-    Build: 'Product',
-    Alpha: 'Alpha',
-    Product: 'Product',
-    'Beta Prep': 'Beta Prep',
-  },
-}
-
-/** Map a GCal / library sub-track string to a key that exists in trackTargets[track].subTracks */
-function allocationSubTrackKey(track, rawSubTrack, bucketKeys) {
-  if (!rawSubTrack || !bucketKeys?.length) return null
-  const trimmed = String(rawSubTrack).trim()
-  if (!trimmed) return null
-  const aliases = SUB_TRACK_TO_ALLOCATION_BUCKET[track]
-  const mapped = aliases?.[trimmed] ?? trimmed
-  if (bucketKeys.includes(mapped)) return mapped
-  const lower = mapped.toLowerCase()
-  const ciHit = bucketKeys.find((k) => k.toLowerCase() === lower)
-  return ciHit ?? null
 }
 
 // ─── Allocation Editor Modal ──────────────────────────────────────────────────
@@ -342,132 +257,6 @@ function AllocationEditor({ allocations, onSave, onClose }) {
       </div>
     </div>
   )
-}
-
-// ─── This Week: totals + per-event contributors (for drill-down modal) ───────
-
-function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd) {
-  const totals = {}
-  const contributors = {}
-
-  function ensureTrack(t) {
-    if (!totals[t]) {
-      totals[t] = { total: 0, sub: {} }
-      contributors[t] = { all: [], bySub: {} }
-    }
-  }
-
-  function addContribution(track, minutes, meta, subKey) {
-    ensureTrack(track)
-    const item = { minutes, ...meta }
-    contributors[track].all.push(item)
-    totals[track].total += minutes
-    if (subKey) {
-      totals[track].sub[subKey] = (totals[track].sub[subKey] ?? 0) + minutes
-      if (!contributors[track].bySub[subKey]) contributors[track].bySub[subKey] = []
-      contributors[track].bySub[subKey].push(item)
-    }
-  }
-
-  const ADV_NET_SUB = 'Networking & Business Development'
-  const JS_NET_SUB = 'Network Development & Outreach'
-
-  /** Shared Networking track: half the minutes roll into each parent track + allocation sub-bucket. */
-  function addNetworkingSplit(minutes, metaBase, rawSub) {
-    const h1 = Math.floor(minutes / 2)
-    const h2 = minutes - h1
-    const advBucket = trackTargets.advisors?.subTracks?.[ADV_NET_SUB] != null ? ADV_NET_SUB : null
-    const jsBucket = trackTargets.jobSearch?.subTracks?.[JS_NET_SUB] != null ? JS_NET_SUB : null
-    const note =
-      'Track: Shared Networking — time split 50/50 to Advisors (Networking & BD) and Job Search (Net Dev & Outreach).'
-    addContribution('advisors', h1, {
-      ...metaBase,
-      id: `${metaBase.id}-split-adv`,
-      splitFromNetworking: true,
-      splitNote: note,
-      rawSubTrack: rawSub || null,
-      allocationBucket: advBucket,
-    }, advBucket)
-    addContribution('jobSearch', h2, {
-      ...metaBase,
-      id: `${metaBase.id}-split-js`,
-      splitFromNetworking: true,
-      splitNote: note,
-      rawSubTrack: rawSub || null,
-      allocationBucket: jsBucket,
-    }, jsBucket)
-  }
-
-  for (const ev of weekEvents) {
-    const priv = ev.extendedProperties?.private ?? {}
-    const track = priv.cosaTrack || null
-    const subTrack = priv.cosaSubTrack || null
-    if (!track) continue
-    const dur = eventDurationMins(ev)
-    const startISO = ev.start?.dateTime ?? null
-    const dayLabel = startISO
-      ? new Date(startISO).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-      : '—'
-    const metaBase = {
-      id: `gcal-${ev.id}`,
-      source: 'cosa-calendar',
-      title: ev.summary ?? '(untitled)',
-      startISO,
-      sortKey: startISO || '',
-      dayLabel,
-    }
-    if (track === 'networking') {
-      addNetworkingSplit(dur, metaBase, subTrack)
-      continue
-    }
-    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
-    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
-    addContribution(
-      track,
-      dur,
-      {
-        ...metaBase,
-        rawSubTrack: subTrack || null,
-        allocationBucket: subKey,
-      },
-      subKey,
-    )
-  }
-
-  for (const [gcalId, tag] of Object.entries(calendarTags)) {
-    const { track, subTrack, durationMin, date: tagDate } = tag
-    if (!track || !durationMin) continue
-    if (!tagDate || tagDate < weekRangeStart || tagDate > weekRangeEnd) continue
-    const dayLabel = tagDate
-      ? new Date(`${tagDate}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-      : '—'
-    const metaBase = {
-      id: `tag-${gcalId}`,
-      source: 'personal-tagged',
-      title: tag.title || '(tagged event)',
-      startISO: null,
-      sortKey: `${tagDate}T12:00:00`,
-      dayLabel,
-    }
-    if (track === 'networking') {
-      addNetworkingSplit(durationMin, metaBase, subTrack)
-      continue
-    }
-    const bucketKeys = Object.keys(trackTargets[track]?.subTracks ?? {})
-    const subKey = allocationSubTrackKey(track, subTrack, bucketKeys)
-    addContribution(
-      track,
-      durationMin,
-      {
-        ...metaBase,
-        rawSubTrack: subTrack || null,
-        allocationBucket: subKey,
-      },
-      subKey,
-    )
-  }
-
-  return { totals, contributors }
 }
 
 // ─── Health Bars ──────────────────────────────────────────────────────────────

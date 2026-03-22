@@ -35,7 +35,18 @@ import {
   loadQuickLogEntries,
   loadCalendarEventTags,
 } from './lib/supabaseSync'
-import { fetchCoSACalendarEvents, fetchPersonalCalendarEvents, GCalAuthError } from './lib/googleCalendar'
+import {
+  fetchAllCalendarEvents,
+  fetchCoSACalendarEvents,
+  fetchPersonalCalendarEvents,
+  GCalAuthError,
+} from './lib/googleCalendar'
+import {
+  allocationsPercentToTrackTargets,
+  buildCalendarHealthModel,
+  COSA_ALLOCATION_DEFAULTS,
+  formatLocalDate,
+} from './lib/calendarWeekHealthModel'
 import { QUICK_LOG_KPI_GROUPS, KPI_LABEL_TO_TRACK } from './lib/quickLogKpis'
 
 const TRACKS = {
@@ -541,6 +552,19 @@ function saveCompletionLog(log) {
   window.localStorage.setItem(COMPLETION_LOG_KEY, JSON.stringify(log))
 }
 
+/** Calendar blocks already pulled into the completion log (Weekly Review reconcile). */
+function getSourceCalendarIdsAllocatedInWeek(log, weekStart, weekEnd) {
+  const ids = new Set()
+  if (!Array.isArray(log)) return ids
+  for (const e of log) {
+    if (!e?.sourceCalendarId) continue
+    const d = new Date(e.completedAt)
+    if (Number.isNaN(d.getTime()) || d < weekStart || d > weekEnd) continue
+    ids.add(e.sourceCalendarId)
+  }
+  return ids
+}
+
 // ─── Weekly Planner helpers ───────────────────────────────────────────────────
 
 function getWeekStartDateStr(date = new Date()) {
@@ -728,6 +752,23 @@ function formatDate(isoDate) {
   const [year, month, day] = isoDate.split('-')
   const d = new Date(Number(year), Number(month) - 1, Number(day))
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+/** Same localStorage merge as Calendar allocations editor (for Weekly Review vs Calendar parity). */
+function loadMergedAllocationsForHealth() {
+  if (typeof window === 'undefined') return { ...COSA_ALLOCATION_DEFAULTS }
+  try {
+    const raw = window.localStorage.getItem('cosa.allocations')
+    let parsed = raw ? JSON.parse(raw) : null
+    if (!parsed?.development) parsed = { ...COSA_ALLOCATION_DEFAULTS }
+    if (parsed.networking) {
+      const { networking: _rm, ...rest } = parsed
+      parsed = rest
+    }
+    return parsed
+  } catch {
+    return { ...COSA_ALLOCATION_DEFAULTS }
+  }
 }
 
 function wordsCount(text) {
@@ -920,6 +961,9 @@ function App() {
   const [reviewDraft, setReviewDraft] = useState({ q1: '', q2: '', q3: '', mondayIntention: '' })
   const [reviewSaving, setReviewSaving] = useState(false)
   const [kpiDetail, setKpiDetail] = useState(null)
+  /** Weekly Review: opt-in “calendar → completion log” picker (null | { track, items, weekStart, weekEnd }). */
+  const [calendarAllocateModal, setCalendarAllocateModal] = useState(null)
+  const [calendarAllocateSelected, setCalendarAllocateSelected] = useState({})
   const [gcalSyncStatus, setGcalSyncStatus] = useState(null) // null | 'syncing' | 'ok' | 'auth-error' | 'error'
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
@@ -942,6 +986,8 @@ function App() {
   })
   /** All GCal event id → tag row (including kpiCredits) for weekly KPI merge */
   const [calendarEventTags, setCalendarEventTags] = useState({})
+  /** CoSA-tagged GCal events for the week shown on Weekly Review (matches Calendar → This Week). */
+  const [reviewWeekCosaEvents, setReviewWeekCosaEvents] = useState([])
   const [showClearDayModal, setShowClearDayModal] = useState(false)
   const [clearFrom, setClearFrom] = useState(getTodayDateString())
   const [clearTo, setClearTo] = useState(getTodayDateString())
@@ -973,6 +1019,32 @@ function App() {
   useEffect(() => {
     if (!session?.user?.id) setCalendarEventTags({})
   }, [session?.user?.id])
+
+  // Weekly Review: load CoSA calendar blocks for the selected week (same math as Calendar sidebar).
+  useEffect(() => {
+    if (activeScreen !== 'kpi' || !session?.provider_token) return undefined
+    let cancelled = false
+    const { start, end } = getWeekBounds(weekOffset)
+    const mondayLocal = formatLocalDate(start)
+    const sundayLocal = formatLocalDate(end)
+    const timeMin = new Date(`${mondayLocal}T00:00:00`).toISOString()
+    const timeMax = new Date(`${sundayLocal}T23:59:59.999`).toISOString()
+    ;(async () => {
+      try {
+        const allCosa = await fetchAllCalendarEvents(session.provider_token, timeMin, timeMax)
+        if (cancelled) return
+        const tagged = (allCosa ?? []).filter(
+          (ev) => ev.extendedProperties?.private?.cosaTag === 'cosa-event',
+        )
+        setReviewWeekCosaEvents(tagged)
+      } catch {
+        if (!cancelled) setReviewWeekCosaEvents([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeScreen, weekOffset, session?.provider_token])
 
   useEffect(() => {
     if (!activeSession) return
@@ -2621,7 +2693,23 @@ function App() {
     }
     const score = scoreConfig[weekScore]
 
-    // Time This Week: hours logged per track from the completion log
+    // Calendar “This Week” model (reference only) — not auto-applied to logged time; user reconciles via modal.
+    const weekRangeStart = formatLocalDate(weekStart)
+    const weekRangeEnd = formatLocalDate(weekEnd)
+    const reviewTrackTargets = allocationsPercentToTrackTargets(loadMergedAllocationsForHealth())
+    const calendarHealth = buildCalendarHealthModel(
+      reviewWeekCosaEvents,
+      calendarEventTags,
+      reviewTrackTargets,
+      weekRangeStart,
+      weekRangeEnd,
+    )
+    const allocatedCalendarIdsThisWeek = getSourceCalendarIdsAllocatedInWeek(
+      completionLog,
+      weekStart,
+      weekEnd,
+    )
+
     const TRACK_HOUR_TARGETS = {
       advisors:    12, // 700 min
       jobSearch:   12, // 700 min
@@ -2635,7 +2723,6 @@ function App() {
       if (e.track !== 'networking') return sum
       return sum + Math.round((e.elapsedSeconds ?? 0) / 60)
     }, 0)
-    const halfNetworkingHours = (networkingMinutesThisWeek / 2) / 60
     const timeByTrack = Object.values(TRACKS)
       .filter((track) => track.key !== 'networking')
       .map((track) => {
@@ -2643,9 +2730,17 @@ function App() {
           const d = new Date(e.completedAt)
           return d >= weekStart && d <= weekEnd && e.track === track.key
         })
-        let minutesLogged = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
-        if (track.key === 'advisors') minutesLogged += Math.round(networkingMinutesThisWeek / 2)
-        if (track.key === 'jobSearch') minutesLogged += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
+        let minutesFromSessions = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
+        if (track.key === 'advisors') minutesFromSessions += Math.round(networkingMinutesThisWeek / 2)
+        if (track.key === 'jobSearch') {
+          minutesFromSessions += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
+        }
+        const calendarMins = calendarHealth.totals[track.key]?.total ?? 0
+        const calItems = calendarHealth.contributors[track.key]?.all ?? []
+        const unallocatedCalendarMins = calItems
+          .filter((item) => !allocatedCalendarIdsThisWeek.has(item.id))
+          .reduce((sum, item) => sum + (item.minutes ?? 0), 0)
+        const minutesLogged = minutesFromSessions
         const hoursLogged = minutesLogged / 60
         const targetHours = TRACK_HOUR_TARGETS[track.key] ?? 0
         const pct = targetHours > 0 ? Math.min(100, Math.round((hoursLogged / targetHours) * 100)) : 0
@@ -2656,7 +2751,17 @@ function App() {
                 return d >= weekStart && d <= weekEnd && e.track === 'networking'
               })
             : []
-        return { track, hoursLogged, targetHours, pct, entries, splitEntries }
+        return {
+          track,
+          hoursLogged,
+          targetHours,
+          pct,
+          entries,
+          splitEntries,
+          calendarMins,
+          minutesFromSessions,
+          unallocatedCalendarMins,
+        }
       })
       .filter((t) => t.targetHours > 0)
 
@@ -2679,9 +2784,53 @@ function App() {
       ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
       setKpiDetail({
         type: 'track',
-        title: `${trackData.track.label} — Sessions This Week`,
+        title: `${trackData.track.label} — Logged This Week`,
         trackData: { ...trackData, entries: mergedEntries },
       })
+    }
+
+    function openCalendarAllocateModal(trackData) {
+      const items = (calendarHealth.contributors[trackData.track.key]?.all ?? []).filter(
+        (item) => !allocatedCalendarIdsThisWeek.has(item.id),
+      )
+      if (items.length === 0) return
+      setCalendarAllocateSelected({})
+      setCalendarAllocateModal({
+        track: trackData.track,
+        items,
+        weekEnd,
+      })
+    }
+
+    function confirmCalendarAllocation() {
+      if (!calendarAllocateModal) return
+      const selected = calendarAllocateModal.items.filter((item) => calendarAllocateSelected[item.id])
+      if (selected.length === 0) return
+      const { weekEnd: we, track } = calendarAllocateModal
+      const completedAtCap = new Date(Math.min(Date.now(), we.getTime())).toISOString()
+      const newEntries = selected.map((item, idx) => ({
+        id: `weekly-review-cal-${item.id}-${Date.now()}-${idx}`,
+        taskName: item.title || '(Calendar block)',
+        track: track.key,
+        kpiMapping:
+          item.source === 'cosa-calendar'
+            ? 'CoSA calendar → weekly review'
+            : 'Tagged personal calendar → weekly review',
+        kpiValues: {},
+        completionType: 'Done',
+        quantity: 1,
+        completedAt: item.startISO || completedAtCap,
+        estimateSeconds: Math.round((item.minutes ?? 0) * 60),
+        elapsedSeconds: Math.round((item.minutes ?? 0) * 60),
+        pauseCount: 0,
+        pauseDurationSeconds: 0,
+        cancelledSeconds: 0,
+        sourceCalendarId: item.id,
+        fromWeeklyReviewCalendarAllocation: true,
+      }))
+      setCompletionLog((prev) => [...prev, ...newEntries])
+      setCalendarAllocateModal(null)
+      setCalendarAllocateSelected({})
     }
 
     function openKpiDetail(kpi) {
@@ -2732,6 +2881,118 @@ function App() {
       }
       setKpiDetail({ type: 'kpi', title: kpi.label, kpi, entries })
     }
+
+    // ── Calendar → completion reconcile (opt-in) ────────────────────────────
+    const calendarAllocateModalEl = calendarAllocateModal ? (
+      <div
+        className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-4"
+        onClick={() => {
+          setCalendarAllocateModal(null)
+          setCalendarAllocateSelected({})
+        }}
+      >
+        <div
+          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Add calendar time to your log</h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {calendarAllocateModal.track.label} · Only checked blocks are added to completion (same week).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setCalendarAllocateModal(null)
+                setCalendarAllocateSelected({})
+              }}
+              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="overflow-y-auto flex-1 p-4 space-y-3">
+            <p className="text-xs text-slate-600">
+              Calendar time is a <span className="font-medium">hint</span>, not automatic credit. Select the blocks you want to count toward <strong>Time This Week</strong> (and anywhere else that reads the completion log).
+            </p>
+            <div className="flex gap-2 text-[11px]">
+              <button
+                type="button"
+                className="text-amber-900 underline font-medium"
+                onClick={() => {
+                  const all = {}
+                  for (const it of calendarAllocateModal.items) all[it.id] = true
+                  setCalendarAllocateSelected(all)
+                }}
+              >
+                Select all
+              </button>
+              <span className="text-slate-300">|</span>
+              <button
+                type="button"
+                className="text-slate-600 underline"
+                onClick={() => setCalendarAllocateSelected({})}
+              >
+                Clear
+              </button>
+            </div>
+            <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
+              {calendarAllocateModal.items.map((item) => {
+                const checked = !!calendarAllocateSelected[item.id]
+                const sub = item.splitNote ? ' · Shared networking split' : ''
+                const src = item.source === 'cosa-calendar' ? 'CoSA calendar' : 'Personal · tagged'
+                return (
+                  <li key={item.id} className="flex items-start gap-3 p-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1 rounded border-slate-300"
+                      checked={checked}
+                      onChange={() =>
+                        setCalendarAllocateSelected((prev) => ({
+                          ...prev,
+                          [item.id]: !prev[item.id],
+                        }))
+                      }
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-slate-800 truncate">
+                        {item.title || '(Untitled)'}{sub}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {src} · {item.dayLabel ?? '—'} · {item.minutes ?? 0}m
+                      </p>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+          <div className="border-t border-slate-100 px-4 py-3 bg-slate-50 flex items-center justify-between gap-2">
+            <span className="text-xs text-slate-600">
+              Selected:{' '}
+              <strong>
+                {calendarAllocateModal.items
+                  .filter((it) => calendarAllocateSelected[it.id])
+                  .reduce((s, it) => s + (it.minutes ?? 0), 0)}
+                m
+              </strong>
+            </span>
+            <button
+              type="button"
+              disabled={
+                calendarAllocateModal.items.filter((it) => calendarAllocateSelected[it.id]).length === 0
+              }
+              onClick={confirmCalendarAllocation}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-800"
+            >
+              Add to completion log
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null
 
     // ── Detail modal ─────────────────────────────────────────────────────────
     const detailModal = kpiDetail ? (
@@ -2857,7 +3118,10 @@ function App() {
           {/* Footer total for track / kpi */}
           {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
             <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
-              <span>{kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}</span>
+              <span>
+                {kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}{' '}
+                <span className="font-normal text-slate-400">(completion log)</span>
+              </span>
               <span className="font-semibold">{kpiDetail.trackData.hoursLogged.toFixed(1)}h of {kpiDetail.trackData.targetHours}h target</span>
             </div>
           )}
@@ -2943,6 +3207,7 @@ function App() {
 
     return (
       <>
+      {calendarAllocateModalEl}
       {detailModal}
       <section className="space-y-4 p-4">
         {/* Week navigation */}
@@ -2990,35 +3255,75 @@ function App() {
           <div className="min-w-0 space-y-4">
             {/* Time This Week by Track — each row clickable */}
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
+              <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
+              <p className="mb-3 text-[11px] text-slate-500">
+                Bars use your <span className="font-medium text-slate-700">completion log</span> only (timers &amp; anything you explicitly add). Calendar time is shown for comparison — use <span className="font-medium">Reconcile</span> if you want it to count.
+              </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
-                  const { track, hoursLogged, targetHours, pct } = trackData
+                  const { track, hoursLogged, targetHours, pct, calendarMins, unallocatedCalendarMins } =
+                    trackData
+                  const calH = calendarMins / 60
                   return (
-                    <button
-                      key={track.key}
-                      type="button"
-                      className="w-full text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
-                      onClick={() => openTrackDetail(trackData)}
-                    >
-                      <div className="mb-1 flex items-center justify-between text-xs">
-                        <span className="font-medium text-slate-700">{track.label}</span>
-                        <span className={`font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}>
-                          {hoursLogged.toFixed(1)}h <span className="font-normal text-slate-400">/ {targetHours}h target</span>
-                        </span>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{ width: `${pct}%`, backgroundColor: track.color }}
-                        />
-                      </div>
-                    </button>
+                    <div key={track.key} className="rounded-lg p-2 -mx-2 space-y-1.5">
+                      <button
+                        type="button"
+                        className="w-full text-left rounded-lg p-0 hover:opacity-90 transition-opacity"
+                        onClick={() => openTrackDetail(trackData)}
+                      >
+                        <div className="mb-1 flex items-center justify-between text-xs gap-2">
+                          <span className="font-medium text-slate-700">{track.label}</span>
+                          <span
+                            className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
+                          >
+                            {hoursLogged.toFixed(1)}h{' '}
+                            <span className="font-normal text-slate-400">/ {targetHours}h target</span>
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{ width: `${pct}%`, backgroundColor: track.color }}
+                          />
+                        </div>
+                        {calendarMins > 0 && (
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            Calendar (this week):{' '}
+                            <span className="font-medium text-slate-700">{calH.toFixed(1)}h</span>
+                            {hoursLogged * 60 < calendarMins - 0.5 && (
+                              <span className="text-amber-800/90"> · more than logged</span>
+                            )}
+                          </p>
+                        )}
+                      </button>
+                      {unallocatedCalendarMins > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200/80 bg-amber-50/80 px-2.5 py-2">
+                          <p className="text-[11px] text-amber-950/90">
+                            <span className="font-semibold">{unallocatedCalendarMins}m</span> on the calendar isn’t in your completion log yet for this track.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => openCalendarAllocateModal(trackData)}
+                            className="shrink-0 rounded-md bg-amber-900/90 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-amber-950"
+                          >
+                            Reconcile…
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )
                 })}
-                {completionLog.filter((e) => { const d = new Date(e.completedAt); return d >= weekStart && d <= weekEnd }).length === 0 && (
-                  <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
-                )}
+                {timeByTrack.every((t) => t.hoursLogged < 0.001) &&
+                  !timeByTrack.some((t) => t.calendarMins > 0) && (
+                    <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
+                  )}
+                {timeByTrack.every((t) => t.hoursLogged < 0.001) &&
+                  timeByTrack.some((t) => t.calendarMins > 0) && (
+                    <p className="text-xs text-amber-900/90">
+                      Your calendar shows time this week, but nothing is in the completion log yet. Use{' '}
+                      <strong>Reconcile</strong> on a track if you want that time to count.
+                    </p>
+                  )}
               </div>
             </article>
             {renderKpiGroupCard('Job Search')}
