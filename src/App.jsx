@@ -4253,7 +4253,7 @@ function App() {
       )}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-        <ul className="mx-auto grid w-full max-w-[min(1800px,calc(100vw-2rem))] grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
+        <ul className="mx-auto grid w-full max-w-lg grid-cols-4 gap-1 p-2 text-center text-xs sm:text-sm">
           {NAV_ITEMS.map((item) => (
             <li key={item.id}>
               <button
