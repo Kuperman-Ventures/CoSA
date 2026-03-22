@@ -2716,12 +2716,12 @@ function App() {
       weekEnd,
     )
 
-    const TRACK_HOUR_TARGETS = {
-      advisors:    12, // 700 min
-      jobSearch:   12, // 700 min
-      ventures:     8, // 500 min
-      development:  1, // 60 min
-      cosaAdmin:    1, // 60 min
+    const TRACK_MIN_TARGETS = {
+      advisors:    700,
+      jobSearch:   700,
+      ventures:    500,
+      development:  60,
+      cosaAdmin:    60,
     }
     const networkingMinutesThisWeek = completionLog.reduce((sum, e) => {
       const d = new Date(e.completedAt)
@@ -2747,9 +2747,8 @@ function App() {
           .filter((item) => !allocatedCalendarIdsThisWeek.has(item.id))
           .reduce((sum, item) => sum + (item.minutes ?? 0), 0)
         const minutesLogged = minutesFromSessions
-        const hoursLogged = minutesLogged / 60
-        const targetHours = TRACK_HOUR_TARGETS[track.key] ?? 0
-        const pct = targetHours > 0 ? Math.min(100, Math.round((hoursLogged / targetHours) * 100)) : 0
+        const targetMins = TRACK_MIN_TARGETS[track.key] ?? 0
+        const pct = targetMins > 0 ? Math.min(100, Math.round((minutesLogged / targetMins) * 100)) : 0
         const splitEntries =
           track.key === 'advisors' || track.key === 'jobSearch'
             ? completionLog.filter((e) => {
@@ -2759,8 +2758,8 @@ function App() {
             : []
         return {
           track,
-          hoursLogged,
-          targetHours,
+          minutesLogged,
+          targetMins,
           pct,
           entries,
           splitEntries,
@@ -2769,7 +2768,7 @@ function App() {
           unallocatedCalendarMins,
         }
       })
-      .filter((t) => t.targetHours > 0)
+      .filter((t) => t.targetMins > 0)
 
     const weekStartStr = weekStart.toISOString().slice(0, 10)
     const savedReview = fridayReviews.find((r) => r.week_start === weekStartStr)
@@ -3359,7 +3358,7 @@ function App() {
                 {kpiDetail.trackData.entries.length} session{kpiDetail.trackData.entries.length !== 1 ? 's' : ''}{' '}
                 <span className="font-normal text-slate-400">(completion log)</span>
               </span>
-              <span className="font-semibold">{kpiDetail.trackData.hoursLogged.toFixed(1)}h of {kpiDetail.trackData.targetHours}h target</span>
+              <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
             </div>
           )}
           {kpiDetail.type === 'kpi' && kpiDetail.entries.length > 0 && !kpiDetail.kpi.isRate && (
@@ -3498,8 +3497,7 @@ function App() {
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
-                  const { track, hoursLogged, targetHours, pct, calendarMins } = trackData
-                  const calH = calendarMins / 60
+                  const { track, minutesLogged, targetMins, pct, calendarMins } = trackData
                   return (
                     <button
                       key={track.key}
@@ -3512,8 +3510,8 @@ function App() {
                         <span
                           className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
                         >
-                          {hoursLogged.toFixed(1)}h{' '}
-                          <span className="font-normal text-slate-400">/ {targetHours}h target</span>
+                          {minutesLogged}m{' '}
+                          <span className="font-normal text-slate-400">/ {targetMins}m target</span>
                         </span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -3525,8 +3523,8 @@ function App() {
                       {calendarMins > 0 && (
                         <p className="mt-1 text-[11px] text-slate-500">
                           Calendar:{' '}
-                          <span className="font-medium text-slate-700">{calH.toFixed(1)}h</span>
-                          {hoursLogged * 60 < calendarMins - 0.5 && (
+                          <span className="font-medium text-slate-700">{calendarMins}m</span>
+                          {minutesLogged < calendarMins - 0.5 && (
                             <span className="text-amber-800/90"> &middot; more than logged &mdash; click to reconcile</span>
                           )}
                         </p>
@@ -3534,7 +3532,7 @@ function App() {
                     </button>
                   )
                 })}
-                {timeByTrack.every((t) => t.hoursLogged < 0.001 && t.calendarMins < 1) && (
+                {timeByTrack.every((t) => t.minutesLogged < 1 && t.calendarMins < 1) && (
                   <p className="text-xs text-slate-400 italic">No logged sessions or calendar time this week yet.</p>
                 )}
               </div>
