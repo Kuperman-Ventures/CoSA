@@ -3114,18 +3114,39 @@ function App() {
           >
             ← Prev
           </button>
-          <p className="text-sm font-semibold text-slate-800">{formatWeekLabel(weekStart, weekEnd)}</p>
+          <div className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Weekly Review</p>
+            <p className="text-sm font-semibold text-slate-900">{formatWeekLabel(weekStart, weekEnd)}</p>
+            {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
+          </div>
           <button
             type="button"
-            onClick={() => setWeekOffset((o) => o + 1)}
-            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+            onClick={() => setWeekOffset((o) => Math.min(0, o + 1))}
+            disabled={isCurrentWeek}
+            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-30"
           >
             Next →
           </button>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          {/* Left column */}
+        {/* Week score, time by track, KPI tables, quick logs */}
+        <div className="space-y-4">
+        {/* Week score — clickable */}
+        <article
+          className={`rounded-xl border ${score.border} ${score.bg} p-4 cursor-pointer hover:opacity-90 active:scale-[0.99] transition-transform`}
+          onClick={openScoreDetail}
+          title="Click to see KPI breakdown"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-70">Week Score</p>
+          <p className={`mt-1 text-2xl font-bold ${score.text}`}>{score.label}</p>
+          <p className={`text-sm ${score.text}`}>{score.desc}</p>
+          <p className={`mt-1 text-xs ${score.text} opacity-80`}>
+            {kpisHit} of {weeklyKpis.length} weekly KPIs hit · <span className="underline underline-offset-2">see breakdown</span>
+          </p>
+        </article>
+
+        {/* Left: time + Job Search KPIs · Right: other track KPI scorecards */}
+        <div className="grid gap-4 md:grid-cols-2 md:items-start">
           <div className="min-w-0 space-y-4">
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
