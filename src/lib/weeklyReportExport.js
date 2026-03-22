@@ -128,22 +128,35 @@ export function exportWeeklyReportHTML({ weekStart, weekEnd, kpiSummary, kpiTrac
 
   // ── Work log — entries grouped by track ─────────────────────────────────────
   function workLog() {
-    // Combine timer/quicklog entries + calendar entries from all tracks
+    // Combine timer/quicklog entries + calendar entries for each track.
+    // Networking sessions live in splitEntries on both advisors and jobSearch;
+    // we include them once under Advisors labeled "Shared Networking" so they
+    // never appear as a standalone networking bucket.
     const allEntries = []
+    const seenIds = new Set()
     for (const td of timeByTrack) {
       for (const e of td.entries ?? []) {
+        if (seenIds.has(e.id)) continue
+        seenIds.add(e.id)
         allEntries.push({ ...e, _trackLabel: td.track.label, _trackColor: td.track.color })
       }
+      // Mark splitEntries (networking timer sessions) as seen so they are never
+      // added again — their time is already reflected in the Advisors and Job Search bars.
+      for (const e of td.splitEntries ?? []) {
+        seenIds.add(e.id)
+      }
       for (const e of td.calendarEntries ?? []) {
+        if (seenIds.has(e.id)) continue
+        seenIds.add(e.id)
         allEntries.push({ ...e, _trackLabel: td.track.label, _trackColor: td.track.color })
       }
     }
-    // Also add completionLog entries that don't already appear (networking track etc.)
-    const seenIds = new Set(allEntries.map((e) => e.id))
+    // Fallback: any completionLog entries not yet accounted for.
+    // Skip networking track entries entirely — they are split into Advisors/Job Search.
     for (const e of completionLog) {
-      if (!seenIds.has(e.id)) {
-        allEntries.push({ ...e, _trackLabel: e.track ?? '', _trackColor: '#64748b' })
-      }
+      if (seenIds.has(e.id) || e.track === 'networking') continue
+      seenIds.add(e.id)
+      allEntries.push({ ...e, _trackLabel: e.track ?? 'Other', _trackColor: '#64748b' })
     }
 
     // Group by track label
