@@ -963,8 +963,11 @@ function App() {
   const [quickLogToast, setQuickLogToast] = useState(false)
   // KPI values entered inline while the timer is running.
   // Structure: { [todayTaskId]: { [kpiInputId]: number | boolean | string | null } }
-  // Never reset on sync — only cleared on task complete/cancel.
-  const [kpiSessionValues, setKpiSessionValues] = useState({})
+  // Persisted to localStorage so values survive page reloads before the task is completed.
+  const [kpiSessionValues, setKpiSessionValues] = useState(() => {
+    const persisted = loadPersistedState()
+    return persisted?.kpiSessionValues ?? {}
+  })
   // { [todayTaskId]: { [subtaskId]: boolean } } — checkbox state for subtasks in Today Queue
   const [subtaskChecks, setSubtaskChecks] = useState({})
   const [quickLogEntries, setQuickLogEntries] = useState(() => {
@@ -1512,8 +1515,9 @@ function App() {
       sessions,
       activeTaskId,
       queueDate,
+      kpiSessionValues,
     })
-  }, [activeTaskId, queueDate, sessions, taskLibrary, todayTasks])
+  }, [activeTaskId, kpiSessionValues, queueDate, sessions, taskLibrary, todayTasks])
 
   useEffect(() => {
     saveCompletionLog(completionLog)
