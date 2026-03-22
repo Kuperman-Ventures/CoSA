@@ -916,7 +916,7 @@ function App() {
       taskLibrary: library,
       todayTasks: today,
       sessions: sessionState,
-      activeTaskId: persisted?.activeTaskId ?? today[0]?.id ?? null,
+      activeTaskId: persisted?.activeTaskId ?? null,
       queueDate: persisted?.queueDate ?? getDeployTargetDate(),
     }
   }, [])
@@ -1266,9 +1266,7 @@ function App() {
       updatedTasks.forEach((t) => { if (!next[t.id]) next[t.id] = getInitialSession(t) })
       return next
     })
-    if (currentTasks.length === 0 && updatedTasks.length > 0) {
-      setActiveTaskId(updatedTasks[0].id)
-    }
+    // Do not auto-select a task — user picks one explicitly from the queue.
     upsertTodayTasks(updatedTasks, userId, dateStr)
   }
 
