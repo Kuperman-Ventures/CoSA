@@ -2794,10 +2794,21 @@ function App() {
         (item) => !allocatedCalendarIdsThisWeek.has(item.id),
       )
       if (items.length === 0) return
+      // Already-counted: timer sessions + previously reconciled calendar blocks for this track this week
+      const loggedEntries = [
+        ...trackData.entries,
+        ...(trackData.splitEntries ?? []),
+        ...completionLog.filter((e) => {
+          if (!e.sourceCalendarId) return false
+          const d = new Date(e.completedAt)
+          return d >= weekStart && d <= weekEnd && e.track === trackData.track.key
+        }),
+      ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
       setCalendarAllocateSelected({})
       setCalendarAllocateModal({
         track: trackData.track,
         items,
+        loggedEntries,
         weekEnd,
       })
     }
@@ -2892,14 +2903,17 @@ function App() {
         }}
       >
         <div
-          className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+          className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden max-h-[88vh] flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
+          {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-900">Add calendar time to your log</h3>
+              <h3 className="text-sm font-semibold text-slate-900">
+                Reconcile — {calendarAllocateModal.track.label}
+              </h3>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                {calendarAllocateModal.track.label} · Only checked blocks are added to completion (same week).
+                Compare what's already logged with what's on the calendar. Check any calendar blocks you want to add.
               </p>
             </div>
             <button
@@ -2913,71 +2927,113 @@ function App() {
               <X size={16} />
             </button>
           </div>
-          <div className="overflow-y-auto flex-1 p-4 space-y-3">
-            <p className="text-xs text-slate-600">
-              Calendar time is a <span className="font-medium">hint</span>, not automatic credit. Select the blocks you want to count toward <strong>Time This Week</strong> (and anywhere else that reads the completion log).
-            </p>
-            <div className="flex gap-2 text-[11px]">
-              <button
-                type="button"
-                className="text-amber-900 underline font-medium"
-                onClick={() => {
-                  const all = {}
-                  for (const it of calendarAllocateModal.items) all[it.id] = true
-                  setCalendarAllocateSelected(all)
-                }}
-              >
-                Select all
-              </button>
-              <span className="text-slate-300">|</span>
-              <button
-                type="button"
-                className="text-slate-600 underline"
-                onClick={() => setCalendarAllocateSelected({})}
-              >
-                Clear
-              </button>
+
+          {/* Two-column body */}
+          <div className="overflow-y-auto flex-1">
+            <div className="grid grid-cols-2 divide-x divide-slate-100 min-h-full">
+
+              {/* LEFT — Already counted */}
+              <div className="p-4 space-y-2">
+                <div className="flex items-baseline justify-between mb-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Already logged</p>
+                  <p className="text-[11px] text-slate-400">
+                    {calendarAllocateModal.loggedEntries.reduce((s, e) => s + Math.round((e.elapsedSeconds ?? 0) / 60), 0)}m total
+                  </p>
+                </div>
+                {calendarAllocateModal.loggedEntries.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">Nothing logged yet for this track this week.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
+                    {calendarAllocateModal.loggedEntries.map((e, i) => {
+                      const mins = Math.round((e.elapsedSeconds ?? 0) / 60)
+                      const dayStr = e.completedAt
+                        ? new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                        : '—'
+                      const isReconciled = !!e.sourceCalendarId
+                      return (
+                        <li key={e.id ?? i} className="px-3 py-2.5">
+                          <p className="text-xs font-medium text-slate-800 truncate">{e.taskName}</p>
+                          <p className="text-[11px] text-slate-500">
+                            {dayStr} · {mins}m
+                            {isReconciled && <span className="ml-1 text-amber-700"> · from calendar</span>}
+                          </p>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              {/* RIGHT — Calendar not yet logged */}
+              <div className="p-4 space-y-2">
+                <div className="flex items-baseline justify-between mb-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">On calendar · not logged</p>
+                  <div className="flex gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      className="text-amber-900 underline font-medium"
+                      onClick={() => {
+                        const all = {}
+                        for (const it of calendarAllocateModal.items) all[it.id] = true
+                        setCalendarAllocateSelected(all)
+                      }}
+                    >
+                      All
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      className="text-slate-500 underline"
+                      onClick={() => setCalendarAllocateSelected({})}
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+                <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
+                  {calendarAllocateModal.items.map((item) => {
+                    const checked = !!calendarAllocateSelected[item.id]
+                    const src = item.source === 'cosa-calendar' ? 'CoSA' : 'Personal'
+                    const sub = item.splitNote ? ' · net. split' : ''
+                    return (
+                      <li key={item.id} className={`flex items-start gap-3 px-3 py-2.5 ${checked ? 'bg-amber-50/60' : ''}`}>
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 rounded border-slate-300 accent-amber-700"
+                          checked={checked}
+                          onChange={() =>
+                            setCalendarAllocateSelected((prev) => ({
+                              ...prev,
+                              [item.id]: !prev[item.id],
+                            }))
+                          }
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-slate-800 truncate">
+                            {item.title || '(Untitled)'}{sub}
+                          </p>
+                          <p className="text-[11px] text-slate-500">
+                            {src} · {item.dayLabel ?? '—'} · {item.minutes ?? 0}m
+                          </p>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
             </div>
-            <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
-              {calendarAllocateModal.items.map((item) => {
-                const checked = !!calendarAllocateSelected[item.id]
-                const sub = item.splitNote ? ' · Shared networking split' : ''
-                const src = item.source === 'cosa-calendar' ? 'CoSA calendar' : 'Personal · tagged'
-                return (
-                  <li key={item.id} className="flex items-start gap-3 p-3">
-                    <input
-                      type="checkbox"
-                      className="mt-1 rounded border-slate-300"
-                      checked={checked}
-                      onChange={() =>
-                        setCalendarAllocateSelected((prev) => ({
-                          ...prev,
-                          [item.id]: !prev[item.id],
-                        }))
-                      }
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-slate-800 truncate">
-                        {item.title || '(Untitled)'}{sub}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {src} · {item.dayLabel ?? '—'} · {item.minutes ?? 0}m
-                      </p>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
           </div>
+
+          {/* Footer */}
           <div className="border-t border-slate-100 px-4 py-3 bg-slate-50 flex items-center justify-between gap-2">
             <span className="text-xs text-slate-600">
-              Selected:{' '}
+              Adding:{' '}
               <strong>
                 {calendarAllocateModal.items
                   .filter((it) => calendarAllocateSelected[it.id])
-                  .reduce((s, it) => s + (it.minutes ?? 0), 0)}
-                m
+                  .reduce((s, it) => s + (it.minutes ?? 0), 0)}m
               </strong>
+              {' '}to completion log
             </span>
             <button
               type="button"
@@ -2987,7 +3043,7 @@ function App() {
               onClick={confirmCalendarAllocation}
               className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-800"
             >
-              Add to completion log
+              Add to log
             </button>
           </div>
         </div>
