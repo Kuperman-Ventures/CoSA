@@ -217,6 +217,9 @@ function rowToLogEntry(row) {
     pauseCount: row.pause_count,
     pauseDurationSeconds: row.pause_duration_seconds,
     cancelledSeconds: row.cancelled_seconds,
+    // Calendar reconcile fields
+    sourceCalendarId: row.source_calendar_id ?? null,
+    fromWeeklyReviewCalendarAllocation: Boolean(row.source_calendar_id),
   }
 }
 
@@ -230,6 +233,50 @@ export async function upsertTimerSession(session, task, userId) {
     if (error) console.error('[upsertTimerSession]', error.message)
   } catch (err) {
     console.error('[upsertTimerSession]', err.message)
+  }
+}
+
+/**
+ * Persist calendar-reconcile log entries (from the Weekly Review reconcile modal)
+ * to timer_sessions so they survive cross-device sign-ins.
+ * Each entry is a plain completion-log object with a `sourceCalendarId` field.
+ */
+export async function upsertCalendarReconcileEntries(entries, userId) {
+  if (!supabase || !userId || !entries?.length) return
+  const now = new Date().toISOString()
+  const rows = entries.map((e) => ({
+    id: e.id,
+    user_id: userId,
+    task_instance_id: null,
+    task_name: e.taskName ?? '(Calendar block)',
+    track: e.track ?? '',
+    kpi_mapping: e.kpiMapping ?? '',
+    kpi_values: e.kpiValues && Object.keys(e.kpiValues).length > 0 ? e.kpiValues : null,
+    quantity: e.quantity ?? 1,
+    timer_state: 'Completed',
+    completion_type: e.completionType ?? 'Done',
+    estimate_seconds: e.estimateSeconds ?? 0,
+    elapsed_seconds: e.elapsedSeconds ?? 0,
+    pause_count: 0,
+    pause_duration_seconds: 0,
+    overrun_seconds: 0,
+    cancelled_seconds: 0,
+    outcome_achieved: true,
+    definition_of_done: '',
+    actual_completed: '',
+    started_at: null,
+    completed_at: e.completedAt ?? now,
+    updated_at: now,
+    source_calendar_id: e.sourceCalendarId ?? null,
+    is_quick_log: false,
+  }))
+  try {
+    const { error } = await supabase
+      .from('timer_sessions')
+      .upsert(rows, { onConflict: 'id' })
+    if (error) console.error('[upsertCalendarReconcileEntries]', error.message)
+  } catch (err) {
+    console.error('[upsertCalendarReconcileEntries]', err.message)
   }
 }
 

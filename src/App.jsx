@@ -34,6 +34,7 @@ import {
   upsertQuickLogEntry,
   loadQuickLogEntries,
   loadCalendarEventTags,
+  upsertCalendarReconcileEntries,
 } from './lib/supabaseSync'
 import {
   fetchAllCalendarEvents,
@@ -1600,12 +1601,19 @@ function App() {
           }
           return next
         })
+      }
 
-        const prefs = await loadUserPreferences(userId)
-        if (prefs?.cleared_dates) {
-          setClearedDates(prefs.cleared_dates)
-          window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
-        }
+      // Always load user preferences regardless of whether today tasks exist —
+      // cleared dates and dismissed keys must sync even on a fresh machine.
+      const prefs = await loadUserPreferences(userId)
+      if (prefs?.cleared_dates) {
+        setClearedDates(prefs.cleared_dates)
+        window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
+      }
+      if (Array.isArray(prefs?.dismissed_calendar_keys)) {
+        const loaded = new Set(prefs.dismissed_calendar_keys)
+        setDismissedCalendarKeys(loaded)
+        window.localStorage.setItem('cosa.dismissedCalendarKeys', JSON.stringify([...loaded]))
       }
 
       // 3. Merge today's calendar events into the queue (add new + refresh changed)
@@ -2892,7 +2900,12 @@ function App() {
       setDismissedCalendarKeys((prev) => {
         const next = new Set(prev)
         next.add(key)
-        window.localStorage.setItem('cosa.dismissedCalendarKeys', JSON.stringify([...next]))
+        const arr = [...next]
+        window.localStorage.setItem('cosa.dismissedCalendarKeys', JSON.stringify(arr))
+        // Persist to Supabase so the dismissed list survives cross-device sign-ins
+        if (session?.user?.id) {
+          upsertUserPreferences({ dismissed_calendar_keys: arr }, session.user.id)
+        }
         return next
       })
       setCalendarAllocateModal((prev) =>
@@ -2931,6 +2944,11 @@ function App() {
       setCompletionLog((prev) => [...prev, ...newEntries])
       setCalendarAllocateModal(null)
       setCalendarAllocateSelected({})
+
+      // Persist so the entries survive sign-in on a new machine
+      if (supabaseConfigured && session?.user?.id) {
+        upsertCalendarReconcileEntries(newEntries, session.user.id)
+      }
     }
 
     function openKpiDetail(kpi) {
