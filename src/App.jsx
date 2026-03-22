@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WeekPlanner from './components/WeekPlanner'
-import { Pause, Play, SquareCheck, StopCircle, GripVertical, AlertTriangle, Clock, Settings, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { Pause, Play, SquareCheck, StopCircle, GripVertical, AlertTriangle, Clock, ChevronDown, ChevronRight, X } from 'lucide-react'
 import {
   DndContext,
   closestCenter,
@@ -452,7 +452,6 @@ const NAV_ITEMS = [
   { id: 'taskLibrary', label: 'Task Library' },
   { id: 'weekPlanner', label: 'Calendar' },
   { id: 'kpi', label: 'Weekly Review' },
-  { id: 'settings', label: 'Settings' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
@@ -2720,17 +2719,6 @@ function App() {
     )
   }
 
-  function renderSettingsScreen() {
-    const isSignedIn = Boolean(session?.user?.id)
-
-    return (
-      <section className="mx-auto max-w-2xl p-4 space-y-6">
-        <h2 className="text-base font-semibold text-slate-800">Settings</h2>
-
-      </section>
-    )
-  }
-
   // ── KPI detail handlers (App-level so they always have fresh state) ─────────
   function openKpiDetail(kpi) {
     const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
@@ -4071,7 +4059,6 @@ function App() {
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
-      {activeScreen === 'settings' ? renderSettingsScreen() : null}
 
       {/* ── Floating Quick Log button ─────────────────────────────────── */}
       <button
