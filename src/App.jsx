@@ -964,6 +964,12 @@ function App() {
   /** Weekly Review: opt-in “calendar → completion log” picker (null | { track, items, weekStart, weekEnd }). */
   const [calendarAllocateModal, setCalendarAllocateModal] = useState(null)
   const [calendarAllocateSelected, setCalendarAllocateSelected] = useState({})
+  /** Which row is expanded in the reconcile modal. */
+  const [reconcileExpandedId, setReconcileExpandedId] = useState(null)
+  /** Calendar item keys dismissed from right column — persisted to localStorage. */
+  const [dismissedCalendarKeys, setDismissedCalendarKeys] = useState(() => {
+    try { return new Set(JSON.parse(window.localStorage.getItem('cosa.dismissedCalendarKeys') ?? '[]')) } catch { return new Set() }
+  })
   const [gcalSyncStatus, setGcalSyncStatus] = useState(null) // null | 'syncing' | 'ok' | 'auth-error' | 'error'
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
@@ -2840,17 +2846,17 @@ function App() {
         if (allocatedCalendarIdsThisWeek.has(item.id)) return false
         const titleDayKey = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
         if (coveredKeys.has(titleDayKey)) return false
-        // Deduplicate same GCal event appearing from multiple sources
+        if (dismissedCalendarKeys.has(titleDayKey)) return false
         const evId = rawEventId(item.id)
         if (seenEventIds.has(evId)) return false
         seenEventIds.add(evId)
-        // Deduplicate by title+day (catches genuinely separate events with identical names)
         if (seenTitleDayKeys.has(titleDayKey)) return false
         seenTitleDayKeys.add(titleDayKey)
         return true
       })
 
       if (items.length === 0 && loggedEntries.length === 0) return
+      setReconcileExpandedId(null)
       setCalendarAllocateSelected({})
       setCalendarAllocateModal({
         track: trackData.track,
@@ -2858,6 +2864,29 @@ function App() {
         loggedEntries,
         weekEnd,
       })
+    }
+
+    function deleteLoggedEntry(entryId) {
+      setCompletionLog((prev) => prev.filter((e) => e.id !== entryId))
+      setCalendarAllocateModal((prev) =>
+        prev ? { ...prev, loggedEntries: prev.loggedEntries.filter((e) => e.id !== entryId) } : prev,
+      )
+      setReconcileExpandedId(null)
+    }
+
+    function dismissCalendarItem(item) {
+      const key = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
+      setDismissedCalendarKeys((prev) => {
+        const next = new Set(prev)
+        next.add(key)
+        window.localStorage.setItem('cosa.dismissedCalendarKeys', JSON.stringify([...next]))
+        return next
+      })
+      setCalendarAllocateModal((prev) =>
+        prev ? { ...prev, items: prev.items.filter((i) => i.id !== item.id) } : prev,
+      )
+      setCalendarAllocateSelected((prev) => { const n = { ...prev }; delete n[item.id]; return n })
+      setReconcileExpandedId(null)
     }
 
     function confirmCalendarAllocation() {
@@ -2979,7 +3008,7 @@ function App() {
           <div className="overflow-y-auto flex-1">
             <div className="grid grid-cols-2 divide-x divide-slate-100 min-h-full">
 
-              {/* LEFT — Already counted */}
+              {/* LEFT — Already logged */}
               <div className="p-4 space-y-2">
                 <div className="flex items-baseline justify-between mb-1">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Already logged</p>
@@ -2990,20 +3019,41 @@ function App() {
                 {calendarAllocateModal.loggedEntries.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic">Nothing logged yet for this track this week.</p>
                 ) : (
-                  <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
+                  <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg overflow-hidden">
                     {calendarAllocateModal.loggedEntries.map((e, i) => {
+                      const rowId = `log-${e.id ?? i}`
+                      const isExpanded = reconcileExpandedId === rowId
                       const mins = Math.round((e.elapsedSeconds ?? 0) / 60)
                       const dayStr = e.completedAt
                         ? new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
                         : '—'
                       const isReconciled = !!e.sourceCalendarId
                       return (
-                        <li key={e.id ?? i} className="px-3 py-2.5">
-                          <p className="text-xs font-medium text-slate-800 truncate">{e.taskName}</p>
-                          <p className="text-[11px] text-slate-500">
-                            {dayStr} · {mins}m
-                            {isReconciled && <span className="ml-1 text-amber-700"> · from calendar</span>}
-                          </p>
+                        <li key={e.id ?? i} className={`${isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50/60'} transition-colors`}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2.5"
+                            onClick={() => setReconcileExpandedId(isExpanded ? null : rowId)}
+                          >
+                            <p className="text-xs font-medium text-slate-800 leading-snug">{e.taskName}</p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {dayStr} · {mins}m
+                              {isReconciled && <span className="ml-1 text-amber-700"> · reconciled</span>}
+                            </p>
+                          </button>
+                          {isExpanded && (
+                            <div className="px-3 pb-3 space-y-2">
+                              <p className="text-[11px] text-slate-500">{e.kpiMapping || 'No KPI mapping'}</p>
+                              <p className="text-[11px] text-slate-500">{e.completionType || 'Done'} · {mins}m elapsed</p>
+                              <button
+                                type="button"
+                                onClick={() => deleteLoggedEntry(e.id)}
+                                className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                              >
+                                Remove from log
+                              </button>
+                            </div>
+                          )}
                         </li>
                       )
                     })}
@@ -3037,36 +3087,61 @@ function App() {
                     </button>
                   </div>
                 </div>
-                <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
-                  {calendarAllocateModal.items.map((item) => {
-                    const checked = !!calendarAllocateSelected[item.id]
-                    const src = item.source === 'cosa-calendar' ? 'CoSA' : 'Personal'
-                    const sub = item.splitNote ? ' · net. split' : ''
-                    return (
-                      <li key={item.id} className={`flex items-start gap-3 px-3 py-2.5 ${checked ? 'bg-amber-50/60' : ''}`}>
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 rounded border-slate-300 accent-amber-700"
-                          checked={checked}
-                          onChange={() =>
-                            setCalendarAllocateSelected((prev) => ({
-                              ...prev,
-                              [item.id]: !prev[item.id],
-                            }))
-                          }
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-slate-800 truncate">
-                            {item.title || '(Untitled)'}{sub}
-                          </p>
-                          <p className="text-[11px] text-slate-500">
-                            {src} · {item.dayLabel ?? '—'} · {item.minutes ?? 0}m
-                          </p>
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
+                {calendarAllocateModal.items.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">All calendar blocks are accounted for.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg overflow-hidden">
+                    {calendarAllocateModal.items.map((item) => {
+                      const rowId = `cal-${item.id}`
+                      const isExpanded = reconcileExpandedId === rowId
+                      const checked = !!calendarAllocateSelected[item.id]
+                      const src = item.source === 'cosa-calendar' ? 'CoSA' : 'Personal'
+                      const sub = item.splitNote ? ' · net. split' : ''
+                      return (
+                        <li key={item.id} className={`${checked ? 'bg-amber-50/60' : isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50/60'} transition-colors`}>
+                          <div className="flex items-start gap-2 px-3 py-2.5">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 shrink-0 rounded border-slate-300 accent-amber-700"
+                              checked={checked}
+                              onChange={() =>
+                                setCalendarAllocateSelected((prev) => ({
+                                  ...prev,
+                                  [item.id]: !prev[item.id],
+                                }))
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 text-left"
+                              onClick={() => setReconcileExpandedId(isExpanded ? null : rowId)}
+                            >
+                              <p className="text-xs font-medium text-slate-800 leading-snug">
+                                {item.title || '(Untitled)'}{sub}
+                              </p>
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                {src} · {item.dayLabel ?? '—'} · {item.minutes ?? 0}m
+                              </p>
+                            </button>
+                          </div>
+                          {isExpanded && (
+                            <div className="px-3 pb-3 space-y-2 pl-9">
+                              {item.rawSubTrack && <p className="text-[11px] text-slate-500">Sub-track: {item.rawSubTrack}</p>}
+                              {item.splitNote && <p className="text-[11px] text-slate-500 italic">{item.splitNote}</p>}
+                              <button
+                                type="button"
+                                onClick={() => dismissCalendarItem(item)}
+                                className="rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200"
+                              >
+                                Dismiss — don't show again
+                              </button>
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
               </div>
             </div>
           </div>
