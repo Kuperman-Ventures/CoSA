@@ -48,6 +48,7 @@ import {
   formatLocalDate,
 } from './lib/calendarWeekHealthModel'
 import { QUICK_LOG_KPI_GROUPS, KPI_LABEL_TO_TRACK } from './lib/quickLogKpis'
+import { exportWeeklyReportHTML } from './lib/weeklyReportExport'
 
 const TRACKS = {
   advisors: {
@@ -2992,6 +2993,20 @@ function App() {
       )
     }
 
+    function handleExportReport() {
+      exportWeeklyReportHTML({
+        weekStart,
+        weekEnd,
+        kpiSummary,
+        kpiTrackGroups: KPI_TRACK_GROUPS,
+        timeByTrack,
+        completionLog: completionLog.filter((e) => {
+          const d = new Date(e.completedAt)
+          return d >= weekStart && d <= weekEnd
+        }),
+      })
+    }
+
     return (
       <section className="space-y-4 p-4">
         {/* Week navigation */}
@@ -3008,14 +3023,24 @@ function App() {
             <p className="text-sm font-semibold text-slate-900">{formatWeekLabel(weekStart, weekEnd)}</p>
             {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
           </div>
-          <button
-            type="button"
-            onClick={() => setWeekOffset((o) => Math.min(0, o + 1))}
-            disabled={isCurrentWeek}
-            className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-30"
-          >
-            Next →
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportReport}
+              title="Export this week as a printable HTML report"
+              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100"
+            >
+              ↗ Export
+            </button>
+            <button
+              type="button"
+              onClick={() => setWeekOffset((o) => Math.min(0, o + 1))}
+              disabled={isCurrentWeek}
+              className="rounded-md border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-30"
+            >
+              Next →
+            </button>
+          </div>
         </div>
 
         {/* Week score, time by track, KPI tables, quick logs */}
