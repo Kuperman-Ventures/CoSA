@@ -2990,7 +2990,12 @@ function App() {
 
             {kpiDetail.type === 'kpi' && (
               kpiDetail.entries.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">No logged entries for this KPI in this period.</p>
+                <div className="space-y-2 py-2">
+                  <p className="text-sm text-slate-400 italic">Nothing logged for this KPI yet this period.</p>
+                  <p className="text-[11px] text-slate-400">
+                    Credits come from: timer completions on tasks mapped to this KPI, Quick Log entries, or calendar events tagged with this KPI credit.
+                  </p>
+                </div>
               ) : (
                 <ul className="divide-y divide-slate-100">
                   {[...kpiDetail.entries]
@@ -2998,22 +3003,33 @@ function App() {
                     .map((e, i) => {
                       const dayStr = new Date(e.completedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
                       const elapsed = Math.round((e.elapsedSeconds ?? 0) / 60)
+                      const sourceLabel = e._fromCalendarTag
+                        ? { text: '📅 Calendar tag', cls: 'bg-indigo-50 text-indigo-600' }
+                        : e.isQuickLog
+                        ? { text: '⚡ Quick log', cls: 'bg-amber-50 text-amber-700' }
+                        : { text: '⏱ Timer', cls: 'bg-slate-100 text-slate-500' }
                       return (
                         <li key={e.id ?? i} className="py-2.5">
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <p className="text-xs font-semibold text-slate-800 truncate">{e.taskName}</p>
-                              {kpiDetail.kpi.isRate && (
-                                <p className="text-[11px] text-slate-400">
-                                  {e._dodUsed ? '✓ Definition of done used' : '✗ No definition of done'}
-                                </p>
-                              )}
-                              {!kpiDetail.kpi.isRate && (e.quantity ?? 1) > 1 && (
-                                <p className="text-[11px] text-slate-400">×{e.quantity} units</p>
-                              )}
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${sourceLabel.cls}`}>{sourceLabel.text}</span>
+                                {e.subTrack && (
+                                  <span className="text-[10px] text-slate-400">{e.subTrack}</span>
+                                )}
+                                {!kpiDetail.kpi.isRate && (e.quantity ?? 1) > 1 && (
+                                  <span className="text-[10px] text-slate-400">×{e.quantity} units</span>
+                                )}
+                                {kpiDetail.kpi.isRate && (
+                                  <span className="text-[10px] text-slate-400">
+                                    {e._dodUsed ? '✓ DoD used' : '✗ No DoD'}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div className="shrink-0 text-right">
-                              <p className="text-[11px] font-medium text-slate-700">{elapsed}m</p>
+                              <p className="text-[11px] font-medium text-slate-700">{elapsed > 0 ? `${elapsed}m` : '—'}</p>
                               <p className="text-[11px] text-slate-400">{dayStr}</p>
                             </div>
                           </div>
@@ -3086,7 +3102,10 @@ function App() {
                       onClick={() => openKpiDetail(kpi)}
                       title="Click to see contributing sessions"
                     >
-                      <td className="px-4 py-2.5 text-slate-700">{kpi.label}</td>
+                      <td className="px-4 py-2.5 text-slate-700">
+                        <span className="group-hover:underline">{kpi.label}</span>
+                        <span className="ml-1 text-[10px] text-slate-300">↗</span>
+                      </td>
                       <td className="px-3 py-2.5 text-center text-slate-500">
                         {kpi.isRate ? 'Every session' : kpi.target ? `${kpi.target}/${kpi.period === 'month' ? 'mo' : 'wk'}` : '—'}
                       </td>
