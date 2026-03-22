@@ -2807,16 +2807,21 @@ function App() {
     }
 
     function openCalendarAllocateModal(trackData) {
-      // Already-counted: timer sessions + networking splits + prior reconciled calendar blocks
+      // Already-counted: timer sessions + networking splits.
+      // trackData.entries already includes ALL completion-log entries for this track
+      // (including previously reconciled calendar blocks), so no extra filter needed.
+      const seenLogIds = new Set()
       const loggedEntries = [
         ...trackData.entries,
         ...(trackData.splitEntries ?? []),
-        ...completionLog.filter((e) => {
-          if (!e.sourceCalendarId) return false
-          const d = new Date(e.completedAt)
-          return d >= weekStart && d <= weekEnd && e.track === trackData.track.key
-        }),
-      ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+      ]
+        .filter((e) => {
+          const key = e.id ?? JSON.stringify(e)
+          if (seenLogIds.has(key)) return false
+          seenLogIds.add(key)
+          return true
+        })
+        .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
 
       // Build a set of "day|normalised-title" keys that are already logged
       const coveredKeys = new Set(
@@ -2840,17 +2845,26 @@ function App() {
           .replace(/-split-js$/, '')
       }
 
+      const seenItemIds = new Set()
       const seenEventIds = new Set()
       const seenTitleDayKeys = new Set()
-      const items = (calendarHealth.contributors[trackData.track.key]?.all ?? []).filter((item) => {
+      const rawContributors = calendarHealth.contributors[trackData.track.key]?.all ?? []
+      // Debug: log all raw contributors so duplicate sources are visible in the console
+      console.log('[reconcile] raw contributors for', trackData.track.key, rawContributors.map((c) => ({ id: c.id, title: c.title, day: c.dayLabel, mins: c.minutes })))
+      const items = rawContributors.filter((item) => {
+        // Guard 1: exact item.id already seen (catches identical duplicates first)
+        if (seenItemIds.has(item.id)) { console.log('[reconcile] dup item.id:', item.id); return false }
+        seenItemIds.add(item.id)
         if (allocatedCalendarIdsThisWeek.has(item.id)) return false
         const titleDayKey = `${item.dayLabel ?? '—'}|${normTitle(item.title)}`
         if (coveredKeys.has(titleDayKey)) return false
         if (dismissedCalendarKeys.has(titleDayKey)) return false
+        // Guard 2: same underlying GCal event ID (strips gcal-/tag- prefix + split suffix)
         const evId = rawEventId(item.id)
-        if (seenEventIds.has(evId)) return false
+        if (seenEventIds.has(evId)) { console.log('[reconcile] dup rawEventId:', evId, item.id); return false }
         seenEventIds.add(evId)
-        if (seenTitleDayKeys.has(titleDayKey)) return false
+        // Guard 3: same title+day combo
+        if (seenTitleDayKeys.has(titleDayKey)) { console.log('[reconcile] dup titleDayKey:', titleDayKey, item.id); return false }
         seenTitleDayKeys.add(titleDayKey)
         return true
       })
