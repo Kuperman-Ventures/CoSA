@@ -1154,12 +1154,21 @@ export default function WeekPlanner({
       }
     }
 
-    // Tagged calendar events count as logged — no reconcile step needed
+    // Tagged personal GCal events (tagged via the Tag modal) count as logged
     for (const tag of Object.values(calendarTags)) {
       if (!tag.track || !tag.date) continue
       const d = new Date(tag.date + 'T12:00:00')
       if (d < weekStart || d > weekEnd) continue
       const mins = tag.durationMin ?? 0
+      if (tag.track === 'networking') {
+        const h1 = Math.floor(mins / 2)
+        const h2 = mins - h1
+        if (!totals['advisors']) totals['advisors'] = { total: 0, sub: {} }
+        if (!totals['jobSearch']) totals['jobSearch'] = { total: 0, sub: {} }
+        totals['advisors'].total += h1
+        totals['jobSearch'].total += h2
+        continue
+      }
       if (!totals[tag.track]) totals[tag.track] = { total: 0, sub: {} }
       totals[tag.track].total += mins
       if (tag.subTrack) {
@@ -1168,8 +1177,34 @@ export default function WeekPlanner({
       }
     }
 
+    // CoSA Calendar events (created from Task Library or Calendar view) also count as logged
+    for (const ev of weekEvents) {
+      const priv = ev.extendedProperties?.private ?? {}
+      const track = priv.cosaTrack || null
+      if (!track) continue
+      const evStart = ev.start?.dateTime ? new Date(ev.start.dateTime) : null
+      if (!evStart || evStart < weekStart || evStart > weekEnd) continue
+      const mins = eventDurationMins(ev)
+      if (track === 'networking') {
+        const h1 = Math.floor(mins / 2)
+        const h2 = mins - h1
+        if (!totals['advisors']) totals['advisors'] = { total: 0, sub: {} }
+        if (!totals['jobSearch']) totals['jobSearch'] = { total: 0, sub: {} }
+        totals['advisors'].total += h1
+        totals['jobSearch'].total += h2
+        continue
+      }
+      if (!totals[track]) totals[track] = { total: 0, sub: {} }
+      totals[track].total += mins
+      const rawSub = priv.cosaSubTrack || null
+      if (rawSub) {
+        const bucket = allocationSubTrackKey(track, rawSub, bucketKeys(track)) ?? rawSub
+        totals[track].sub[bucket] = (totals[track].sub[bucket] ?? 0) + mins
+      }
+    }
+
     return totals
-  }, [completionLog, calendarTags, weekRangeStart, trackTargets])
+  }, [completionLog, calendarTags, weekEvents, weekRangeStart, trackTargets])
 
   const providerToken = session?.provider_token ?? null
 
