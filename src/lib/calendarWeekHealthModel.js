@@ -102,10 +102,14 @@ export function allocationsPercentToTrackTargets(allocations) {
 }
 
 /**
- * @param {object[]} weekEvents CoSA-tagged calendar events (cosaTag === cosa-event)
+ * @param {object[]} weekEvents  CoSA-tagged calendar events (cosaTag === cosa-event)
  * @param {Record<string, object>} calendarTags gcal id → tag row from Supabase
+ * @param {string|null} nowISO   ISO timestamp ceiling — events that start after this
+ *                               are excluded. Pass null to include all (past weeks).
  */
-export function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd) {
+export function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd, nowISO = null) {
+  // Derive today's date string for calendarTags date-filtering (YYYY-MM-DD).
+  const todayStr = nowISO ? nowISO.slice(0, 10) : null
   const totals = {}
   const contributors = {}
 
@@ -157,6 +161,8 @@ export function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets,
   }
 
   for (const ev of weekEvents) {
+    // Skip future events — don't count time that hasn't happened yet.
+    if (nowISO && ev.start?.dateTime && ev.start.dateTime > nowISO) continue
     const priv = ev.extendedProperties?.private ?? {}
     const track = priv.cosaTrack || null
     const subTrack = priv.cosaSubTrack || null
@@ -196,6 +202,8 @@ export function buildCalendarHealthModel(weekEvents, calendarTags, trackTargets,
     const { track, subTrack, durationMin, date: tagDate } = tag
     if (!track || !durationMin) continue
     if (!tagDate || tagDate < weekRangeStart || tagDate > weekRangeEnd) continue
+    // Skip tagged events whose date is in the future.
+    if (todayStr && tagDate > todayStr) continue
     const dayLabel = tagDate
       ? new Date(`${tagDate}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
       : '—'

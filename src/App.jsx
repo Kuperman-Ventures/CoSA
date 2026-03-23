@@ -2819,6 +2819,7 @@ function App() {
       reviewTrackTargets,
       weekRangeStart,
       weekRangeEnd,
+      isCurrentWeek ? new Date().toISOString() : null,
     )
 
     const TRACK_MIN_TARGETS = {
