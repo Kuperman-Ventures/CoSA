@@ -1119,12 +1119,15 @@ export default function WeekPlanner({
   const weekRangeStart = weekDates[0].date
   const weekRangeEnd = weekDates[weekDates.length - 1].date
 
-  // healthModel = CoSA calendar events only (the planning layer / ghost bar).
-  // Tagged personal events live in loggedTotals (the primary logged bar) — don't pass
-  // calendarTags here or they'll be double-counted in both bars.
+  // healthModel = planning layer (ghost bar behind the solid logged bar).
+  // Includes ALL calendar events with a track: CoSA events (task library + log behind)
+  // AND tagged events (personal Google Calendar events the user assigned a track).
+  // The numbers shown to the user are always loggedTotals (the solid bar).
+  // The ghost bar only renders when planned > logged, so there is no visible double-count
+  // when a tagged event appears in both layers.
   const healthModel = useMemo(
-    () => buildCalendarHealthModel(weekEvents, {}, trackTargets, weekRangeStart, weekRangeEnd),
-    [weekEvents, trackTargets, weekRangeStart, weekRangeEnd],
+    () => buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd),
+    [weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd],
   )
 
   // Actual logged time from the completion log — drives the HealthBars primary bars.
@@ -1336,6 +1339,9 @@ export default function WeekPlanner({
     if (!logModal) return
     const startISO = buildISO(logModal.date, startMins)
     const endISO   = buildISO(logModal.date, endMins)
+    const durationMin = Math.max(1, endMins - startMins)
+
+    let gcalEventId = null
     if (providerToken) {
       const newEv = await createCalendarEventAtTime({
         name,
@@ -1346,8 +1352,22 @@ export default function WeekPlanner({
         endISO,
         providerToken,
       })
-      if (newEv) setWeekEvents((prev) => [...prev, newEv])
+      if (newEv) {
+        setWeekEvents((prev) => [...prev, newEv])
+        gcalEventId = newEv.id
+      }
     }
+
+    // Log Behind is an explicit logging action — persist it as a tag entry so it
+    // appears in loggedTotals (WeekPlanner solid bar) and Weekly Review Time This Week.
+    const tag = { track, subTrack: subTrack ?? null, title: name, durationMin, date: logModal.date, kpiCredits: [], kpiQuantities: {} }
+    const tagId = gcalEventId ?? `log-behind-${logModal.date}-${startMins}`
+    if (supabaseConfigured && session?.user?.id) {
+      await upsertCalendarEventTag(session.user.id, tagId, tag)
+    }
+    setCalendarTags((prev) => ({ ...prev, [tagId]: tag }))
+    onCalendarTagsUpdated?.()
+
     setLogModal(null)
   }
 
