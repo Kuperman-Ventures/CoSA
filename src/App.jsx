@@ -1485,9 +1485,7 @@ function App() {
     const { start: ms, end: me } = getMonthBoundsForWeek(weekOffset)
     const results = KPI_DEFINITIONS.map((def) => {
       const { count, total } = countKpi(completionLog, def, ws, we, ms, me)
-      const fromTags = countCalendarTagKpiCredits(calendarEventTags, def, ws, we, ms, me)
-      const merged = count + fromTags
-      return { ...def, count: merged, total, hit: isKpiHit(merged, total, def) }
+      return { ...def, count, total, hit: isKpiHit(count, total, def) }
     })
     const weekly = results.filter(
       (k) => !k.isRate && k.period === 'week' && k.target && k.countsTowardWeekScore !== false,
@@ -1495,7 +1493,7 @@ function App() {
     const hit = weekly.filter((k) => k.hit).length
     const score = hit >= 7 ? 'green' : hit >= 4 ? 'yellow' : 'red'
     return { kpisHit: hit, kpisTotal: weekly.length, weekScore: score, kpiResults: results }
-  }, [completionLog, weekOffset, calendarEventTags])
+  }, [completionLog, weekOffset])
 
   const hasLockedTodayTimers = useMemo(
     () =>
@@ -2784,7 +2782,6 @@ function App() {
     const mergedEntries = [
       ...trackData.entries,
       ...(trackData.splitEntries ?? []),
-      ...(trackData.calendarEntries ?? []),
     ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
     setKpiDetail({
       type: 'track',
@@ -2810,19 +2807,8 @@ function App() {
     }
     const score = scoreConfig[weekScore]
 
-    const weekRangeStart = formatLocalDate(weekStart)
-    const weekRangeEnd = formatLocalDate(weekEnd)
-    const reviewTrackTargets = allocationsPercentToTrackTargets(loadMergedAllocationsForHealth())
-    // Only count explicitly tagged personal events in Time This Week.
-    // CoSA calendar events are planning artifacts — pass [] so they are never auto-counted.
-    const calendarHealth = buildCalendarHealthModel(
-      [],
-      calendarEventTags,
-      reviewTrackTargets,
-      weekRangeStart,
-      weekRangeEnd,
-      isCurrentWeek ? new Date().toISOString() : null,
-    )
+    // Time This Week = completionLog only (timer sessions + quick logs).
+    // Calendar events — regardless of source or tagging — are the PLAN layer only.
 
     const TRACK_MIN_TARGETS = {
       advisors:    700,
@@ -2844,15 +2830,11 @@ function App() {
           const d = new Date(e.completedAt)
           return d >= weekStart && d <= weekEnd && e.track === track.key
         })
-        let minutesFromSessions = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
-        if (track.key === 'advisors') minutesFromSessions += Math.round(networkingMinutesThisWeek / 2)
+        let minutesLogged = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
+        if (track.key === 'advisors') minutesLogged += Math.round(networkingMinutesThisWeek / 2)
         if (track.key === 'jobSearch') {
-          minutesFromSessions += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
+          minutesLogged += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
         }
-        // calendarHealth.totals already merges CoSA events + tagged personal events
-        // (including networking 50/50 split), so use it as the calendar-based logged total.
-        const calendarMins = calendarHealth.totals[track.key]?.total ?? 0
-        const minutesLogged = minutesFromSessions + calendarMins
         const targetMins = TRACK_MIN_TARGETS[track.key] ?? 0
         const pct = targetMins > 0 ? Math.min(100, Math.round((minutesLogged / targetMins) * 100)) : 0
         const splitEntries =
@@ -2863,30 +2845,14 @@ function App() {
               })
             : []
 
-        // Sub-track breakdown: timer sessions + calendar health sub-track totals
+        // Sub-track breakdown from timer sessions only
         const subTrackTotals = {}
         for (const e of entries) {
           const st = e.subTrack
           if (!st) continue
           subTrackTotals[st] = (subTrackTotals[st] ?? 0) + Math.round((e.elapsedSeconds ?? 0) / 60)
         }
-        for (const [st, mins] of Object.entries(calendarHealth.totals[track.key]?.sub ?? {})) {
-          subTrackTotals[st] = (subTrackTotals[st] ?? 0) + mins
-        }
-        const subTrackRows = Object.entries(subTrackTotals)
-          .sort((a, b) => b[1] - a[1])
-
-        // Calendar contributors for the detail drawer (CoSA events + tagged events)
-        const calendarEntries = (calendarHealth.contributors[track.key]?.all ?? []).map((c) => ({
-          id: c.id,
-          taskName: c.title,
-          elapsedSeconds: (c.minutes ?? 0) * 60,
-          completedAt: c.startISO ?? c.sortKey ?? new Date().toISOString(),
-          track: track.key,
-          kpiMapping: '',
-          _fromCalendar: true,
-          _calendarSource: c.source, // 'cosa-calendar' | 'personal-tagged'
-        }))
+        const subTrackRows = Object.entries(subTrackTotals).sort((a, b) => b[1] - a[1])
 
         return {
           track,
@@ -2895,10 +2861,7 @@ function App() {
           pct,
           entries,
           splitEntries,
-          calendarMins,
-          minutesFromSessions,
           subTrackRows,
-          calendarEntries,
         }
       })
       .filter((t) => t.targetMins > 0)
@@ -3065,7 +3028,7 @@ function App() {
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
-                  const { track, minutesLogged, targetMins, pct, calendarMins, subTrackRows } = trackData
+                  const { track, minutesLogged, targetMins, pct, subTrackRows } = trackData
                   return (
                     <div key={track.key}>
                       <div
@@ -3091,12 +3054,6 @@ function App() {
                             style={{ width: `${pct}%`, backgroundColor: track.color }}
                           />
                         </div>
-                        {calendarMins > 0 && (
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            Tagged events:{' '}
-                            <span className="font-medium text-slate-700">{calendarMins}m</span>
-                          </p>
-                        )}
                       </div>
                       {/* Sub-track breakdown */}
                       {subTrackRows.length > 0 && (
@@ -3465,9 +3422,8 @@ function App() {
             {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
               <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
                 <span>
-                  {kpiDetail.trackData.entries.filter(e => !e._fromCalendar && !e.isQuickLog).length} timer
+                  {kpiDetail.trackData.entries.filter(e => !e.isQuickLog).length} timer
                   {kpiDetail.trackData.entries.filter(e => e.isQuickLog).length > 0 && ` + ${kpiDetail.trackData.entries.filter(e => e.isQuickLog).length} quick log`}
-                  {kpiDetail.trackData.entries.filter(e => e._fromCalendar).length > 0 && ` + ${kpiDetail.trackData.entries.filter(e => e._fromCalendar).length} tagged`}
                 </span>
                 <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
               </div>

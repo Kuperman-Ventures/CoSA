@@ -1160,37 +1160,11 @@ export default function WeekPlanner({
       }
     }
 
-    // Tagged personal GCal events — user explicitly tagged these, so they count as logged.
-    // Only count past/today dates; skip future tags on the current week.
-    const todayStr = formatLocalDate(new Date())
-    for (const tag of Object.values(calendarTags)) {
-      if (!tag.track || !tag.date) continue
-      const d = new Date(tag.date + 'T12:00:00')
-      if (d < weekStart || d > weekEnd) continue
-      if (tag.date > todayStr) continue  // never count future-dated tags
-      const mins = tag.durationMin ?? 0
-      if (tag.track === 'networking') {
-        const h1 = Math.floor(mins / 2)
-        const h2 = mins - h1
-        if (!totals['advisors']) totals['advisors'] = { total: 0, sub: {} }
-        if (!totals['jobSearch']) totals['jobSearch'] = { total: 0, sub: {} }
-        totals['advisors'].total += h1
-        totals['jobSearch'].total += h2
-        continue
-      }
-      if (!totals[tag.track]) totals[tag.track] = { total: 0, sub: {} }
-      totals[tag.track].total += mins
-      if (tag.subTrack) {
-        const bucket = allocationSubTrackKey(tag.track, tag.subTrack, bucketKeys(tag.track)) ?? tag.subTrack
-        totals[tag.track].sub[bucket] = (totals[tag.track].sub[bucket] ?? 0) + mins
-      }
-    }
-
-    // CoSA calendar events are planning artifacts — they live in healthModel (the ghost bar).
-    // They must NOT be counted here as logged time; that causes phantom minutes.
+    // Calendar events (CoSA blocks, tagged events, log behind) are the PLAN layer only.
+    // loggedTotals = timer sessions + quick logs from completionLog exclusively.
 
     return totals
-  }, [completionLog, calendarTags, weekRangeStart, trackTargets])
+  }, [completionLog, weekRangeStart, trackTargets])
 
   const providerToken = session?.provider_token ?? null
 
@@ -1339,9 +1313,8 @@ export default function WeekPlanner({
     if (!logModal) return
     const startISO = buildISO(logModal.date, startMins)
     const endISO   = buildISO(logModal.date, endMins)
-    const durationMin = Math.max(1, endMins - startMins)
-
-    let gcalEventId = null
+    // Log Behind puts an event on the calendar plan only.
+    // To count as logged it must go through the Today Queue timer or Quick Log.
     if (providerToken) {
       const newEv = await createCalendarEventAtTime({
         name,
@@ -1352,22 +1325,8 @@ export default function WeekPlanner({
         endISO,
         providerToken,
       })
-      if (newEv) {
-        setWeekEvents((prev) => [...prev, newEv])
-        gcalEventId = newEv.id
-      }
+      if (newEv) setWeekEvents((prev) => [...prev, newEv])
     }
-
-    // Log Behind is an explicit logging action — persist it as a tag entry so it
-    // appears in loggedTotals (WeekPlanner solid bar) and Weekly Review Time This Week.
-    const tag = { track, subTrack: subTrack ?? null, title: name, durationMin, date: logModal.date, kpiCredits: [], kpiQuantities: {} }
-    const tagId = gcalEventId ?? `log-behind-${logModal.date}-${startMins}`
-    if (supabaseConfigured && session?.user?.id) {
-      await upsertCalendarEventTag(session.user.id, tagId, tag)
-    }
-    setCalendarTags((prev) => ({ ...prev, [tagId]: tag }))
-    onCalendarTagsUpdated?.()
-
     setLogModal(null)
   }
 
