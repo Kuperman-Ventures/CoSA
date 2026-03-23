@@ -1489,7 +1489,9 @@ function App() {
     const { start: ws, end: we } = getWeekBounds(weekOffset)
     const { start: ms, end: me } = getMonthBoundsForWeek(weekOffset)
     const results = KPI_DEFINITIONS.map((def) => {
-      const { count, total } = countKpi(completionLog, def, ws, we, ms, me)
+      const { count: logCount, total } = countKpi(completionLog, def, ws, we, ms, me)
+      const calCount = countCalendarTagKpiCredits(calendarEventTags, def, ws, we, ms, me)
+      const count = logCount + calCount
       return { ...def, count, total, hit: isKpiHit(count, total, def) }
     })
     const weekly = results.filter(
@@ -1498,7 +1500,7 @@ function App() {
     const hit = weekly.filter((k) => k.hit).length
     const score = hit >= 7 ? 'green' : hit >= 4 ? 'yellow' : 'red'
     return { kpisHit: hit, kpisTotal: weekly.length, weekScore: score, kpiResults: results }
-  }, [completionLog, weekOffset])
+  }, [completionLog, calendarEventTags, weekOffset])
 
   const hasLockedTodayTimers = useMemo(
     () =>
