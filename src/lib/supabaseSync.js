@@ -272,6 +272,36 @@ export async function loadTodayTimerSessions(userId, taskInstanceIds) {
 }
 
 
+// ─── Timer Session Edit / Delete (Reconcile Log) ─────────────────────────────
+
+export async function deleteTimerSession(sessionId, userId) {
+  if (!supabase || !userId || !sessionId) return
+  try {
+    const { error } = await supabase
+      .from('timer_sessions')
+      .delete()
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+    if (error) console.error('[deleteTimerSession]', error.message)
+  } catch (err) {
+    console.error('[deleteTimerSession]', err.message)
+  }
+}
+
+export async function updateTimerSession(sessionId, updates, userId) {
+  if (!supabase || !userId || !sessionId) return
+  try {
+    const { error } = await supabase
+      .from('timer_sessions')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+    if (error) console.error('[updateTimerSession]', error.message)
+  } catch (err) {
+    console.error('[updateTimerSession]', err.message)
+  }
+}
+
 // ─── Friday Reviews ───────────────────────────────────────────────────────────
 
 export async function upsertFridayReview(record, userId) {

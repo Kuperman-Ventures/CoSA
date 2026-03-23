@@ -34,6 +34,8 @@ import {
   upsertQuickLogEntry,
   loadQuickLogEntries,
   loadCalendarEventTags,
+  deleteTimerSession,
+  updateTimerSession,
 } from './lib/supabaseSync'
 import {
   fetchAllCalendarEvents,
@@ -979,6 +981,9 @@ function App() {
   const [showClearDayModal, setShowClearDayModal] = useState(false)
   const [clearFrom, setClearFrom] = useState(getTodayDateString())
   const [clearTo, setClearTo] = useState(getTodayDateString())
+  const [showReconcileLog, setShowReconcileLog] = useState(false)
+  const [reconcileEditId, setReconcileEditId] = useState(null)
+  const [reconcileEditForm, setReconcileEditForm] = useState({})
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1573,9 +1578,20 @@ function App() {
         setQueueDate(targetStr)
         setSessions((prev) => {
           const next = { ...prev }
+          const TERMINAL = [TIMER_STATES.completed, TIMER_STATES.cancelled]
           for (const task of remoteTodayTasks) {
-            const snap = signInSessionsSnapshot[task.id]
-            next[task.id] = snap ? { ...snap } : getInitialSession(task)
+            const remoteSnap = signInSessionsSnapshot[task.id]
+            const localSnap  = prev[task.id]
+            // Supabase has the session with a real (non-default) state → always trust it.
+            if (remoteSnap && remoteSnap.timerState !== TIMER_STATES.notStarted) {
+              next[task.id] = remoteSnap
+            // Supabase returned notStarted but localStorage has a terminal state →
+            // keep local so a redeploy never resets completed/cancelled work.
+            } else if (localSnap && TERMINAL.includes(localSnap.timerState)) {
+              next[task.id] = localSnap
+            } else {
+              next[task.id] = remoteSnap ?? getInitialSession(task)
+            }
           }
           return next
         })
@@ -2985,6 +3001,14 @@ function App() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setShowReconcileLog(true)}
+              title="View, edit, or delete logged entries for this week"
+              className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1 text-sm text-amber-700 hover:bg-amber-100"
+            >
+              ⚖ Reconcile
+            </button>
+            <button
+              type="button"
               onClick={handleExportReport}
               title="Export this week as a printable HTML report"
               className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100"
@@ -3441,6 +3465,279 @@ function App() {
         </div>
       ) : null}
 
+      {/* ── Reconcile Log Modal ──────────────────────────────────────────────── */}
+      {showReconcileLog && (() => {
+        const { start: rWeekStart, end: rWeekEnd } = getWeekBounds(weekOffset)
+        const weekEntries = completionLog.filter((e) => {
+          if (!e.completedAt) return false
+          const d = new Date(e.completedAt)
+          return d >= rWeekStart && d <= rWeekEnd
+        })
+        const trackOrder = Object.values(TRACKS).map((t) => t.key)
+        const grouped = {}
+        for (const entry of weekEntries) {
+          const t = entry.track ?? 'unknown'
+          if (!grouped[t]) grouped[t] = []
+          grouped[t].push(entry)
+        }
+
+        const handleReconcileDelete = async (entryId) => {
+          if (!window.confirm('Delete this logged entry? This cannot be undone.')) return
+          setCompletionLog((prev) => prev.filter((e) => e.id !== entryId))
+          if (supabaseConfigured && session?.user?.id) {
+            await deleteTimerSession(entryId, session.user.id)
+          }
+          if (reconcileEditId === entryId) setReconcileEditId(null)
+        }
+
+        const handleReconcileEditStart = (entry) => {
+          setReconcileEditId(entry.id)
+          setReconcileEditForm({
+            taskName: entry.taskName ?? '',
+            track: entry.track ?? 'advisors',
+            subTrack: entry.subTrack ?? '',
+            kpiMapping: entry.kpiMapping ?? '',
+            completionType: entry.completionType ?? 'Done',
+            elapsedMinutes: Math.round((entry.elapsedSeconds ?? 0) / 60),
+            kpiValuesStr: JSON.stringify(entry.kpiValues ?? {}, null, 2),
+          })
+        }
+
+        const handleReconcileEditSave = async (entryId) => {
+          let kpiValues = {}
+          try { kpiValues = JSON.parse(reconcileEditForm.kpiValuesStr || '{}') } catch { kpiValues = {} }
+          const elapsedSeconds = Math.round((reconcileEditForm.elapsedMinutes ?? 0) * 60)
+          setCompletionLog((prev) => prev.map((e) => e.id !== entryId ? e : {
+            ...e,
+            taskName: reconcileEditForm.taskName,
+            track: reconcileEditForm.track,
+            subTrack: reconcileEditForm.subTrack,
+            kpiMapping: reconcileEditForm.kpiMapping,
+            completionType: reconcileEditForm.completionType,
+            elapsedSeconds,
+            kpiValues,
+          }))
+          if (supabaseConfigured && session?.user?.id) {
+            await updateTimerSession(entryId, {
+              task_name: reconcileEditForm.taskName,
+              track: reconcileEditForm.track,
+              sub_track: reconcileEditForm.subTrack,
+              kpi_mapping: reconcileEditForm.kpiMapping,
+              completion_type: reconcileEditForm.completionType,
+              elapsed_seconds: elapsedSeconds,
+              kpi_values: kpiValues,
+            }, session.user.id)
+          }
+          setReconcileEditId(null)
+        }
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/40"
+            onClick={(e) => { if (e.target === e.currentTarget) setShowReconcileLog(false) }}
+          >
+            <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl">
+              {/* Header */}
+              <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">Reconcile Log</h2>
+                  <p className="text-xs text-slate-500">
+                    {formatWeekLabel(rWeekStart, rWeekEnd)} · {weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowReconcileLog(false)}
+                  className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {weekEntries.length === 0 ? (
+                  <p className="py-16 text-center text-sm text-slate-400 italic">No logged entries for this week yet.</p>
+                ) : Object.entries(grouped)
+                    .sort(([a], [b]) => {
+                      const ai = trackOrder.indexOf(a)
+                      const bi = trackOrder.indexOf(b)
+                      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+                    })
+                    .map(([trackKey, entries]) => {
+                      const meta = getTrackMeta(trackKey)
+                      const trackTotalMin = entries.reduce((s, e) => s + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
+                      return (
+                        <div key={trackKey}>
+                          <div className="mb-2 flex items-baseline gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: meta?.color ?? '#94a3b8' }}>
+                              {meta?.label ?? trackKey}
+                            </p>
+                            <span className="text-xs text-slate-400">{entries.length} entries · {trackTotalMin}m total</span>
+                          </div>
+                          <div className="space-y-2">
+                            {entries.map((entry) => {
+                              const isEditing = reconcileEditId === entry.id
+                              const elapsed = Math.round((entry.elapsedSeconds ?? 0) / 60)
+                              const dt = entry.completedAt ? new Date(entry.completedAt) : null
+                              const dateLabel = dt
+                                ? dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) +
+                                  ' ' + dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                                : '—'
+
+                              if (isEditing) {
+                                return (
+                                  <div key={entry.id} className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3">
+                                    <p className="text-xs font-semibold text-amber-700">Editing entry</p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                      <div className="col-span-2">
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">Task Name</label>
+                                        <input
+                                          type="text"
+                                          value={reconcileEditForm.taskName}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, taskName: e.target.value }))}
+                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">Track</label>
+                                        <select
+                                          value={reconcileEditForm.track}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, track: e.target.value }))}
+                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                        >
+                                          {Object.values(TRACKS).map((t) => (
+                                            <option key={t.key} value={t.key}>{t.label}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">Sub-track</label>
+                                        <input
+                                          type="text"
+                                          value={reconcileEditForm.subTrack}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, subTrack: e.target.value }))}
+                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">Time Logged (minutes)</label>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          value={reconcileEditForm.elapsedMinutes}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, elapsedMinutes: Number(e.target.value) }))}
+                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">Completion Type</label>
+                                        <select
+                                          value={reconcileEditForm.completionType}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, completionType: e.target.value }))}
+                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                        >
+                                          {['Done', 'Done + Outcome', 'Full Credit', 'Cancelled'].map((ct) => (
+                                            <option key={ct} value={ct}>{ct}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div className="col-span-2">
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">KPI Mapping</label>
+                                        <input
+                                          type="text"
+                                          value={reconcileEditForm.kpiMapping}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, kpiMapping: e.target.value }))}
+                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                        />
+                                      </div>
+                                      <div className="col-span-2">
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">KPI Values (JSON)</label>
+                                        <textarea
+                                          rows={3}
+                                          value={reconcileEditForm.kpiValuesStr}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, kpiValuesStr: e.target.value }))}
+                                          className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs outline-none focus:ring-2 ring-amber-300"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleReconcileEditSave(entry.id)}
+                                        className="rounded bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+                                      >
+                                        Save Changes
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setReconcileEditId(null)}
+                                        className="rounded border border-slate-200 px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              }
+
+                              return (
+                                <div key={entry.id} className="group flex items-start gap-3 rounded-lg border border-slate-100 bg-white p-3 hover:border-slate-200 transition-colors">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-sm font-medium text-slate-800">{entry.taskName}</span>
+                                      {entry.isQuickLog && (
+                                        <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">Quick Log</span>
+                                      )}
+                                      <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                                        {entry.completionType ?? 'Done'}
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
+                                      <span className="font-medium text-slate-600">{elapsed}m logged</span>
+                                      {entry.subTrack && <span>· {entry.subTrack}</span>}
+                                      {entry.kpiMapping && <span>· {entry.kpiMapping}</span>}
+                                      <span>· {dateLabel}</span>
+                                    </div>
+                                    {entry.kpiValues && Object.keys(entry.kpiValues).length > 0 && (
+                                      <div className="mt-1.5 flex flex-wrap gap-1">
+                                        {Object.entries(entry.kpiValues).map(([k, v]) => (
+                                          <span key={k} className="rounded border border-slate-100 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-500">
+                                            {k}: {v}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleReconcileEditStart(entry)}
+                                      className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleReconcileDelete(entry.id)}
+                                      className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-500 hover:bg-rose-50"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Clear Day Modal */}
       {showClearDayModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -3841,7 +4138,10 @@ function App() {
         )}
 
         <aside className="space-y-4">
-          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <section
+            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+            onClick={(e) => { if (e.target === e.currentTarget) setActiveTaskId(null) }}
+          >
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-1">
                 <button
@@ -3959,48 +4259,74 @@ function App() {
                       {group.tasks.map((task) => {
                         const session = sessions[task.id]
                         const selected = task.id === activeTaskId
+                        const isRunning   = session?.timerState === TIMER_STATES.running
+                        const isDone      = session?.timerState === TIMER_STATES.completed
+                        const isCxled     = session?.timerState === TIMER_STATES.cancelled
+                        const cardCls = selected
+                          ? 'border-slate-900 bg-slate-900 text-white'
+                          : isDone
+                            ? 'border-emerald-200 bg-emerald-50 text-slate-400'
+                            : isCxled
+                              ? 'border-slate-100 bg-slate-50 text-slate-300'
+                              : isRunning
+                                ? 'border-emerald-400 bg-white text-slate-800'
+                                : 'border-slate-200 bg-white hover:bg-slate-50'
                         return (
                           <li key={task.id}>
                             <div className="flex items-stretch gap-1">
                               <button
                                 type="button"
                                 onClick={() => setActiveTask(task.id)}
-                                className={`min-w-0 flex-1 rounded-md border px-2 py-2 text-left text-sm ${
-                                  selected
-                                    ? 'border-slate-900 bg-slate-900 text-white'
-                                    : 'border-slate-200 bg-white hover:bg-slate-50'
-                                }`}
+                                className={`min-w-0 flex-1 rounded-md border px-2 py-2 text-left text-sm ${cardCls}`}
                               >
                                 <div className="flex items-center gap-2 overflow-hidden">
-                                  <span className="truncate flex-1">{task.name}</span>
-                                  <span
-                                    className="h-2 w-2 shrink-0 rounded-full"
-                                    style={{ backgroundColor: group.track.color }}
-                                  />
+                                  <span className={`truncate flex-1 ${isDone || isCxled ? 'line-through' : ''}`}>{task.name}</span>
+                                  {isRunning && !selected && (
+                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 animate-pulse" />
+                                  )}
+                                  {!isRunning && (
+                                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: group.track.color }} />
+                                  )}
                                 </div>
                                 <div className="mt-1 flex items-center justify-between text-xs opacity-80">
-                                  <span>{session?.timerState ?? 'Not Started'}</span>
+                                  <span className={isRunning && !selected ? 'text-emerald-600 font-semibold' : ''}>
+                                    {isRunning && !selected ? '● Running' : (session?.timerState ?? 'Not Started')}
+                                  </span>
                                   <span>{task.estimateMinutes}m</span>
                                 </div>
                               </button>
 
-                              {/* Completion button */}
-                              <button
-                                type="button"
-                                onClick={() => handleCompleteTask(task.id)}
-                                title="Mark complete"
-                                className="shrink-0 rounded-md border border-slate-200 bg-white px-2 text-green-600 hover:bg-green-50 hover:border-green-300 text-base"
-                              >
-                                ✓
-                              </button>
+                              {/* Quick-complete button — hidden for already-terminal tasks */}
+                              {!isDone && !isCxled && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCompleteTask(task.id)}
+                                  title="Mark complete"
+                                  className="shrink-0 rounded-md border border-slate-200 bg-white px-2 text-green-600 hover:bg-green-50 hover:border-green-300 text-base"
+                                >
+                                  ✓
+                                </button>
+                              )}
                             </div>
-
                           </li>
                         )
                       })}
                     </ul>
                   </div>
                 ))}
+                {/* Tap empty space below the list to deselect the active task */}
+                {activeTaskId && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setActiveTaskId(null)}
+                    onKeyDown={(e) => e.key === 'Enter' && setActiveTaskId(null)}
+                    className="mt-2 cursor-pointer rounded border border-dashed border-slate-100 py-3 text-center text-[11px] text-slate-300 hover:border-slate-200 hover:text-slate-400 transition-colors"
+                    title="Click to deselect active task"
+                  >
+                    click to deselect
+                  </div>
+                )}
               </>
             )}
           </section>
