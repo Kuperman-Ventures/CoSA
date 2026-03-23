@@ -262,7 +262,7 @@ function AllocationEditor({ allocations, onSave, onClose }) {
 
 // ─── Health Bars ──────────────────────────────────────────────────────────────
 
-function HealthBars({ healthModel, loggedTotals = {}, trackTargets, onEditAllocations, onOpenHealthDetail }) {
+function HealthBars({ healthModel, trackTargets, onEditAllocations, onOpenHealthDetail }) {
   const { totals: calTotals, contributors } = healthModel
 
   return (
@@ -279,13 +279,9 @@ function HealthBars({ healthModel, loggedTotals = {}, trackTargets, onEditAlloca
         </button>
       </div>
       {Object.entries(trackTargets).map(([track, cfg]) => {
-        // Primary: actual logged (timer sessions) — this is the real measure
-        const logged = loggedTotals[track]?.total ?? 0
-        // Secondary ghost: planned calendar time (shown lighter behind primary)
-        const planned = calTotals[track]?.total ?? 0
-        const color = healthColor(logged, cfg.weekly)
-        const loggedW = cfg.weekly > 0 ? Math.min(100, (logged / cfg.weekly) * 100) : 0
-        const plannedW = cfg.weekly > 0 ? Math.min(100, (planned / cfg.weekly) * 100) : 0
+        const scheduled = calTotals[track]?.total ?? 0
+        const color = healthColor(scheduled, cfg.weekly)
+        const scheduledW = cfg.weekly > 0 ? Math.min(100, (scheduled / cfg.weekly) * 100) : 0
         const barCls = color === 'green' ? 'bg-emerald-500' : color === 'yellow' ? 'bg-amber-400' : 'bg-red-400'
         const textCls = color === 'green' ? 'text-emerald-700' : color === 'yellow' ? 'text-amber-700' : 'text-red-700'
         return (
@@ -303,25 +299,16 @@ function HealthBars({ healthModel, loggedTotals = {}, trackTargets, onEditAlloca
             >
               <div className="flex items-center justify-between text-[11px]">
                 <span className="font-medium truncate group-hover:underline" style={{ color: TRACK_COLORS[track] }}>{TRACK_LABELS[track]}</span>
-                <span className={`font-semibold shrink-0 ml-1 ${textCls}`}>{logged}m / {cfg.weekly}m</span>
+                <span className={`font-semibold shrink-0 ml-1 ${textCls}`}>{scheduled}m / {cfg.weekly}m</span>
               </div>
-              {/* Stacked bars: ghost = planned, solid = logged */}
               <div className="relative mt-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                {plannedW > loggedW && (
-                  <div className="absolute inset-y-0 left-0 rounded-full opacity-25 bg-slate-400" style={{ width: `${plannedW}%` }} />
-                )}
-                <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barCls}`} style={{ width: `${loggedW}%` }} />
+                <div className={`absolute inset-y-0 left-0 rounded-full transition-all ${barCls}`} style={{ width: `${scheduledW}%` }} />
               </div>
-              {planned > 0 && logged < planned && (
-                <p className="mt-0.5 text-[10px] text-slate-400">{planned}m planned</p>
-              )}
             </button>
             {Object.entries(cfg.subTracks).map(([st, tgt]) => {
-              const stLogged = loggedTotals[track]?.sub[st] ?? 0
-              const stPlanned = calTotals[track]?.sub[st] ?? 0
-              const stColor = healthColor(stLogged, tgt)
-              const stLoggedW = tgt > 0 ? Math.min(100, (stLogged / tgt) * 100) : 0
-              const stPlannedW = tgt > 0 ? Math.min(100, (stPlanned / tgt) * 100) : 0
+              const stScheduled = calTotals[track]?.sub[st] ?? 0
+              const stColor = healthColor(stScheduled, tgt)
+              const stScheduledW = tgt > 0 ? Math.min(100, (stScheduled / tgt) * 100) : 0
               const stBarCls = stColor === 'green' ? 'bg-emerald-400' : stColor === 'yellow' ? 'bg-amber-300' : 'bg-red-300'
               return (
                 <div key={st} className="ml-2 mt-1">
@@ -338,13 +325,10 @@ function HealthBars({ healthModel, loggedTotals = {}, trackTargets, onEditAlloca
                   >
                     <div className="flex items-center justify-between text-[10px] text-slate-500">
                       <span className="truncate group-hover:underline">{st}</span>
-                      <span className="shrink-0 ml-1">{stLogged}m / {tgt}m</span>
+                      <span className="shrink-0 ml-1">{stScheduled}m / {tgt}m</span>
                     </div>
                     <div className="relative mt-0.5 h-1 rounded-full bg-slate-100 overflow-hidden">
-                      {stPlannedW > stLoggedW && (
-                        <div className="absolute inset-y-0 left-0 rounded-full opacity-25 bg-slate-400" style={{ width: `${stPlannedW}%` }} />
-                      )}
-                      <div className={`absolute inset-y-0 left-0 rounded-full ${stBarCls}`} style={{ width: `${stLoggedW}%` }} />
+                      <div className={`absolute inset-y-0 left-0 rounded-full ${stBarCls}`} style={{ width: `${stScheduledW}%` }} />
                     </div>
                   </button>
                 </div>
@@ -434,7 +418,7 @@ function CalendarHealthDetailModal({ detail, onClose }) {
               {sorted.length} event{sorted.length !== 1 ? 's' : ''}
             </span>
             <span className="font-semibold">
-              {sumMins}m logged · target {detail.targetMins}m
+              {sumMins}m scheduled · target {detail.targetMins}m
             </span>
           </div>
         )}
@@ -1119,18 +1103,16 @@ export default function WeekPlanner({
   const weekRangeStart = weekDates[0].date
   const weekRangeEnd = weekDates[weekDates.length - 1].date
 
-  // healthModel = planning layer (ghost bar behind the solid logged bar).
+  // healthModel = scheduled calendar time for the week.
   // Includes ALL calendar events with a track: CoSA events (task library + log behind)
   // AND tagged events (personal Google Calendar events the user assigned a track).
-  // The numbers shown to the user are always loggedTotals (the solid bar).
-  // The ghost bar only renders when planned > logged, so there is no visible double-count
-  // when a tagged event appears in both layers.
+  // Drives the HealthBars "scheduled vs target" display.
   const healthModel = useMemo(
     () => buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd),
     [weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd],
   )
 
-  // Actual logged time from the completion log — drives the HealthBars primary bars.
+  // Actual logged time from the completion log — used elsewhere (e.g. Weekly Review).
   // Mirrors healthModel.totals shape: { [track]: { total: number, sub: { [st]: number } } }
   const loggedTotals = useMemo(() => {
     // Use proper local-time Date objects spanning Mon 00:00:00 → Sun 23:59:59 so that
@@ -1159,9 +1141,6 @@ export default function WeekPlanner({
         totals[e.track].sub[bucket] = (totals[e.track].sub[bucket] ?? 0) + mins
       }
     }
-
-    // Calendar events (CoSA blocks, tagged events, log behind) are the PLAN layer only.
-    // loggedTotals = timer sessions + quick logs from completionLog exclusively.
 
     return totals
   }, [completionLog, weekRangeStart, trackTargets])
@@ -1399,7 +1378,6 @@ export default function WeekPlanner({
 
         <HealthBars
           healthModel={healthModel}
-          loggedTotals={loggedTotals}
           trackTargets={trackTargets}
           onEditAllocations={() => setShowAllocEditor(true)}
           onOpenHealthDetail={setHealthDetail}
