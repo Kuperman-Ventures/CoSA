@@ -2813,8 +2813,10 @@ function App() {
     const weekRangeStart = formatLocalDate(weekStart)
     const weekRangeEnd = formatLocalDate(weekEnd)
     const reviewTrackTargets = allocationsPercentToTrackTargets(loadMergedAllocationsForHealth())
+    // Only count explicitly tagged personal events in Time This Week.
+    // CoSA calendar events are planning artifacts — pass [] so they are never auto-counted.
     const calendarHealth = buildCalendarHealthModel(
-      reviewWeekCosaEvents,
+      [],
       calendarEventTags,
       reviewTrackTargets,
       weekRangeStart,
@@ -3059,7 +3061,7 @@ function App() {
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Time This Week</h2>
               <p className="mb-3 text-[11px] text-slate-500">
-                Bars reflect your completion log.
+                Bars reflect your timer sessions and quick logs.
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
@@ -3091,7 +3093,7 @@ function App() {
                         </div>
                         {calendarMins > 0 && (
                           <p className="mt-1 text-[11px] text-slate-500">
-                            Calendar:{' '}
+                            Tagged events:{' '}
                             <span className="font-medium text-slate-700">{calendarMins}m</span>
                           </p>
                         )}
@@ -3121,8 +3123,8 @@ function App() {
                     </div>
                   )
                 })}
-                {timeByTrack.every((t) => t.minutesLogged < 1 && t.calendarMins < 1) && (
-                  <p className="text-xs text-slate-400 italic">No logged sessions or calendar time this week yet.</p>
+                {timeByTrack.every((t) => t.minutesLogged < 1) && (
+                  <p className="text-xs text-slate-400 italic">No logged sessions this week yet.</p>
                 )}
               </div>
             </article>
@@ -3463,8 +3465,9 @@ function App() {
             {kpiDetail.type === 'track' && kpiDetail.trackData.entries.length > 0 && (
               <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs text-slate-600">
                 <span>
-                  {kpiDetail.trackData.entries.filter(e => !e._fromCalendar).length} timer{' '}
-                  + {kpiDetail.trackData.entries.filter(e => e._fromCalendar).length} calendar
+                  {kpiDetail.trackData.entries.filter(e => !e._fromCalendar && !e.isQuickLog).length} timer
+                  {kpiDetail.trackData.entries.filter(e => e.isQuickLog).length > 0 && ` + ${kpiDetail.trackData.entries.filter(e => e.isQuickLog).length} quick log`}
+                  {kpiDetail.trackData.entries.filter(e => e._fromCalendar).length > 0 && ` + ${kpiDetail.trackData.entries.filter(e => e._fromCalendar).length} tagged`}
                 </span>
                 <span className="font-semibold">{kpiDetail.trackData.minutesLogged}m of {kpiDetail.trackData.targetMins}m target</span>
               </div>

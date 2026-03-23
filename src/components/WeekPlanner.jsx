@@ -1119,9 +1119,12 @@ export default function WeekPlanner({
   const weekRangeStart = weekDates[0].date
   const weekRangeEnd = weekDates[weekDates.length - 1].date
 
+  // healthModel = CoSA calendar events only (the planning layer / ghost bar).
+  // Tagged personal events live in loggedTotals (the primary logged bar) — don't pass
+  // calendarTags here or they'll be double-counted in both bars.
   const healthModel = useMemo(
-    () => buildCalendarHealthModel(weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd),
-    [weekEvents, calendarTags, trackTargets, weekRangeStart, weekRangeEnd],
+    () => buildCalendarHealthModel(weekEvents, {}, trackTargets, weekRangeStart, weekRangeEnd),
+    [weekEvents, trackTargets, weekRangeStart, weekRangeEnd],
   )
 
   // Actual logged time from the completion log — drives the HealthBars primary bars.
@@ -1154,11 +1157,14 @@ export default function WeekPlanner({
       }
     }
 
-    // Tagged personal GCal events (tagged via the Tag modal) count as logged
+    // Tagged personal GCal events — user explicitly tagged these, so they count as logged.
+    // Only count past/today dates; skip future tags on the current week.
+    const todayStr = formatLocalDate(new Date())
     for (const tag of Object.values(calendarTags)) {
       if (!tag.track || !tag.date) continue
       const d = new Date(tag.date + 'T12:00:00')
       if (d < weekStart || d > weekEnd) continue
+      if (tag.date > todayStr) continue  // never count future-dated tags
       const mins = tag.durationMin ?? 0
       if (tag.track === 'networking') {
         const h1 = Math.floor(mins / 2)
@@ -1177,34 +1183,11 @@ export default function WeekPlanner({
       }
     }
 
-    // CoSA Calendar events (created from Task Library or Calendar view) also count as logged
-    for (const ev of weekEvents) {
-      const priv = ev.extendedProperties?.private ?? {}
-      const track = priv.cosaTrack || null
-      if (!track) continue
-      const evStart = ev.start?.dateTime ? new Date(ev.start.dateTime) : null
-      if (!evStart || evStart < weekStart || evStart > weekEnd) continue
-      const mins = eventDurationMins(ev)
-      if (track === 'networking') {
-        const h1 = Math.floor(mins / 2)
-        const h2 = mins - h1
-        if (!totals['advisors']) totals['advisors'] = { total: 0, sub: {} }
-        if (!totals['jobSearch']) totals['jobSearch'] = { total: 0, sub: {} }
-        totals['advisors'].total += h1
-        totals['jobSearch'].total += h2
-        continue
-      }
-      if (!totals[track]) totals[track] = { total: 0, sub: {} }
-      totals[track].total += mins
-      const rawSub = priv.cosaSubTrack || null
-      if (rawSub) {
-        const bucket = allocationSubTrackKey(track, rawSub, bucketKeys(track)) ?? rawSub
-        totals[track].sub[bucket] = (totals[track].sub[bucket] ?? 0) + mins
-      }
-    }
+    // CoSA calendar events are planning artifacts — they live in healthModel (the ghost bar).
+    // They must NOT be counted here as logged time; that causes phantom minutes.
 
     return totals
-  }, [completionLog, calendarTags, weekEvents, weekRangeStart, trackTargets])
+  }, [completionLog, calendarTags, weekRangeStart, trackTargets])
 
   const providerToken = session?.provider_token ?? null
 
