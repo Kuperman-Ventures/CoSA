@@ -432,6 +432,8 @@ export async function upsertQuickLogEntry(entry, userId) {
         activity_type:    entry.activityType,
         duration_minutes: entry.durationMinutes,
         kpi_credits:      entry.kpiCredits,
+        track:            entry.track ?? null,
+        sub_track:        entry.subTrack ?? null,
         note:             entry.note ?? null,
         logged_at:        new Date().toISOString(),
       })

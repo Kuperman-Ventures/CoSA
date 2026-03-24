@@ -960,7 +960,7 @@ function App() {
     try { return JSON.parse(window.localStorage.getItem('cosa.clearedDates') ?? '[]') } catch { return [] }
   })
   const [showQuickLog, setShowQuickLog] = useState(false)
-  const [quickLogForm, setQuickLogForm] = useState({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], kpiQuantities: {}, note: '' })
+  const [quickLogForm, setQuickLogForm] = useState({ who: '', activityType: '', track: '', subTrack: '', durationMinutes: null, kpiCredits: [], kpiQuantities: {}, note: '' })
   const [quickLogErrors, setQuickLogErrors] = useState({})
   const [quickLogSubmitting, setQuickLogSubmitting] = useState(false)
   const [quickLogToast, setQuickLogToast] = useState(false)
@@ -2192,7 +2192,7 @@ function App() {
   // ─── Quick Log ────────────────────────────────────────────────────────────
 
   function openQuickLog() {
-    setQuickLogForm({ who: '', activityType: '', durationMinutes: null, kpiCredits: [], kpiQuantities: {}, note: '' })
+    setQuickLogForm({ who: '', activityType: '', track: '', subTrack: '', durationMinutes: null, kpiCredits: [], kpiQuantities: {}, note: '' })
     setQuickLogErrors({})
     setShowQuickLog(true)
   }
@@ -2201,8 +2201,10 @@ function App() {
     const errors = {}
     if (!quickLogForm.who.trim()) errors.who = 'Required'
     if (!quickLogForm.activityType) errors.activityType = 'Required'
+    if (!quickLogForm.track) errors.track = 'Required'
     if (!quickLogForm.durationMinutes) errors.durationMinutes = 'Required'
-    if (quickLogForm.kpiCredits.length === 0) errors.kpiCredits = 'Select at least one KPI'
+    const trackHasKpis = QUICK_LOG_KPI_GROUPS.some((g) => g.track === quickLogForm.track)
+    if (trackHasKpis && quickLogForm.kpiCredits.length === 0) errors.kpiCredits = 'Select at least one KPI'
     if (Object.keys(errors).length > 0) { setQuickLogErrors(errors); return }
 
     setQuickLogSubmitting(true)
@@ -2243,6 +2245,8 @@ function App() {
         {
           who: quickLogForm.who.trim(),
           activityType: quickLogForm.activityType,
+          track: quickLogForm.track,
+          subTrack: quickLogForm.subTrack.trim() || null,
           durationMinutes: quickLogForm.durationMinutes,
           kpiCredits: quickLogForm.kpiCredits,
           note: quickLogForm.note.trim() || null,
@@ -2260,6 +2264,7 @@ function App() {
           task_instance_id: null,
           task_name: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
           track,
+          sub_track: quickLogForm.subTrack.trim() || '',
           kpi_mapping: mapping,
           quantity: qty,
           timer_state: 'Completed',
@@ -2295,6 +2300,8 @@ function App() {
       stored.push({
         who: quickLogForm.who.trim(),
         activityType: quickLogForm.activityType,
+        track: quickLogForm.track,
+        subTrack: quickLogForm.subTrack.trim() || null,
         durationMinutes: quickLogForm.durationMinutes,
         kpiCredits: quickLogForm.kpiCredits,
         note: quickLogForm.note.trim() || null,
@@ -3144,15 +3151,31 @@ function App() {
                 const kpis = Array.isArray(entry.kpi_credits ?? entry.kpiCredits)
                   ? (entry.kpi_credits ?? entry.kpiCredits)
                   : []
+                const trackKey = entry.track ?? KPI_LABEL_TO_TRACK[kpis[0]] ?? null
+                const trackMeta = trackKey ? getTrackMeta(trackKey) : null
+                const subTrack = entry.sub_track ?? entry.subTrack ?? null
                 return (
                   <li key={entry.id ?? i} className="py-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-slate-800">
-                          {entry.activity_type ?? entry.activityType}
-                          <span className="ml-1 font-normal text-slate-500">with {entry.who}</span>
-                          <span className="ml-1 text-slate-400">· {entry.duration_minutes ?? entry.durationMinutes}m</span>
-                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {trackMeta && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                              style={{ backgroundColor: trackMeta.color }}
+                            >
+                              {trackMeta.label}
+                            </span>
+                          )}
+                          <span className="text-xs font-semibold text-slate-800">
+                            {entry.activity_type ?? entry.activityType}
+                            <span className="ml-1 font-normal text-slate-500">with {entry.who}</span>
+                            <span className="ml-1 text-slate-400">· {entry.duration_minutes ?? entry.durationMinutes}m</span>
+                          </span>
+                        </div>
+                        {subTrack && (
+                          <p className="mt-0.5 text-[11px] text-slate-500 font-medium">{subTrack}</p>
+                        )}
                         {kpis.length > 0 && (
                           <p className="mt-0.5 text-[11px] text-slate-500">{kpis.join(' · ')}</p>
                         )}
@@ -3521,6 +3544,8 @@ function App() {
           setReconcileQlEditForm({
             who: qlEntry.who ?? '',
             activityType: qlEntry.activity_type ?? qlEntry.activityType ?? '',
+            track: qlEntry.track ?? '',
+            subTrack: qlEntry.sub_track ?? qlEntry.subTrack ?? '',
             durationMinutes: qlEntry.duration_minutes ?? qlEntry.durationMinutes ?? 0,
             note: qlEntry.note ?? '',
           })
@@ -3530,6 +3555,8 @@ function App() {
           const updates = {
             who: reconcileQlEditForm.who.trim(),
             activity_type: reconcileQlEditForm.activityType,
+            track: reconcileQlEditForm.track || null,
+            sub_track: reconcileQlEditForm.subTrack.trim() || null,
             duration_minutes: Number(reconcileQlEditForm.durationMinutes),
             note: reconcileQlEditForm.note.trim() || null,
           }
@@ -3834,6 +3861,28 @@ function App() {
                                   />
                                 </div>
                                 <div>
+                                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Track</label>
+                                  <select
+                                    value={reconcileQlEditForm.track}
+                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, track: e.target.value }))}
+                                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                  >
+                                    <option value="">— None —</option>
+                                    {Object.values(TRACKS).map((t) => (
+                                      <option key={t.key} value={t.key}>{t.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Sub-track</label>
+                                  <input
+                                    type="text"
+                                    value={reconcileQlEditForm.subTrack}
+                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, subTrack: e.target.value }))}
+                                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                  />
+                                </div>
+                                <div>
                                   <label className="block text-[11px] font-medium text-slate-500 mb-1">Duration (minutes)</label>
                                   <input
                                     type="number"
@@ -3877,6 +3926,15 @@ function App() {
                           <div key={qlEntry.id} className="group flex items-start gap-3 rounded-lg border border-blue-100 bg-blue-50/40 p-3 hover:border-blue-200 transition-colors">
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
+                                {(() => {
+                                  const qlTrackKey = qlEntry.track ?? null
+                                  const qlTrackMeta = qlTrackKey ? getTrackMeta(qlTrackKey) : null
+                                  return qlTrackMeta ? (
+                                    <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: qlTrackMeta.color }}>
+                                      {qlTrackMeta.label}
+                                    </span>
+                                  ) : null
+                                })()}
                                 <span className="text-sm font-medium text-slate-800">
                                   {qlEntry.activity_type ?? qlEntry.activityType}
                                   <span className="ml-1 font-normal text-slate-500">with {qlEntry.who}</span>
@@ -3885,6 +3943,7 @@ function App() {
                               </div>
                               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
                                 <span className="font-medium text-slate-600">{qlEntry.duration_minutes ?? qlEntry.durationMinutes}m</span>
+                                {(qlEntry.sub_track ?? qlEntry.subTrack) && <span className="font-medium text-slate-500">· {qlEntry.sub_track ?? qlEntry.subTrack}</span>}
                                 {kpis.length > 0 && <span>· {kpis.join(' · ')}</span>}
                                 {qlEntry.note && <span>· {qlEntry.note}</span>}
                                 <span>· {dateLabel}</span>
@@ -4595,6 +4654,51 @@ function App() {
                 {quickLogErrors.activityType && <p className="mt-1 text-[11px] text-rose-600">{quickLogErrors.activityType}</p>}
               </div>
 
+              {/* Track */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">Track</label>
+                <div className="flex flex-wrap gap-2">
+                  {Object.values(TRACKS).map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => {
+                        const validMappings = QUICK_LOG_KPI_GROUPS.filter((g) => g.track === t.key).flatMap((g) => g.kpis.map((k) => k.mapping))
+                        setQuickLogForm((f) => ({
+                          ...f,
+                          track: t.key,
+                          kpiCredits: f.kpiCredits.filter((k) => validMappings.includes(k)),
+                          kpiQuantities: Object.fromEntries(Object.entries(f.kpiQuantities).filter(([k]) => validMappings.includes(k))),
+                        }))
+                      }}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        quickLogForm.track === t.key
+                          ? 'text-white'
+                          : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                      style={quickLogForm.track === t.key ? { backgroundColor: t.color } : {}}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                {quickLogErrors.track && <p className="mt-1 text-[11px] text-rose-600">{quickLogErrors.track}</p>}
+              </div>
+
+              {/* Sub-track */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Sub-track <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={quickLogForm.subTrack}
+                  onChange={(e) => setQuickLogForm((f) => ({ ...f, subTrack: e.target.value }))}
+                  placeholder="e.g. Networking & BD, Alpha testers…"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                />
+              </div>
+
               {/* Duration */}
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-700">Duration</label>
@@ -4621,8 +4725,11 @@ function App() {
               <div>
                 <label className="mb-2 block text-xs font-semibold text-slate-700">KPI Credits</label>
                 {quickLogErrors.kpiCredits && <p className="mb-1 text-[11px] text-rose-600">{quickLogErrors.kpiCredits}</p>}
+                {quickLogForm.track && !QUICK_LOG_KPI_GROUPS.some((g) => g.track === quickLogForm.track) ? (
+                  <p className="text-xs text-slate-400 italic">No KPI credits defined for this track.</p>
+                ) : (
                 <div className="space-y-3">
-                  {QUICK_LOG_KPI_GROUPS.map((grp) => (
+                  {QUICK_LOG_KPI_GROUPS.filter((grp) => !quickLogForm.track || grp.track === quickLogForm.track).map((grp) => (
                     <div key={grp.group}>
                       <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: grp.color }} />
@@ -4679,6 +4786,7 @@ function App() {
                     </div>
                   ))}
                 </div>
+                )}
               </div>
 
               {/* Note */}
