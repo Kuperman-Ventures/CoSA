@@ -3670,6 +3670,7 @@ function App() {
             kpiMapping: entry.kpiMapping ?? '',
             completionType: entry.completionType ?? 'Done',
             elapsedMinutes: Math.round((entry.elapsedSeconds ?? 0) / 60),
+            quantity: entry.quantity ?? 1,
             kpiValuesStr: JSON.stringify(entry.kpiValues ?? {}, null, 2),
           })
         }
@@ -3678,6 +3679,7 @@ function App() {
           let kpiValues = {}
           try { kpiValues = JSON.parse(reconcileEditForm.kpiValuesStr || '{}') } catch { kpiValues = {} }
           const elapsedSeconds = Math.round((reconcileEditForm.elapsedMinutes ?? 0) * 60)
+          const quantity = Number(reconcileEditForm.quantity) || 1
           setCompletionLog((prev) => prev.map((e) => e.id !== entryId ? e : {
             ...e,
             taskName: reconcileEditForm.taskName,
@@ -3686,6 +3688,7 @@ function App() {
             kpiMapping: reconcileEditForm.kpiMapping,
             completionType: reconcileEditForm.completionType,
             elapsedSeconds,
+            quantity,
             kpiValues,
           }))
           if (supabaseConfigured && session?.user?.id) {
@@ -3696,6 +3699,7 @@ function App() {
               kpi_mapping: reconcileEditForm.kpiMapping,
               completion_type: reconcileEditForm.completionType,
               elapsed_seconds: elapsedSeconds,
+              quantity,
               kpi_values: kpiValues,
             }, session.user.id)
           }
@@ -3774,7 +3778,7 @@ function App() {
                                         <label className="block text-[11px] font-medium text-slate-500 mb-1">Track</label>
                                         <select
                                           value={reconcileEditForm.track}
-                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, track: e.target.value }))}
+                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, track: e.target.value, subTrack: '', kpiMapping: '' }))}
                                           className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
                                         >
                                           {Object.values(TRACKS).map((t) => (
@@ -3784,12 +3788,26 @@ function App() {
                                       </div>
                                       <div>
                                         <label className="block text-[11px] font-medium text-slate-500 mb-1">Sub-track</label>
-                                        <input
-                                          type="text"
-                                          value={reconcileEditForm.subTrack}
-                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, subTrack: e.target.value }))}
-                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
-                                        />
+                                        {(TRACK_SUB_TRACKS[reconcileEditForm.track] ?? []).length > 0 ? (
+                                          <select
+                                            value={reconcileEditForm.subTrack}
+                                            onChange={(e) => setReconcileEditForm((f) => ({ ...f, subTrack: e.target.value }))}
+                                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                          >
+                                            <option value="">— None —</option>
+                                            {(TRACK_SUB_TRACKS[reconcileEditForm.track] ?? []).map((st) => (
+                                              <option key={st} value={st}>{st}</option>
+                                            ))}
+                                          </select>
+                                        ) : (
+                                          <input
+                                            type="text"
+                                            value={reconcileEditForm.subTrack}
+                                            onChange={(e) => setReconcileEditForm((f) => ({ ...f, subTrack: e.target.value }))}
+                                            placeholder="—"
+                                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                          />
+                                        )}
                                       </div>
                                       <div>
                                         <label className="block text-[11px] font-medium text-slate-500 mb-1">Time Logged (minutes)</label>
@@ -3814,23 +3832,69 @@ function App() {
                                         </select>
                                       </div>
                                       <div className="col-span-2">
-                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">KPI Mapping</label>
-                                        <input
-                                          type="text"
-                                          value={reconcileEditForm.kpiMapping}
-                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, kpiMapping: e.target.value }))}
-                                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
-                                        />
+                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">KPI Credit</label>
+                                        {(() => {
+                                          const kpiGroups = QUICK_LOG_KPI_GROUPS.filter((g) => g.track === reconcileEditForm.track)
+                                          const allMappings = kpiGroups.flatMap((g) => g.kpis)
+                                          return allMappings.length > 0 ? (
+                                            <div className="space-y-2">
+                                              {kpiGroups.map((grp) => (
+                                                <div key={grp.group}>
+                                                  <p className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                                    <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: grp.color }} />
+                                                    {grp.group}
+                                                  </p>
+                                                  <div className="space-y-1">
+                                                    {grp.kpis.map((kpiRow) => {
+                                                      const selected = reconcileEditForm.kpiMapping === kpiRow.mapping
+                                                      return (
+                                                        <label key={kpiRow.mapping} className="flex cursor-pointer items-center gap-2">
+                                                          <input
+                                                            type="radio"
+                                                            name={`kpiMapping-${entry.id}`}
+                                                            checked={selected}
+                                                            onChange={() => setReconcileEditForm((f) => ({ ...f, kpiMapping: kpiRow.mapping }))}
+                                                            className="accent-slate-900"
+                                                          />
+                                                          <span className="text-xs text-slate-700">{kpiRow.label}</span>
+                                                        </label>
+                                                      )
+                                                    })}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                              <label className="flex cursor-pointer items-center gap-2">
+                                                <input
+                                                  type="radio"
+                                                  name={`kpiMapping-${entry.id}`}
+                                                  checked={reconcileEditForm.kpiMapping === ''}
+                                                  onChange={() => setReconcileEditForm((f) => ({ ...f, kpiMapping: '' }))}
+                                                  className="accent-slate-900"
+                                                />
+                                                <span className="text-xs text-slate-400 italic">No KPI credit</span>
+                                              </label>
+                                            </div>
+                                          ) : (
+                                            <input
+                                              type="text"
+                                              value={reconcileEditForm.kpiMapping}
+                                              onChange={(e) => setReconcileEditForm((f) => ({ ...f, kpiMapping: e.target.value }))}
+                                              placeholder="KPI mapping string"
+                                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                            />
+                                          )
+                                        })()}
                                       </div>
-                                      <div className="col-span-2">
-                                        <label className="block text-[11px] font-medium text-slate-500 mb-1">KPI Values (JSON)</label>
-                                        <textarea
-                                          rows={3}
-                                          value={reconcileEditForm.kpiValuesStr}
-                                          onChange={(e) => setReconcileEditForm((f) => ({ ...f, kpiValuesStr: e.target.value }))}
-                                          className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs outline-none focus:ring-2 ring-amber-300"
-                                        />
-                                      </div>
+                                      {reconcileEditForm.kpiMapping && (
+                                        <div>
+                                          <label className="block text-[11px] font-medium text-slate-500 mb-1">Quantity</label>
+                                          <div className="flex items-center gap-1.5">
+                                            <button type="button" onClick={() => setReconcileEditForm((f) => ({ ...f, quantity: Math.max(1, (f.quantity ?? 1) - 1) }))} className="flex h-7 w-7 items-center justify-center rounded border border-slate-300 text-sm text-slate-600 hover:bg-slate-100">−</button>
+                                            <span className="w-8 text-center text-sm font-medium text-slate-800">{reconcileEditForm.quantity ?? 1}</span>
+                                            <button type="button" onClick={() => setReconcileEditForm((f) => ({ ...f, quantity: (f.quantity ?? 1) + 1 }))} className="flex h-7 w-7 items-center justify-center rounded border border-slate-300 text-sm text-slate-600 hover:bg-slate-100">+</button>
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                     <div className="flex gap-2">
                                       <button
