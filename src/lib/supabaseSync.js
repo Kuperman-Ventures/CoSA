@@ -463,6 +463,34 @@ export async function loadQuickLogEntries(weekStart, weekEnd, userId) {
   }
 }
 
+export async function deleteQuickLogEntry(entryId, userId) {
+  if (!supabase || !userId || !entryId) return
+  try {
+    const { error } = await supabase
+      .from('quick_log_entries')
+      .delete()
+      .eq('id', entryId)
+      .eq('user_id', userId)
+    if (error) console.error('[deleteQuickLogEntry]', error.message)
+  } catch (err) {
+    console.error('[deleteQuickLogEntry]', err.message)
+  }
+}
+
+export async function updateQuickLogEntry(entryId, updates, userId) {
+  if (!supabase || !userId || !entryId) return
+  try {
+    const { error } = await supabase
+      .from('quick_log_entries')
+      .update(updates)
+      .eq('id', entryId)
+      .eq('user_id', userId)
+    if (error) console.error('[updateQuickLogEntry]', error.message)
+  } catch (err) {
+    console.error('[updateQuickLogEntry]', err.message)
+  }
+}
+
 export async function upsertUserPreferences(prefs, userId) {
   if (!supabase || !userId) return
   try {

@@ -33,6 +33,8 @@ import {
   upsertUserPreferences,
   upsertQuickLogEntry,
   loadQuickLogEntries,
+  deleteQuickLogEntry,
+  updateQuickLogEntry,
   loadCalendarEventTags,
   deleteTimerSession,
   updateTimerSession,
@@ -984,6 +986,8 @@ function App() {
   const [showReconcileLog, setShowReconcileLog] = useState(false)
   const [reconcileEditId, setReconcileEditId] = useState(null)
   const [reconcileEditForm, setReconcileEditForm] = useState({})
+  const [reconcileQlEditId, setReconcileQlEditId] = useState(null)
+  const [reconcileQlEditForm, setReconcileQlEditForm] = useState({})
   const taskLibrarySyncTimer = useRef(null)
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -2278,6 +2282,11 @@ function App() {
         const { error } = await supabase.from('timer_sessions').insert(row)
         if (error) console.error('[QuickLog timer_session]', error.message)
       }
+
+      // Refresh Quick Log panel so the new entry is visible immediately
+      const { start: qlStart, end: qlEnd } = getWeekBounds(0)
+      const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
+      setQuickLogEntries(qlEntries)
     } else {
       // Offline: persist to localStorage for later sync
       const stored = (() => {
@@ -3483,6 +3492,54 @@ function App() {
           grouped[t].push(entry)
         }
 
+        // Quick log entries for the selected week (from quick_log_entries table)
+        const weekQuickLogs = quickLogEntries.filter((e) => {
+          const d = new Date(e.logged_at ?? e.loggedAt)
+          return d >= rWeekStart && d <= rWeekEnd
+        })
+
+        const handleQlDelete = async (qlEntry) => {
+          if (!window.confirm('Delete this Quick Log? This will also remove its KPI credits. This cannot be undone.')) return
+          const loggedMs = new Date(qlEntry.logged_at ?? qlEntry.loggedAt).getTime()
+          // Find matching completionLog entries by isQuickLog + timestamp proximity (within 60s)
+          const matchingIds = completionLog
+            .filter((e) => e.isQuickLog && Math.abs(new Date(e.completedAt).getTime() - loggedMs) < 60000)
+            .map((e) => e.id)
+          setQuickLogEntries((prev) => prev.filter((e) => e.id !== qlEntry.id))
+          setCompletionLog((prev) => prev.filter((e) => !matchingIds.includes(e.id)))
+          if (supabaseConfigured && session?.user?.id) {
+            await deleteQuickLogEntry(qlEntry.id, session.user.id)
+            for (const id of matchingIds) {
+              await deleteTimerSession(id, session.user.id)
+            }
+          }
+          if (reconcileQlEditId === qlEntry.id) setReconcileQlEditId(null)
+        }
+
+        const handleQlEditStart = (qlEntry) => {
+          setReconcileQlEditId(qlEntry.id)
+          setReconcileQlEditForm({
+            who: qlEntry.who ?? '',
+            activityType: qlEntry.activity_type ?? qlEntry.activityType ?? '',
+            durationMinutes: qlEntry.duration_minutes ?? qlEntry.durationMinutes ?? 0,
+            note: qlEntry.note ?? '',
+          })
+        }
+
+        const handleQlEditSave = async (qlEntryId) => {
+          const updates = {
+            who: reconcileQlEditForm.who.trim(),
+            activity_type: reconcileQlEditForm.activityType,
+            duration_minutes: Number(reconcileQlEditForm.durationMinutes),
+            note: reconcileQlEditForm.note.trim() || null,
+          }
+          setQuickLogEntries((prev) => prev.map((e) => e.id !== qlEntryId ? e : { ...e, ...updates }))
+          if (supabaseConfigured && session?.user?.id) {
+            await updateQuickLogEntry(qlEntryId, updates, session.user.id)
+          }
+          setReconcileQlEditId(null)
+        }
+
         const handleReconcileDelete = async (entryId) => {
           if (!window.confirm('Delete this logged entry? This cannot be undone.')) return
           setCompletionLog((prev) => prev.filter((e) => e.id !== entryId))
@@ -3544,7 +3601,7 @@ function App() {
                 <div>
                   <h2 className="text-base font-semibold text-slate-900">Reconcile Log</h2>
                   <p className="text-xs text-slate-500">
-                    {formatWeekLabel(rWeekStart, rWeekEnd)} · {weekEntries.length} entr{weekEntries.length === 1 ? 'y' : 'ies'}
+                    {formatWeekLabel(rWeekStart, rWeekEnd)} · {weekEntries.length + weekQuickLogs.length} entr{weekEntries.length + weekQuickLogs.length === 1 ? 'y' : 'ies'}
                   </p>
                 </div>
                 <button
@@ -3558,7 +3615,7 @@ function App() {
 
               {/* Body */}
               <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                {weekEntries.length === 0 ? (
+                {weekEntries.length === 0 && weekQuickLogs.length === 0 ? (
                   <p className="py-16 text-center text-sm text-slate-400 italic">No logged entries for this week yet.</p>
                 ) : Object.entries(grouped)
                     .sort(([a], [b]) => {
@@ -3734,6 +3791,127 @@ function App() {
                         </div>
                       )
                     })}
+
+                {/* ── Quick Logs section ──────────────────────────────────── */}
+                {weekQuickLogs.length > 0 && (
+                  <div>
+                    <div className="mb-2 flex items-baseline gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Quick Logs</p>
+                      <span className="text-xs text-slate-400">{weekQuickLogs.length} entr{weekQuickLogs.length === 1 ? 'y' : 'ies'}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {weekQuickLogs.map((qlEntry) => {
+                        const isEditing = reconcileQlEditId === qlEntry.id
+                        const loggedAt = qlEntry.logged_at ?? qlEntry.loggedAt
+                        const dateLabel = loggedAt
+                          ? new Date(loggedAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                          : '—'
+                        const kpis = Array.isArray(qlEntry.kpi_credits ?? qlEntry.kpiCredits)
+                          ? (qlEntry.kpi_credits ?? qlEntry.kpiCredits)
+                          : []
+
+                        if (isEditing) {
+                          return (
+                            <div key={qlEntry.id} className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3">
+                              <p className="text-xs font-semibold text-amber-700">Editing Quick Log</p>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Who</label>
+                                  <input
+                                    type="text"
+                                    value={reconcileQlEditForm.who}
+                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, who: e.target.value }))}
+                                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Activity Type</label>
+                                  <input
+                                    type="text"
+                                    value={reconcileQlEditForm.activityType}
+                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, activityType: e.target.value }))}
+                                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Duration (minutes)</label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={reconcileQlEditForm.durationMinutes}
+                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, durationMinutes: e.target.value }))}
+                                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Note</label>
+                                  <input
+                                    type="text"
+                                    value={reconcileQlEditForm.note}
+                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, note: e.target.value }))}
+                                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleQlEditSave(qlEntry.id)}
+                                  className="rounded bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+                                >
+                                  Save Changes
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReconcileQlEditId(null)}
+                                  className="rounded border border-slate-200 px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <div key={qlEntry.id} className="group flex items-start gap-3 rounded-lg border border-blue-100 bg-blue-50/40 p-3 hover:border-blue-200 transition-colors">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-medium text-slate-800">
+                                  {qlEntry.activity_type ?? qlEntry.activityType}
+                                  <span className="ml-1 font-normal text-slate-500">with {qlEntry.who}</span>
+                                </span>
+                                <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">Quick Log</span>
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
+                                <span className="font-medium text-slate-600">{qlEntry.duration_minutes ?? qlEntry.durationMinutes}m</span>
+                                {kpis.length > 0 && <span>· {kpis.join(' · ')}</span>}
+                                {qlEntry.note && <span>· {qlEntry.note}</span>}
+                                <span>· {dateLabel}</span>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                              <button
+                                type="button"
+                                onClick={() => handleQlEditStart(qlEntry)}
+                                className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleQlDelete(qlEntry)}
+                                className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-500 hover:bg-rose-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
