@@ -3875,12 +3875,26 @@ function App() {
                                 </div>
                                 <div>
                                   <label className="block text-[11px] font-medium text-slate-500 mb-1">Sub-track</label>
-                                  <input
-                                    type="text"
-                                    value={reconcileQlEditForm.subTrack}
-                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, subTrack: e.target.value }))}
-                                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
-                                  />
+                                  {(TRACK_SUB_TRACKS[reconcileQlEditForm.track] ?? []).length > 0 ? (
+                                    <select
+                                      value={reconcileQlEditForm.subTrack}
+                                      onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, subTrack: e.target.value }))}
+                                      className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                    >
+                                      <option value="">— None —</option>
+                                      {(TRACK_SUB_TRACKS[reconcileQlEditForm.track] ?? []).map((st) => (
+                                        <option key={st} value={st}>{st}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      value={reconcileQlEditForm.subTrack}
+                                      onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, subTrack: e.target.value }))}
+                                      placeholder="—"
+                                      className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
+                                    />
+                                  )}
                                 </div>
                                 <div>
                                   <label className="block text-[11px] font-medium text-slate-500 mb-1">Duration (minutes)</label>
@@ -3944,10 +3958,18 @@ function App() {
                               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
                                 <span className="font-medium text-slate-600">{qlEntry.duration_minutes ?? qlEntry.durationMinutes}m</span>
                                 {(qlEntry.sub_track ?? qlEntry.subTrack) && <span className="font-medium text-slate-500">· {qlEntry.sub_track ?? qlEntry.subTrack}</span>}
-                                {kpis.length > 0 && <span>· {kpis.join(' · ')}</span>}
-                                {qlEntry.note && <span>· {qlEntry.note}</span>}
                                 <span>· {dateLabel}</span>
                               </div>
+                              {kpis.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {kpis.map((k) => (
+                                    <span key={k} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                                      {k}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {qlEntry.note && <p className="mt-0.5 text-[11px] italic text-slate-400">"{qlEntry.note}"</p>}
                             </div>
                             <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                               <button
@@ -4667,6 +4689,7 @@ function App() {
                         setQuickLogForm((f) => ({
                           ...f,
                           track: t.key,
+                          subTrack: '',
                           kpiCredits: f.kpiCredits.filter((k) => validMappings.includes(k)),
                           kpiQuantities: Object.fromEntries(Object.entries(f.kpiQuantities).filter(([k]) => validMappings.includes(k))),
                         }))
@@ -4685,19 +4708,24 @@ function App() {
                 {quickLogErrors.track && <p className="mt-1 text-[11px] text-rose-600">{quickLogErrors.track}</p>}
               </div>
 
-              {/* Sub-track */}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-700">
-                  Sub-track <span className="font-normal text-slate-400">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={quickLogForm.subTrack}
-                  onChange={(e) => setQuickLogForm((f) => ({ ...f, subTrack: e.target.value }))}
-                  placeholder="e.g. Networking & BD, Alpha testers…"
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                />
-              </div>
+              {/* Sub-track — only shown when the selected track has defined sub-tracks */}
+              {quickLogForm.track && (TRACK_SUB_TRACKS[quickLogForm.track] ?? []).length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Sub-track <span className="font-normal text-slate-400">(optional)</span>
+                  </label>
+                  <select
+                    value={quickLogForm.subTrack}
+                    onChange={(e) => setQuickLogForm((f) => ({ ...f, subTrack: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  >
+                    <option value="">— None —</option>
+                    {(TRACK_SUB_TRACKS[quickLogForm.track] ?? []).map((st) => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Duration */}
               <div>
