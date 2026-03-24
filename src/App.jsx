@@ -1643,7 +1643,7 @@ function App() {
       // 4. Quick log entries for this week (for KPI display)
       const { start: qlStart, end: qlEnd } = getWeekBounds(0)
       const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
-      if (qlEntries.length > 0) setQuickLogEntries(qlEntries)
+      setQuickLogEntries(qlEntries)
 
       const calTags = await loadCalendarEventTags(userId)
       setCalendarEventTags(calTags)
