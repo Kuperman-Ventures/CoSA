@@ -948,14 +948,20 @@ function TimeGrid({ weekDates, weekEvents, untaggedCosaEvents = [], personalEven
   return (
     <div className="flex flex-1 overflow-x-auto">
       {/* Time ruler */}
-      <div className="relative shrink-0 w-10 pr-1" style={{ height: gridHeight }}>
-        {hours.map((h) => (
-          <div key={h} className="absolute right-1 text-[9px] text-slate-400 leading-none"
-            style={{ top: (h - GRID_START_HOUR) * PX_PER_HOUR, transform: 'translateY(-50%)' }}>
-            {h === 12 ? '12p' : h > 12 ? `${h - 12}p` : `${h}a`}
-          </div>
-        ))}
-        {/* hour lines extend into columns via background */}
+      <div className="shrink-0 w-10 pr-1 flex flex-col">
+        {/* Blank spacer that matches the day-column header height exactly */}
+        <div className="sticky top-0 z-10 border-b border-transparent px-1 py-1 text-xs">
+          <div>&nbsp;</div>
+          <div className="text-[10px]">&nbsp;</div>
+        </div>
+        <div className="relative" style={{ height: gridHeight }}>
+          {hours.map((h) => (
+            <div key={h} className="absolute right-1 text-[9px] text-slate-400 leading-none"
+              style={{ top: (h - GRID_START_HOUR) * PX_PER_HOUR, transform: 'translateY(-50%)' }}>
+              {h === 12 ? '12p' : h > 12 ? `${h - 12}p` : `${h}a`}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Day columns */}
