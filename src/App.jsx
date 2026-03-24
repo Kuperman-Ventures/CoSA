@@ -3540,6 +3540,17 @@ function App() {
         }
 
         const handleQlEditStart = (qlEntry) => {
+          const loggedMs = new Date(qlEntry.logged_at ?? qlEntry.loggedAt).getTime()
+          const matchingLogEntries = completionLog.filter(
+            (e) => e.isQuickLog && Math.abs(new Date(e.completedAt).getTime() - loggedMs) < 60000,
+          )
+          const existingKpiCredits = Array.isArray(qlEntry.kpi_credits ?? qlEntry.kpiCredits)
+            ? (qlEntry.kpi_credits ?? qlEntry.kpiCredits)
+            : []
+          const kpiQuantities = {}
+          for (const e of matchingLogEntries) {
+            if (e.kpiMapping) kpiQuantities[e.kpiMapping] = e.quantity ?? 1
+          }
           setReconcileQlEditId(qlEntry.id)
           setReconcileQlEditForm({
             who: qlEntry.who ?? '',
@@ -3547,23 +3558,97 @@ function App() {
             track: qlEntry.track ?? '',
             subTrack: qlEntry.sub_track ?? qlEntry.subTrack ?? '',
             durationMinutes: qlEntry.duration_minutes ?? qlEntry.durationMinutes ?? 0,
+            kpiCredits: existingKpiCredits,
+            kpiQuantities,
             note: qlEntry.note ?? '',
           })
         }
 
         const handleQlEditSave = async (qlEntryId) => {
+          const qlEntry = weekQuickLogs.find((e) => e.id === qlEntryId)
+          const loggedAt = qlEntry?.logged_at ?? qlEntry?.loggedAt
+          const loggedMs = loggedAt ? new Date(loggedAt).getTime() : null
+          const elapsedSeconds = Number(reconcileQlEditForm.durationMinutes) * 60
+          const completedAt = loggedAt ?? new Date().toISOString()
+
           const updates = {
             who: reconcileQlEditForm.who.trim(),
             activity_type: reconcileQlEditForm.activityType,
             track: reconcileQlEditForm.track || null,
             sub_track: reconcileQlEditForm.subTrack.trim() || null,
             duration_minutes: Number(reconcileQlEditForm.durationMinutes),
+            kpi_credits: reconcileQlEditForm.kpiCredits,
             note: reconcileQlEditForm.note.trim() || null,
           }
+
+          // Update quick_log_entries local state and Supabase
           setQuickLogEntries((prev) => prev.map((e) => e.id !== qlEntryId ? e : { ...e, ...updates }))
           if (supabaseConfigured && session?.user?.id) {
             await updateQuickLogEntry(qlEntryId, updates, session.user.id)
           }
+
+          // Rebuild timer_sessions: remove old matching entries, insert new ones per KPI
+          if (loggedMs !== null) {
+            const oldIds = completionLog
+              .filter((e) => e.isQuickLog && Math.abs(new Date(e.completedAt).getTime() - loggedMs) < 60000)
+              .map((e) => e.id)
+            setCompletionLog((prev) => prev.filter((e) => !oldIds.includes(e.id)))
+            if (supabaseConfigured && session?.user?.id) {
+              for (const id of oldIds) await deleteTimerSession(id, session.user.id)
+            }
+
+            const newLogEntries = reconcileQlEditForm.kpiCredits.map((mapping, i) => {
+              const track = KPI_LABEL_TO_TRACK[mapping] ?? reconcileQlEditForm.track ?? ''
+              const qty = reconcileQlEditForm.kpiQuantities[mapping] ?? 1
+              const id = crypto.randomUUID()
+              if (supabaseConfigured && session?.user?.id) {
+                supabase.from('timer_sessions').insert({
+                  id,
+                  user_id: session.user.id,
+                  task_instance_id: null,
+                  task_name: `Quick Log: ${reconcileQlEditForm.activityType} with ${reconcileQlEditForm.who}`,
+                  track,
+                  sub_track: reconcileQlEditForm.subTrack.trim() || '',
+                  kpi_mapping: mapping,
+                  quantity: qty,
+                  timer_state: 'Completed',
+                  completion_type: 'Done',
+                  estimate_seconds: elapsedSeconds,
+                  elapsed_seconds: elapsedSeconds,
+                  pause_count: 0,
+                  pause_duration_seconds: 0,
+                  overrun_seconds: 0,
+                  cancelled_seconds: 0,
+                  outcome_achieved: true,
+                  definition_of_done: '',
+                  actual_completed: '',
+                  started_at: null,
+                  completed_at: completedAt,
+                  updated_at: new Date().toISOString(),
+                  is_quick_log: true,
+                }).then(({ error }) => { if (error) console.error('[qlEditSave timer_session]', error.message) })
+              }
+              return {
+                id,
+                taskName: `Quick Log: ${reconcileQlEditForm.activityType} with ${reconcileQlEditForm.who}`,
+                track,
+                kpiMapping: mapping,
+                quantity: qty,
+                completionType: 'Done',
+                outcomeAchieved: true,
+                definitionOfDoneUsed: false,
+                completedAt,
+                estimateSeconds: elapsedSeconds,
+                elapsedSeconds,
+                pauseCount: 0,
+                pauseDurationSeconds: 0,
+                cancelledSeconds: 0,
+                isQuickLog: true,
+              }
+            })
+            setCompletionLog((prev) => [...prev, ...newLogEntries])
+          }
+
           setReconcileQlEditId(null)
         }
 
@@ -3864,7 +3949,17 @@ function App() {
                                   <label className="block text-[11px] font-medium text-slate-500 mb-1">Track</label>
                                   <select
                                     value={reconcileQlEditForm.track}
-                                    onChange={(e) => setReconcileQlEditForm((f) => ({ ...f, track: e.target.value }))}
+                                    onChange={(e) => {
+                                      const newTrack = e.target.value
+                                      const validMappings = QUICK_LOG_KPI_GROUPS.filter((g) => g.track === newTrack).flatMap((g) => g.kpis.map((k) => k.mapping))
+                                      setReconcileQlEditForm((f) => ({
+                                        ...f,
+                                        track: newTrack,
+                                        subTrack: '',
+                                        kpiCredits: (f.kpiCredits ?? []).filter((k) => validMappings.includes(k)),
+                                        kpiQuantities: Object.fromEntries(Object.entries(f.kpiQuantities ?? {}).filter(([k]) => validMappings.includes(k))),
+                                      }))
+                                    }}
                                     className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 ring-amber-300"
                                   >
                                     <option value="">— None —</option>
@@ -3916,6 +4011,70 @@ function App() {
                                   />
                                 </div>
                               </div>
+
+                              {/* KPI Credits */}
+                              {QUICK_LOG_KPI_GROUPS.some((g) => g.track === reconcileQlEditForm.track) && (
+                                <div>
+                                  <label className="block text-[11px] font-medium text-slate-500 mb-1.5">KPI Credits</label>
+                                  <div className="space-y-2">
+                                    {QUICK_LOG_KPI_GROUPS.filter((g) => !reconcileQlEditForm.track || g.track === reconcileQlEditForm.track).map((grp) => (
+                                      <div key={grp.group}>
+                                        <p className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                          <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: grp.color }} />
+                                          {grp.group}
+                                        </p>
+                                        <div className="space-y-1">
+                                          {grp.kpis.map((kpiRow) => {
+                                            const mapping = kpiRow.mapping
+                                            const label = kpiRow.label
+                                            const checked = (reconcileQlEditForm.kpiCredits ?? []).includes(mapping)
+                                            const qty = (reconcileQlEditForm.kpiQuantities ?? {})[mapping] ?? 1
+                                            return (
+                                              <div key={mapping} className="flex items-center gap-2">
+                                                <label className="flex flex-1 cursor-pointer items-center gap-2">
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() =>
+                                                      setReconcileQlEditForm((f) => ({
+                                                        ...f,
+                                                        kpiCredits: checked
+                                                          ? (f.kpiCredits ?? []).filter((k) => k !== mapping)
+                                                          : [...(f.kpiCredits ?? []), mapping],
+                                                        kpiQuantities: checked
+                                                          ? (({ [mapping]: _, ...rest }) => rest)(f.kpiQuantities ?? {})
+                                                          : { ...(f.kpiQuantities ?? {}), [mapping]: (f.kpiQuantities ?? {})[mapping] ?? 1 },
+                                                      }))
+                                                    }
+                                                    className="h-3.5 w-3.5 rounded accent-slate-900"
+                                                  />
+                                                  <span className="text-xs text-slate-700">{label}</span>
+                                                </label>
+                                                {checked && (
+                                                  <div className="flex items-center gap-0.5">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setReconcileQlEditForm((f) => ({ ...f, kpiQuantities: { ...(f.kpiQuantities ?? {}), [mapping]: Math.max(1, qty - 1) } }))}
+                                                      className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
+                                                    >−</button>
+                                                    <span className="w-6 text-center text-xs font-medium text-slate-800">{qty}</span>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setReconcileQlEditForm((f) => ({ ...f, kpiQuantities: { ...(f.kpiQuantities ?? {}), [mapping]: qty + 1 } }))}
+                                                      className="flex h-5 w-5 items-center justify-center rounded border border-slate-200 text-[10px] text-slate-500 hover:bg-slate-100"
+                                                    >+</button>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
                               <div className="flex gap-2">
                                 <button
                                   type="button"
