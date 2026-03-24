@@ -951,7 +951,7 @@ function TimeGrid({ weekDates, weekEvents, untaggedCosaEvents = [], personalEven
       <div className="relative shrink-0 w-10 pr-1" style={{ height: gridHeight }}>
         {hours.map((h) => (
           <div key={h} className="absolute right-1 text-[9px] text-slate-400 leading-none"
-            style={{ top: (h - GRID_START_HOUR) * PX_PER_HOUR - 4 }}>
+            style={{ top: (h - GRID_START_HOUR) * PX_PER_HOUR, transform: 'translateY(-50%)' }}>
             {h === 12 ? '12p' : h > 12 ? `${h - 12}p` : `${h}a`}
           </div>
         ))}
