@@ -2,6 +2,14 @@
  * Quick Log + calendar tag KPI options. `mapping` must match KPI_DEFINITIONS[].kpiMapping
  * for weekly review counting; `label` is UI copy.
  */
+// Shared networking KPIs appear in both the Advisors and Job Search
+// KPI cards on the Weekly Review, so they must be selectable from both tracks.
+const SHARED_NETWORKING_KPIS = [
+  { mapping: 'Warm reconnects sent',    label: 'Warm reconnect communications' },
+  { mapping: 'LinkedIn comments posted', label: 'LinkedIn comments posted' },
+  { mapping: 'Content posts',            label: 'Content posts' },
+]
+
 const RAW_QUICK_LOG_KPI_GROUPS = [
   {
     group: 'Kuperman Advisors',
@@ -11,8 +19,9 @@ const RAW_QUICK_LOG_KPI_GROUPS = [
     kpis: [
       { mapping: 'Outreach messages sent', label: 'Outreach messages sent' },
       { mapping: 'Discovery calls booked', label: 'Discovery calls booked' },
-      { mapping: 'Discovery calls held', label: 'Discovery calls held' },
-      { mapping: 'Connective attendance', label: 'Networking meetings attended' },
+      { mapping: 'Discovery calls held',   label: 'Discovery calls held' },
+      { mapping: 'Connective attendance',  label: 'Networking meetings attended' },
+      ...SHARED_NETWORKING_KPIS,
     ],
   },
   {
@@ -20,11 +29,7 @@ const RAW_QUICK_LOG_KPI_GROUPS = [
     track: 'networking',
     color: '#C2762A',
     dot: 'bg-orange-500',
-    kpis: [
-      { mapping: 'Warm reconnects sent', label: 'Warm reconnect communications' },
-      { mapping: 'LinkedIn comments posted', label: 'LinkedIn comments posted' },
-      { mapping: 'Content posts', label: 'Content posts' },
-    ],
+    kpis: SHARED_NETWORKING_KPIS,
   },
   {
     group: 'Job Search',
@@ -32,11 +37,12 @@ const RAW_QUICK_LOG_KPI_GROUPS = [
     color: '#2E75B6',
     dot: 'bg-blue-600',
     kpis: [
-      { mapping: 'Companies researched', label: 'Companies researched' },
-      { mapping: 'Company outreaches', label: 'Company outreaches' },
-      { mapping: 'Roles identified', label: 'Roles identified' },
+      { mapping: 'Companies researched',   label: 'Companies researched' },
+      { mapping: 'Company outreaches',     label: 'Company outreaches' },
+      { mapping: 'Roles identified',       label: 'Roles identified' },
       { mapping: 'Applications submitted', label: 'Applications submitted' },
-      { mapping: 'Recruiter touchpoints', label: 'Recruiter touchpoints' },
+      { mapping: 'Recruiter touchpoints',  label: 'Recruiter touchpoints' },
+      ...SHARED_NETWORKING_KPIS,
     ],
   },
   {
