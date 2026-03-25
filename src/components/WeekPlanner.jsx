@@ -61,8 +61,8 @@ const ALLOC_VERSION = 'v2'
 const DEFAULT_ALLOCATIONS = COSA_ALLOCATION_DEFAULTS
 
 // Calendar display parameters
-const GRID_START_HOUR = 8       // 8am
-const GRID_END_HOUR   = 20      // 8pm
+const GRID_START_HOUR = 6       // 6am (scrollable; view opens at 8am)
+const GRID_END_HOUR   = 23      // 11pm
 const PX_PER_HOUR    = 64       // pixels per hour
 const SNAP_MINUTES   = 15       // snap to 15-min intervals
 
@@ -1057,6 +1057,14 @@ export default function WeekPlanner({
   const [editModal, setEditModal]         = useState(null)
   const [logModal, setLogModal]           = useState(null)
   const [collapsedTracks, setCollapsedTracks] = useState({})
+  const gridScrollRef = useRef(null)
+
+  // Scroll to 8am on first render so the view opens at a comfortable position
+  useEffect(() => {
+    if (gridScrollRef.current) {
+      gridScrollRef.current.scrollTop = (8 - GRID_START_HOUR) * PX_PER_HOUR
+    }
+  }, [])
   const [error, setError]                 = useState('')
   const [showAllocEditor, setShowAllocEditor] = useState(false)
   /** @type {null | { title: string, targetMins: number, items: object[] }} */
@@ -1365,7 +1373,7 @@ export default function WeekPlanner({
         />
 
         <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="flex flex-1 overflow-y-auto overflow-x-auto">
+          <div ref={gridScrollRef} className="flex flex-1 overflow-y-auto overflow-x-auto">
             <TimeGrid
               weekDates={weekDates}
               weekEvents={weekEvents}
