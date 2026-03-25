@@ -2894,7 +2894,8 @@ function App() {
           minutesLogged += networkingMinutesThisWeek - Math.round(networkingMinutesThisWeek / 2)
         }
         const targetMins = TRACK_MIN_TARGETS[track.key] ?? 0
-        const pct = targetMins > 0 ? Math.min(100, Math.round((minutesLogged / targetMins) * 100)) : 0
+        const pctRaw = targetMins > 0 ? Math.round((minutesLogged / targetMins) * 100) : 0
+        const pct = Math.min(100, pctRaw) // bar width capped at 100%
         const splitEntries =
           track.key === 'advisors' || track.key === 'jobSearch'
             ? completionLog.filter((e) => {
@@ -2917,6 +2918,7 @@ function App() {
           minutesLogged,
           targetMins,
           pct,
+          pctRaw,
           entries,
           splitEntries,
           subTrackRows,
@@ -3093,7 +3095,7 @@ function App() {
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
-                  const { track, minutesLogged, targetMins, pct } = trackData
+                  const { track, minutesLogged, targetMins, pct, pctRaw } = trackData
                   return (
                     <div
                       key={track.key}
@@ -3116,9 +3118,10 @@ function App() {
                       {/* % complete centered above the bar */}
                       <div className="relative mb-0.5 text-center">
                         <span
-                          className={`text-[10px] font-semibold ${pct >= 100 ? 'text-emerald-600' : pct >= 60 ? 'text-amber-600' : 'text-slate-400'}`}
+                          className="text-[10px] font-semibold"
+                          style={{ color: track.color }}
                         >
-                          {pct}%
+                          {pctRaw}%
                         </span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
