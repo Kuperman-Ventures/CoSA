@@ -557,52 +557,77 @@ function saveCompletionLog(log) {
 }
 
 
+// ─── Eastern Time date helpers ────────────────────────────────────────────────
+// All "day" boundaries are anchored to midnight America/New_York (handles
+// both EST UTC-5 and EDT UTC-4 automatically), so "today" never rolls over
+// before midnight Eastern regardless of the machine's system timezone.
+
+// Returns YYYY-MM-DD in Eastern Time for a given Date (default: now).
+function getETDateStr(date = new Date()) {
+  return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+}
+
+// Returns a Date (UTC) representing midnight Eastern Time for an ET date string.
+// Probes UTC-4 (EDT) first; falls back to UTC-5 (EST) if the date doesn't match.
+function etMidnight(etDateStr) {
+  const edt = new Date(etDateStr + 'T04:00:00Z')
+  return edt.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === etDateStr
+    ? edt
+    : new Date(etDateStr + 'T05:00:00Z')
+}
+
 // ─── Weekly Planner helpers ───────────────────────────────────────────────────
 
 function getWeekStartDateStr(date = new Date()) {
-  const d = new Date(date)
-  const day = d.getDay()
+  const etStr = getETDateStr(date)
+  const d = new Date(etStr + 'T12:00:00Z') // noon UTC on ET date — unambiguous day-of-week
+  const day = d.getUTCDay()
   const daysToMonday = day === 0 ? 6 : day - 1
-  d.setDate(d.getDate() - daysToMonday)
-  d.setHours(0, 0, 0, 0)
-  return d.toISOString().split('T')[0]
+  d.setUTCDate(d.getUTCDate() - daysToMonday)
+  return getETDateStr(d)
 }
 
 function getNextMondayStr(fromDate = new Date()) {
-  const d = new Date(fromDate)
-  const day = d.getDay()
+  const etStr = getETDateStr(fromDate)
+  const d = new Date(etStr + 'T12:00:00Z')
+  const day = d.getUTCDay()
   const daysUntil = day === 0 ? 1 : day === 1 ? 7 : 8 - day
-  d.setDate(d.getDate() + daysUntil)
-  d.setHours(0, 0, 0, 0)
-  return d.toISOString().split('T')[0]
+  d.setUTCDate(d.getUTCDate() + daysUntil)
+  return getETDateStr(d)
 }
 
 function getDayDate(weekStartDateStr, dayName) {
   const offsets = { Monday: 0, Tuesday: 1, Wednesday: 2, Thursday: 3, Friday: 4 }
-  const d = new Date(weekStartDateStr + 'T12:00:00')
-  d.setDate(d.getDate() + (offsets[dayName] ?? 0))
-  return d.toISOString().split('T')[0]
+  const d = new Date(weekStartDateStr + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + (offsets[dayName] ?? 0))
+  return getETDateStr(d)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getWeekBounds(offsetWeeks = 0) {
-  const now = new Date()
-  const dayOfWeek = now.getDay()
+  const todayET = getETDateStr()
+  const d = new Date(todayET + 'T12:00:00Z')
+  const dayOfWeek = d.getUTCDay()
   const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
-  const monday = new Date(now)
-  monday.setDate(now.getDate() - daysToMonday + offsetWeeks * 7)
-  monday.setHours(0, 0, 0, 0)
-  const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
-  sunday.setHours(23, 59, 59, 999)
-  return { start: monday, end: sunday }
+  d.setUTCDate(d.getUTCDate() - daysToMonday + offsetWeeks * 7)
+  const mondayStr = getETDateStr(d)
+  const sundayD = new Date(d)
+  sundayD.setUTCDate(d.getUTCDate() + 6)
+  const sundayStr = getETDateStr(sundayD)
+  const start = etMidnight(mondayStr)
+  const end = new Date(etMidnight(sundayStr).getTime() + 24 * 60 * 60 * 1000 - 1)
+  // startStr / endStr let callers get the ET date string without calling toISOString()
+  return { start, end, startStr: mondayStr, endStr: sundayStr }
 }
 
 function getMonthBoundsForWeek(offsetWeeks = 0) {
-  const { start } = getWeekBounds(offsetWeeks)
-  const monthStart = new Date(start.getFullYear(), start.getMonth(), 1, 0, 0, 0, 0)
-  const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 0, 23, 59, 59, 999)
+  const { startStr } = getWeekBounds(offsetWeeks)
+  const [year, month] = startStr.split('-').map(Number)
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const pad = (n) => String(n).padStart(2, '0')
+  const monthStart = etMidnight(`${year}-${pad(month)}-01`)
+  const monthEnd = new Date(etMidnight(`${year}-${pad(month)}-${pad(lastDay)}`).getTime() + 24 * 60 * 60 * 1000 - 1)
   return { start: monthStart, end: monthEnd }
 }
 
@@ -711,21 +736,22 @@ function calcMetrics(log, weekStart, weekEnd, trackFilter = null) {
 
 function getTomorrowDateString() {
   const d = new Date()
-  d.setDate(d.getDate() + 1)
-  return d.toISOString().slice(0, 10)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return getETDateStr(d)
 }
 
 function getTodayDateString() {
-  return new Date().toISOString().slice(0, 10)
+  return getETDateStr()
 }
 
 // Returns the logical "target" date for a deploy: today if it's a weekday, next Monday if weekend.
 function getDeployTargetDate() {
-  const d = new Date()
-  const day = d.getDay()
-  if (day === 0) d.setDate(d.getDate() + 1)       // Sunday → Monday
-  else if (day === 6) d.setDate(d.getDate() + 2)  // Saturday → Monday
-  return d.toISOString().slice(0, 10)
+  const todayStr = getTodayDateString()
+  const d = new Date(todayStr + 'T12:00:00Z')
+  const day = d.getUTCDay()
+  if (day === 0) d.setUTCDate(d.getUTCDate() + 1)       // Sunday → Monday
+  else if (day === 6) d.setUTCDate(d.getUTCDate() + 2)  // Saturday → Monday
+  return getETDateStr(d)
 }
 
 // Formats an ISO date string as "Monday, March 16"
@@ -1372,9 +1398,7 @@ function App() {
   function formatScrollLabel(dateStr) {
     const today = getTodayDateString()
     if (dateStr === today) return 'Today'
-    const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const tomorrowStr = tomorrow.toISOString().slice(0, 10)
+    const tomorrowStr = getTomorrowDateString()
     const d = new Date(dateStr + 'T12:00:00')
     const label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
     if (dateStr === tomorrowStr) return `Tomorrow — ${label}`
@@ -1382,17 +1406,17 @@ function App() {
   }
 
   function getWeekdayOffsetDate(baseStr, offsetDays) {
-    const d = new Date(baseStr + 'T12:00:00')
-    d.setDate(d.getDate() + offsetDays)
-    return d.toISOString().slice(0, 10)
+    const d = new Date(baseStr + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() + offsetDays)
+    return getETDateStr(d)
   }
 
   const previewScrollBase = todayPreviewDate ?? getTodayDateString()
   const weekScrollStart = getWeekStartDateStr()
   const weekScrollEnd = (() => {
-    const d = new Date(weekScrollStart + 'T12:00:00')
-    d.setDate(d.getDate() + 4)
-    return d.toISOString().slice(0, 10)
+    const d = new Date(weekScrollStart + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() + 4)
+    return getETDateStr(d)
   })()
 
   function canScrollPrev() {
@@ -1402,19 +1426,19 @@ function App() {
     return previewScrollBase < weekScrollEnd
   }
   function goToPrevDay() {
-    let d = new Date(previewScrollBase + 'T12:00:00')
-    d.setDate(d.getDate() - 1)
-    if (d.getDay() === 0) d.setDate(d.getDate() - 2)
-    if (d.getDay() === 6) d.setDate(d.getDate() - 1)
-    const next = d.toISOString().slice(0, 10)
+    let d = new Date(previewScrollBase + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() - 1)
+    if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() - 2)
+    if (d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1)
+    const next = getETDateStr(d)
     setTodayPreviewDate(next === getTodayDateString() ? null : next)
   }
   function goToNextDay() {
-    let d = new Date(previewScrollBase + 'T12:00:00')
-    d.setDate(d.getDate() + 1)
-    if (d.getDay() === 6) d.setDate(d.getDate() + 2)
-    if (d.getDay() === 0) d.setDate(d.getDate() + 1)
-    const next = d.toISOString().slice(0, 10)
+    let d = new Date(previewScrollBase + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() + 1)
+    if (d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() + 2)
+    if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1)
+    const next = getETDateStr(d)
     setTodayPreviewDate(next)
   }
 
@@ -1670,7 +1694,7 @@ function App() {
 
   // ── Load current week's review into draft when week changes ─────────────
   useEffect(() => {
-    const weekStartStr = getWeekBounds(weekOffset).start.toISOString().slice(0, 10)
+    const weekStartStr = getWeekBounds(weekOffset).startStr
     const existing = fridayReviews.find((r) => r.week_start === weekStartStr)
     setReviewDraft({
       q1: existing?.q1 ?? '',
@@ -2006,7 +2030,7 @@ function App() {
   }
 
   async function handleSaveFridayReview() {
-    const weekStartStr = getWeekBounds(weekOffset).start.toISOString().slice(0, 10)
+    const weekStartStr = getWeekBounds(weekOffset).startStr
     const record = {
       week_start: weekStartStr,
       week_score: kpiSummary.weekScore,
@@ -2075,11 +2099,11 @@ function App() {
   // ── Clear Day handlers ────────────────────────────────────────────────────
 
   async function handleConfirmClearDay() {
-    const from = new Date(clearFrom + 'T12:00:00')
-    const to = new Date(clearTo + 'T12:00:00')
+    const from = new Date(clearFrom + 'T12:00:00Z')
+    const to = new Date(clearTo + 'T12:00:00Z')
     const dates = []
-    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-      dates.push(d.toISOString().split('T')[0])
+    for (let d = new Date(from); d <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+      dates.push(getETDateStr(d))
     }
 
     const next = [...new Set([...clearedDates, ...dates])]
@@ -2825,7 +2849,7 @@ function App() {
   }
 
   function renderKpiDashboard() {
-    const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
+    const { start: weekStart, end: weekEnd, startStr: weekStartStr } = getWeekBounds(weekOffset)
     const { start: monthStart, end: monthEnd } = getMonthBoundsForWeek(weekOffset)
     const isCurrentWeek = weekOffset === 0
 
@@ -2900,7 +2924,6 @@ function App() {
       })
       .filter((t) => t.targetMins > 0)
 
-    const weekStartStr = weekStart.toISOString().slice(0, 10)
     const savedReview = fridayReviews.find((r) => r.week_start === weekStartStr)
 
     // ── Detail-drawer helpers ────────────────────────────────────────────────
