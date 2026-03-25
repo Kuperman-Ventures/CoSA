@@ -3093,55 +3093,40 @@ function App() {
               </p>
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
-                  const { track, minutesLogged, targetMins, pct, subTrackRows } = trackData
+                  const { track, minutesLogged, targetMins, pct } = trackData
                   return (
-                    <div key={track.key}>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => openTrackDetail(trackData)}
-                        onKeyDown={(e) => e.key === 'Enter' && openTrackDetail(trackData)}
-                        className="w-full cursor-pointer text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
-                        title="Click to see contributing sessions"
-                      >
-                        <div className="mb-1 flex items-center justify-between text-xs gap-2">
-                          <span className="font-medium text-slate-700">{track.label}</span>
-                          <span
-                            className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
-                          >
-                            {minutesLogged}m{' '}
-                            <span className="font-normal text-slate-400">/ {targetMins}m target</span>
-                          </span>
-                        </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{ width: `${pct}%`, backgroundColor: track.color }}
-                          />
-                        </div>
+                    <div
+                      key={track.key}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openTrackDetail(trackData)}
+                      onKeyDown={(e) => e.key === 'Enter' && openTrackDetail(trackData)}
+                      className="w-full cursor-pointer text-left rounded-lg p-2 -mx-2 hover:bg-slate-50 transition-colors"
+                      title="Click to see contributing sessions"
+                    >
+                      <div className="mb-1 flex items-center justify-between text-xs gap-2">
+                        <span className="font-medium text-slate-700">{track.label}</span>
+                        <span
+                          className={`shrink-0 font-semibold ${pct >= 100 ? 'text-emerald-700' : pct >= 60 ? 'text-amber-700' : 'text-slate-500'}`}
+                        >
+                          {minutesLogged}m{' '}
+                          <span className="font-normal text-slate-400">/ {targetMins}m target</span>
+                        </span>
                       </div>
-                      {/* Sub-track breakdown */}
-                      {subTrackRows.length > 0 && (
-                        <ul className="mt-1 ml-2 space-y-1">
-                          {subTrackRows.map(([st, mins]) => {
-                            const stPct = targetMins > 0 ? Math.min(100, Math.round((mins / targetMins) * 100)) : 0
-                            return (
-                              <li key={st}>
-                                <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                  <span className="truncate">{st}</span>
-                                  <span className="shrink-0 ml-2 font-medium">{mins}m</span>
-                                </div>
-                                <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-slate-100">
-                                  <div
-                                    className="h-full rounded-full opacity-60"
-                                    style={{ width: `${stPct}%`, backgroundColor: track.color }}
-                                  />
-                                </div>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      )}
+                      {/* % complete centered above the bar */}
+                      <div className="relative mb-0.5 text-center">
+                        <span
+                          className={`text-[10px] font-semibold ${pct >= 100 ? 'text-emerald-600' : pct >= 60 ? 'text-amber-600' : 'text-slate-400'}`}
+                        >
+                          {pct}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{ width: `${pct}%`, backgroundColor: track.color }}
+                        />
+                      </div>
                     </div>
                   )
                 })}
