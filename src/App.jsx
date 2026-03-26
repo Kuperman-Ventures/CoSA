@@ -3222,7 +3222,7 @@ function App() {
                               stroke={td.track.color}
                               strokeWidth={18}
                               strokeLinecap="butt"
-                              strokeDasharray={`${arcLen} ${circ}`}
+                              strokeDasharray={`${arcLen} ${circ - arcLen}`}
                               strokeDashoffset={dashOffset}
                             />
                           ))}
