@@ -980,6 +980,15 @@ function App() {
   const [reviewSaving, setReviewSaving] = useState(false)
   const [kpiDetail, setKpiDetail] = useState(null)
   const [gcalSyncStatus, setGcalSyncStatus] = useState(null) // null | 'syncing' | 'ok' | 'auth-error' | 'error'
+
+  // ── App-ready gate: block render until Supabase sync completes ────────────
+  // 'loading' → waiting for auth check or data sync
+  // 'ready'   → show the app (either synced or not signed in)
+  // 'error'   → sync failed, show retry screen
+  const [syncStatus, setSyncStatus] = useState(() => supabaseConfigured ? 'loading' : 'ready')
+  const [syncStep,   setSyncStep]   = useState('Connecting to your account…')
+  const [syncError,  setSyncError]  = useState(null)
+  const [syncTrigger, setSyncTrigger] = useState(0) // increment to force a re-sync
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
   const [clearedDates, setClearedDates] = useState(() => {
@@ -1114,21 +1123,38 @@ function App() {
     let isMounted = true
 
     const hydrateSession = async () => {
+      setSyncStep('Checking your session…')
       const { data, error } = await supabase.auth.getSession()
       if (!isMounted) return
       if (error) {
         setAuthMessage(`Unable to load session: ${error.message}`)
+        setSyncStatus('ready') // show sign-in screen even on auth error
         return
       }
-      setSession(data.session ?? null)
+      const sess = data.session ?? null
+      setSession(sess)
+      if (!sess) {
+        // Not signed in — show sign-in screen immediately, no sync needed
+        setSyncStatus('ready')
+      }
+      // If signed in, the doSync useEffect will fire and set syncStatus → 'ready'
     }
 
     hydrateSession()
 
-    const { data } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (!isMounted) return
       setSession(newSession)
       setAuthMessage('')
+      if (!newSession) {
+        // Signed out — show sign-in screen immediately
+        setSyncStatus('ready')
+      } else if (event === 'SIGNED_IN') {
+        // Fresh OAuth sign-in — show loading until doSync completes
+        setSyncStatus('loading')
+        setSyncStep('Signing in…')
+      }
+      // TOKEN_REFRESHED / USER_UPDATED etc. — don't interrupt an already-ready app
     })
 
     return () => {
@@ -1555,131 +1581,143 @@ function App() {
     saveCompletionLog(completionLog)
   }, [completionLog])
 
-  // ── Sign-in: load all state from Supabase (source of truth) ─────────────
+  // ── Sign-in: load all state from Supabase (single source of truth) ──────
+  // syncTrigger is incremented by the "Try again" retry button.
   useEffect(() => {
     if (!supabaseConfigured || !supabase || !session?.user?.id) return
     const userId = session.user.id
     const todayStr = getTodayDateString()
-    // On weekends, load the next Monday's queue so pre-deployed Week Ahead tasks show up.
     const targetStr = getDeployTargetDate()
 
     const doSync = async () => {
-      // 1. Task library — load from Supabase, then merge in local subtasks so
-      //    they're never lost even if the DB column is missing or returns empty.
-      let activeLibrary = taskLibrary
-      const remoteLibrary = await loadTaskTemplates(userId)
-      if (remoteLibrary && remoteLibrary.length > 0) {
-        const merged = mergeSubtasksIntoLibrary(remoteLibrary)
-        setTaskLibrary(merged)
-        activeLibrary = merged
-      } else {
-        upsertTaskTemplates(taskLibrary, userId)
-      }
+      setSyncStatus('loading')
+      setSyncError(null)
 
-      // 2. Today tasks — load from Supabase; the queue is calendar-driven so
-      //    GCal merge (step 3) will prune any tasks no longer on the calendar.
-      //    Build a session snapshot synchronously so merge does not read a stale
-      //    `sessions` closure (which would ignore completed/cancelled and reset UI).
-      let effectiveTodayTasks = []
-      let signInSessionsSnapshot = null
+      try {
+        // ── 1. Task library ──────────────────────────────────────────────────
+        setSyncStep('Loading task library…')
+        let activeLibrary = taskLibrary
+        const remoteLibrary = await loadTaskTemplates(userId)
+        if (remoteLibrary && remoteLibrary.length > 0) {
+          const merged = mergeSubtasksIntoLibrary(remoteLibrary)
+          setTaskLibrary(merged)
+          activeLibrary = merged
+        } else {
+          upsertTaskTemplates(taskLibrary, userId)
+        }
 
-      const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
-      if (remoteTodayTasks && remoteTodayTasks.length > 0) {
-        effectiveTodayTasks = remoteTodayTasks
-        const taskById = Object.fromEntries(remoteTodayTasks.map((t) => [t.id, t]))
-        signInSessionsSnapshot = {}
-        remoteTodayTasks.forEach((task) => {
-          signInSessionsSnapshot[task.id] = getInitialSession(task)
-        })
-        const taskIds = remoteTodayTasks.map((t) => t.id)
-        const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
-        if (remoteTimerSessions) {
-          remoteTimerSessions.forEach((rs) => {
-            const tid = rs.taskId
-            if (!tid || !taskById[tid]) return
-            signInSessionsSnapshot[tid] = {
-              ...(signInSessionsSnapshot[tid] ?? getInitialSession(taskById[tid])),
-              ...rs,
+        // ── 2. Today's queue + active timer states ───────────────────────────
+        setSyncStep('Loading today\'s queue…')
+        let effectiveTodayTasks = []
+        let signInSessionsSnapshot = null
+
+        const remoteTodayTasks = await loadTodayTasks(userId, targetStr)
+        if (remoteTodayTasks && remoteTodayTasks.length > 0) {
+          effectiveTodayTasks = remoteTodayTasks
+          const taskById = Object.fromEntries(remoteTodayTasks.map((t) => [t.id, t]))
+          signInSessionsSnapshot = {}
+          remoteTodayTasks.forEach((task) => {
+            signInSessionsSnapshot[task.id] = getInitialSession(task)
+          })
+          const taskIds = remoteTodayTasks.map((t) => t.id)
+          const remoteTimerSessions = await loadTodayTimerSessions(userId, taskIds)
+          if (remoteTimerSessions) {
+            remoteTimerSessions.forEach((rs) => {
+              const tid = rs.taskId
+              if (!tid || !taskById[tid]) return
+              signInSessionsSnapshot[tid] = {
+                ...(signInSessionsSnapshot[tid] ?? getInitialSession(taskById[tid])),
+                ...rs,
+              }
+            })
+          }
+
+          setTodayTasks(remoteTodayTasks)
+          setQueueDate(targetStr)
+          setSessions((prev) => {
+            const next = { ...prev }
+            const TERMINAL = [TIMER_STATES.completed, TIMER_STATES.cancelled]
+            for (const task of remoteTodayTasks) {
+              const remoteSnap = signInSessionsSnapshot[task.id]
+              const localSnap  = prev[task.id]
+              if (remoteSnap && remoteSnap.timerState !== TIMER_STATES.notStarted) {
+                next[task.id] = remoteSnap
+              } else if (localSnap && TERMINAL.includes(localSnap.timerState)) {
+                next[task.id] = localSnap
+              } else {
+                next[task.id] = remoteSnap ?? getInitialSession(task)
+              }
             }
+            return next
           })
         }
 
-        setTodayTasks(remoteTodayTasks)
-        setQueueDate(targetStr)
-        setSessions((prev) => {
-          const next = { ...prev }
-          const TERMINAL = [TIMER_STATES.completed, TIMER_STATES.cancelled]
-          for (const task of remoteTodayTasks) {
-            const remoteSnap = signInSessionsSnapshot[task.id]
-            const localSnap  = prev[task.id]
-            // Supabase has the session with a real (non-default) state → always trust it.
-            if (remoteSnap && remoteSnap.timerState !== TIMER_STATES.notStarted) {
-              next[task.id] = remoteSnap
-            // Supabase returned notStarted but localStorage has a terminal state →
-            // keep local so a redeploy never resets completed/cancelled work.
-            } else if (localSnap && TERMINAL.includes(localSnap.timerState)) {
-              next[task.id] = localSnap
-            } else {
-              next[task.id] = remoteSnap ?? getInitialSession(task)
-            }
-          }
-          return next
-        })
-      }
+        // ── 3. User preferences (cleared dates, allocations) ─────────────────
+        setSyncStep('Loading your preferences…')
+        const prefs = await loadUserPreferences(userId)
+        if (prefs?.cleared_dates) {
+          setClearedDates(prefs.cleared_dates)
+          window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
+        }
+        if (prefs?.allocations && typeof prefs.allocations === 'object') {
+          try { window.localStorage.setItem('cosa.allocations', JSON.stringify(prefs.allocations)) } catch {}
+        }
 
-      // Always load user preferences regardless of whether today tasks exist —
-      // cleared dates, dismissed keys, and allocations must sync on every machine.
-      const prefs = await loadUserPreferences(userId)
-      if (prefs?.cleared_dates) {
-        setClearedDates(prefs.cleared_dates)
-        window.localStorage.setItem('cosa.clearedDates', JSON.stringify(prefs.cleared_dates))
-      }
-      if (prefs?.allocations && typeof prefs.allocations === 'object') {
-        // Write to localStorage so WeekPlanner picks it up on next render
-        try { window.localStorage.setItem('cosa.allocations', JSON.stringify(prefs.allocations)) } catch {}
-      }
+        // ── 4. Calendar sync (non-fatal — auth errors shown inline) ──────────
+        setSyncStep('Syncing calendar…')
+        try {
+          await mergeGCalIntoQueue(effectiveTodayTasks, todayStr, userId, signInSessionsSnapshot)
+        } catch (err) {
+          if (err instanceof GCalAuthError) setGcalSyncStatus('auth-error')
+          else console.error('[sign-in GCal merge]', err)
+        }
 
-      // 3. Merge today's calendar events into the queue (add new + refresh changed)
-      try {
-        await mergeGCalIntoQueue(effectiveTodayTasks, todayStr, userId, signInSessionsSnapshot)
+        // ── 5. Completion log (90 days of timer sessions) ────────────────────
+        setSyncStep('Loading your activity log…')
+        const remoteSessions = await loadTimerSessions(userId)
+        if (remoteSessions && remoteSessions.length > 0) {
+          // Supabase is the source of truth — replace local, keeping only in-flight
+          // entries that haven't made it to Supabase yet (non-ql- IDs not in remote).
+          setCompletionLog((prev) => {
+            const remoteIds = new Set(remoteSessions.map((s) => s.id))
+            const localOnly = prev.filter(
+              (e) => !remoteIds.has(e.id) && !String(e.id).startsWith('ql-'),
+            )
+            return [...remoteSessions, ...localOnly]
+          })
+        } else {
+          // No remote sessions yet — clear stale local log so new machine starts clean
+          setCompletionLog([])
+        }
+
+        // ── 6. Weekly reviews ────────────────────────────────────────────────
+        setSyncStep('Loading weekly reviews…')
+        const reviews = await loadFridayReviews(userId)
+        setFridayReviews(reviews)
+
+        // ── 7. Quick log entries ─────────────────────────────────────────────
+        setSyncStep('Loading quick log entries…')
+        const { start: qlStart, end: qlEnd } = getWeekBounds(0)
+        const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
+        setQuickLogEntries(qlEntries)
+
+        // ── 8. Calendar event tags ───────────────────────────────────────────
+        setSyncStep('Loading calendar tags…')
+        const calTags = await loadCalendarEventTags(userId)
+        setCalendarEventTags(calTags)
+
+        // All done — release the loading gate
+        setSyncStatus('ready')
       } catch (err) {
-        if (err instanceof GCalAuthError) setGcalSyncStatus('auth-error')
-        else console.error('[sign-in GCal merge]', err)
+        console.error('[doSync]', err)
+        setSyncError(err?.message || 'Something went wrong loading your data.')
+        setSyncStatus('error')
       }
-
-      // 4. Timer sessions → completion log for KPI/analytics
-      // Merge remote into local rather than replacing so entries completed
-      // moments before a reload (not yet returned from Supabase) are kept.
-      const remoteSessions = await loadTimerSessions(userId)
-      if (remoteSessions && remoteSessions.length > 0) {
-        setCompletionLog((prev) => {
-          const remoteIds = new Set(remoteSessions.map((s) => s.id))
-          // Drop ql- prefixed local entries: Supabase holds the canonical UUID copy.
-          // This prevents double-counting when the same quick log exists both as a
-          // temporary ql- local ID and as a synced UUID in timer_sessions.
-          const localOnly = prev.filter(
-            (e) => !remoteIds.has(e.id) && !String(e.id).startsWith('ql-'),
-          )
-          return [...remoteSessions, ...localOnly]
-        })
-      }
-
-      // 5. Friday reviews
-      const reviews = await loadFridayReviews(userId)
-      setFridayReviews(reviews)
-
-      // 4. Quick log entries for this week (for KPI display)
-      const { start: qlStart, end: qlEnd } = getWeekBounds(0)
-      const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
-      setQuickLogEntries(qlEntries)
-
-      const calTags = await loadCalendarEventTags(userId)
-      setCalendarEventTags(calTags)
     }
 
     doSync()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id, supabaseConfigured])
+  }, [session?.user?.id, supabaseConfigured, syncTrigger])
 
   // ── Sync task library edits to Supabase (debounced 500ms) ────────────────
   useEffect(() => {
@@ -3344,6 +3382,42 @@ function App() {
           <p className="mt-2 text-sm text-slate-600">{message}</p>
         </article>
       </section>
+    )
+  }
+
+  // ── Loading / error gate — block full render until Supabase sync is done ──
+  if (syncStatus === 'loading' || syncStatus === 'error') {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-white px-6">
+        <div className="w-full max-w-xs space-y-8 text-center">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">CoSA</p>
+            <h1 className="mt-1 text-2xl font-bold text-slate-900">Command of Strategic Action</h1>
+          </div>
+
+          {syncStatus === 'loading' ? (
+            <div className="space-y-4">
+              <div className="flex justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-slate-200 border-t-slate-900" />
+              </div>
+              <p className="text-sm text-slate-500">{syncStep}</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {syncError || 'Something went wrong loading your data.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => { setSyncStatus('loading'); setSyncTrigger((n) => n + 1) }}
+                className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     )
   }
 
