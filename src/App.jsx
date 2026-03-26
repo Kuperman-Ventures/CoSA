@@ -1685,10 +1685,9 @@ function App() {
             )
             return [...remoteSessions, ...localOnly]
           })
-        } else {
-          // No remote sessions yet — clear stale local log so new machine starts clean
-          setCompletionLog([])
         }
+        // If remoteSessions is null or empty we leave the local log untouched —
+        // a failed/empty Supabase response must never wipe data the user can see.
 
         // ── 6. Weekly reviews ────────────────────────────────────────────────
         setSyncStep('Loading weekly reviews…')
