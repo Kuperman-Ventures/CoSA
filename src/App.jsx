@@ -2093,21 +2093,19 @@ function App() {
     setReviewSaving(false)
   }
 
-  function handlePrintReview() {
-    const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
+  function buildReviewHtml({ weekLabel, score, kpisHit, kpisTotal, q1, q2, q3, mondayIntention }) {
     const scoreColors = { green: '#d1fae5', yellow: '#fef3c7', red: '#fee2e2' }
     const scoreTextColors = { green: '#065f46', yellow: '#92400e', red: '#991b1b' }
-    const score = kpiSummary.weekScore
-    const html = `<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Friday Review — ${formatWeekLabel(weekStart, weekEnd)}</title>
+  <title>Friday Review — ${weekLabel}</title>
   <style>
     body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 760px; margin: 32px auto; color: #111827; line-height: 1.5; }
     h1 { font-size: 26px; margin-bottom: 4px; }
     .sub { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
-    .badge { display: inline-block; padding: 4px 14px; border-radius: 99px; font-weight: 700; font-size: 13px; background: ${scoreColors[score]}; color: ${scoreTextColors[score]}; margin-bottom: 20px; }
+    .badge { display: inline-block; padding: 4px 14px; border-radius: 99px; font-weight: 700; font-size: 13px; background: ${scoreColors[score] ?? '#f1f5f9'}; color: ${scoreTextColors[score] ?? '#334155'}; margin-bottom: 20px; }
     h2 { font-size: 15px; font-weight: 700; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; margin-top: 28px; }
     p { font-size: 14px; white-space: pre-wrap; min-height: 40px; }
     .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af; }
@@ -2115,23 +2113,57 @@ function App() {
 </head>
 <body>
   <h1>Friday Review</h1>
-  <p class="sub">${formatWeekLabel(weekStart, weekEnd)}</p>
-  <div class="badge">${score.toUpperCase()} — ${kpiSummary.kpisHit} of ${kpiSummary.kpisTotal} KPIs hit</div>
+  <p class="sub">${weekLabel}</p>
+  <div class="badge">${score.toUpperCase()} — ${kpisHit} of ${kpisTotal} KPIs hit</div>
   <h2>What actually got in the way?</h2>
-  <p>${reviewDraft.q1 || '(not answered)'}</p>
+  <p>${q1 || '(not answered)'}</p>
   <h2>One thing to do differently next week?</h2>
-  <p>${reviewDraft.q2 || '(not answered)'}</p>
+  <p>${q2 || '(not answered)'}</p>
   <h2>One thing done well this week?</h2>
-  <p>${reviewDraft.q3 || '(not answered)'}</p>
+  <p>${q3 || '(not answered)'}</p>
   <h2>Monday intention</h2>
-  <p>${reviewDraft.mondayIntention || '(not set)'}</p>
+  <p>${mondayIntention || '(not set)'}</p>
   <div class="footer">Chief of Staff — generated ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
 </body>
 </html>`
+  }
+
+  function openPrintWindow(html) {
     const win = window.open('', '_blank')
     win.document.write(html)
     win.document.close()
     win.print()
+  }
+
+  function handlePrintReview() {
+    const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
+    openPrintWindow(buildReviewHtml({
+      weekLabel: formatWeekLabel(weekStart, weekEnd),
+      score: kpiSummary.weekScore,
+      kpisHit: kpiSummary.kpisHit,
+      kpisTotal: kpiSummary.kpisTotal,
+      q1: reviewDraft.q1,
+      q2: reviewDraft.q2,
+      q3: reviewDraft.q3,
+      mondayIntention: reviewDraft.mondayIntention,
+    }))
+  }
+
+  function handlePrintPastReview(r) {
+    // Reconstruct the week label from the stored week_start date string
+    const ws = new Date(r.week_start + 'T12:00:00')
+    const we = new Date(ws)
+    we.setDate(we.getDate() + 6)
+    openPrintWindow(buildReviewHtml({
+      weekLabel: formatWeekLabel(ws, we),
+      score: r.week_score ?? 'red',
+      kpisHit: r.kpis_hit ?? 0,
+      kpisTotal: r.kpis_total ?? 0,
+      q1: r.q1,
+      q2: r.q2,
+      q3: r.q3,
+      mondayIntention: r.monday_intention,
+    }))
   }
 
   // ── Clear Day handlers ────────────────────────────────────────────────────
@@ -3458,8 +3490,15 @@ function App() {
                       <span className="text-xs font-medium text-slate-700">{formatDate(r.week_start)}</span>
                       <span className="text-xs text-slate-500">{r.kpis_hit}/{r.kpis_total} KPIs</span>
                       {r.monday_intention ? (
-                        <span className="ml-auto max-w-[160px] truncate text-xs text-slate-400 italic">"{r.monday_intention}"</span>
-                      ) : null}
+                        <span className="ml-1 flex-1 truncate text-xs text-slate-400 italic">"{r.monday_intention}"</span>
+                      ) : <span className="flex-1" />}
+                      <button
+                        type="button"
+                        onClick={() => handlePrintPastReview(r)}
+                        className="shrink-0 rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600 hover:bg-slate-100"
+                      >
+                        Export PDF
+                      </button>
                     </li>
                   )
                 })}
