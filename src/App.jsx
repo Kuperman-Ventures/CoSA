@@ -1019,6 +1019,7 @@ function App() {
   const [clearFrom, setClearFrom] = useState(getTodayDateString())
   const [clearTo, setClearTo] = useState(getTodayDateString())
   const [showReconcileLog, setShowReconcileLog] = useState(false)
+  const [reconcileExpandedTracks, setReconcileExpandedTracks] = useState({})
   const [reconcileEditId, setReconcileEditId] = useState(null)
   const [reconcileEditForm, setReconcileEditForm] = useState({})
   const [reconcileQlEditId, setReconcileQlEditId] = useState(null)
@@ -3098,7 +3099,7 @@ function App() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setShowReconcileLog(true)}
+              onClick={() => { setReconcileExpandedTracks({}); setShowReconcileLog(true) }}
               title="View, edit, or delete logged entries for this week"
               className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1 text-sm text-amber-700 hover:bg-amber-100"
             >
@@ -3788,15 +3789,21 @@ function App() {
                     .map(([trackKey, entries]) => {
                       const meta = getTrackMeta(trackKey)
                       const trackTotalMin = entries.reduce((s, e) => s + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
+                      const isExpanded = reconcileExpandedTracks[trackKey] === true
                       return (
                         <div key={trackKey}>
-                          <div className="mb-2 flex items-baseline gap-2">
-                            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: meta?.color ?? '#94a3b8' }}>
+                          <button
+                            type="button"
+                            onClick={() => setReconcileExpandedTracks((p) => ({ ...p, [trackKey]: !p[trackKey] }))}
+                            className="mb-2 flex w-full items-center gap-2 rounded-md px-1 py-1 hover:bg-slate-50 transition-colors text-left"
+                          >
+                            <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: meta?.color ?? '#94a3b8' }}>
                               {meta?.label ?? trackKey}
-                            </p>
-                            <span className="text-xs text-slate-400">{entries.length} entries · {trackTotalMin}m total</span>
-                          </div>
-                          <div className="space-y-2">
+                            </span>
+                            <span className="text-xs text-slate-400">{entries.length} {entries.length === 1 ? 'entry' : 'entries'} · {trackTotalMin}m</span>
+                            <span className="ml-auto text-[10px] text-slate-400">{isExpanded ? '▲' : '▼'}</span>
+                          </button>
+                          {isExpanded && <div className="space-y-2">
                             {entries.map((entry) => {
                               const isEditing = reconcileEditId === entry.id
                               const elapsed = Math.round((entry.elapsedSeconds ?? 0) / 60)
@@ -4009,7 +4016,7 @@ function App() {
                                 </div>
                               )
                             })}
-                          </div>
+                          </div>}
                         </div>
                       )
                     })}
