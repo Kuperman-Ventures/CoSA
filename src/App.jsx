@@ -3182,30 +3182,37 @@ function App() {
           <div className="min-w-0 space-y-4">
             {/* Time allocation donut chart — all tracks except Shared Networking */}
             {(() => {
+              // totalTarget = full weekly target across all tracks (the denominator).
+              // Each slice shows how much of the week's total planned time that track
+              // has consumed, so percentages reflect progress against the full week
+              // budget rather than being relative to each other.
+              const totalTarget = timeByTrack.reduce((s, t) => s + t.targetMins, 0)
+              const totalLogged = timeByTrack.reduce((s, t) => s + t.minutesLogged, 0)
               const chartTracks = timeByTrack.filter((t) => t.track.key !== 'networking' && t.minutesLogged > 0)
-              const totalMins = timeByTrack.reduce((s, t) => s + t.minutesLogged, 0)
               const r = 38, CX = 50, CY = 50
               const circ = 2 * Math.PI * r
               const GAP = 3
               let cumFrac = 0
               const segments = chartTracks.map((td) => {
-                const frac = td.minutesLogged / totalMins
+                const frac = totalTarget > 0 ? td.minutesLogged / totalTarget : 0
                 const arcLen = Math.max(frac * circ - GAP, 0)
                 const dashOffset = circ * (1 - cumFrac)
                 cumFrac += frac
                 return { td, arcLen, dashOffset, pct: Math.round(frac * 100) }
               })
-              const totalHours = (totalMins / 60).toFixed(1)
+              const loggedHours = (totalLogged / 60).toFixed(1)
+              const targetHours = (totalTarget / 60).toFixed(0)
               return (
                 <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Time Allocation</h2>
-                  {totalMins < 1 ? (
+                  {totalLogged < 1 ? (
                     <p className="text-xs text-slate-400 italic">No logged time this week yet.</p>
                   ) : (
                     <div className="flex items-center gap-6">
-                      {/* Donut */}
+                      {/* Donut — ring fills proportionally to logged vs. total week target */}
                       <div className="relative shrink-0 h-36 w-36">
                         <svg viewBox="0 0 100 100" className="h-full w-full" style={{ transform: 'rotate(-90deg)' }}>
+                          {/* Full background ring = total week target */}
                           <circle cx={CX} cy={CY} r={r} fill="none" stroke="#f1f5f9" strokeWidth={18} />
                           {segments.map(({ td, arcLen, dashOffset }) => (
                             <circle
@@ -3221,12 +3228,12 @@ function App() {
                           ))}
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                          <span className="text-xl font-bold text-slate-700 leading-none">{totalHours}h</span>
-                          <span className="text-[10px] text-slate-400 mt-1">total</span>
+                          <span className="text-xl font-bold text-slate-700 leading-none">{loggedHours}h</span>
+                          <span className="text-[10px] text-slate-400 mt-0.5">of {targetHours}h target</span>
                         </div>
                       </div>
 
-                      {/* Legend */}
+                      {/* Legend — % = track logged ÷ total week target */}
                       <div className="flex flex-col gap-2.5 min-w-0 flex-1">
                         {segments.map(({ td, pct }) => (
                           <button
