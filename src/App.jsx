@@ -2264,8 +2264,7 @@ function App() {
     if (!quickLogForm.activityType) errors.activityType = 'Required'
     if (!quickLogForm.track) errors.track = 'Required'
     if (!quickLogForm.durationMinutes) errors.durationMinutes = 'Required'
-    const trackHasKpis = QUICK_LOG_KPI_GROUPS.some((g) => g.track === quickLogForm.track)
-    if (trackHasKpis && quickLogForm.kpiCredits.length === 0) errors.kpiCredits = 'Select at least one KPI'
+    // KPI credits are optional — time can be logged without hitting a KPI
     if (Object.keys(errors).length > 0) { setQuickLogErrors(errors); return }
 
     setQuickLogSubmitting(true)
@@ -2276,13 +2275,8 @@ function App() {
     // Determine unique tracks from selected KPIs
     const tracks = [...new Set(quickLogForm.kpiCredits.map((k) => KPI_LABEL_TO_TRACK[k]).filter(Boolean))]
 
-    // Build one completion log entry per KPI (preserving individual quantities)
-    const newLogEntries = quickLogForm.kpiCredits.map((mapping, i) => ({
-      id: `ql-${Date.now()}-${i}-${mapping.replace(/\s+/g, '-')}`,
+    const baseEntry = {
       taskName: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
-      track: KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? '',
-      kpiMapping: mapping,
-      quantity: quickLogForm.kpiQuantities[mapping] ?? 1,
       outcomeAchieved: true,
       definitionOfDoneUsed: false,
       completedAt: now,
@@ -2292,7 +2286,24 @@ function App() {
       pauseDurationSeconds: 0,
       cancelledSeconds: 0,
       isQuickLog: true,
-    }))
+    }
+
+    // Build one completion log entry per KPI; if none selected, one entry for the track
+    const newLogEntries = quickLogForm.kpiCredits.length > 0
+      ? quickLogForm.kpiCredits.map((mapping, i) => ({
+          ...baseEntry,
+          id: `ql-${Date.now()}-${i}-${mapping.replace(/\s+/g, '-')}`,
+          track: KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? quickLogForm.track,
+          kpiMapping: mapping,
+          quantity: quickLogForm.kpiQuantities[mapping] ?? 1,
+        }))
+      : [{
+          ...baseEntry,
+          id: `ql-${Date.now()}-0-no-kpi`,
+          track: quickLogForm.track,
+          kpiMapping: null,
+          quantity: 1,
+        }]
 
     // Update completion log immediately (KPI dashboard reacts instantly)
     setCompletionLog((prev) => [...prev, ...newLogEntries])
@@ -2315,10 +2326,16 @@ function App() {
         userId,
       )
 
-      // 2. One timer_sessions record per KPI (with individual quantities)
-      for (const mapping of quickLogForm.kpiCredits) {
-        const track = KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? ''
-        const qty = quickLogForm.kpiQuantities[mapping] ?? 1
+      // 2. One timer_sessions record per KPI; if none selected, one record for the track
+      const kpiMappingsToSave = quickLogForm.kpiCredits.length > 0
+        ? quickLogForm.kpiCredits.map((mapping) => ({
+            track: KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? quickLogForm.track,
+            kpi_mapping: mapping,
+            quantity: quickLogForm.kpiQuantities[mapping] ?? 1,
+          }))
+        : [{ track: quickLogForm.track, kpi_mapping: null, quantity: 1 }]
+
+      for (const { track, kpi_mapping, quantity } of kpiMappingsToSave) {
         const row = {
           id: crypto.randomUUID(),
           user_id: userId,
@@ -2326,8 +2343,8 @@ function App() {
           task_name: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
           track,
           sub_track: quickLogForm.subTrack.trim() || '',
-          kpi_mapping: mapping,
-          quantity: qty,
+          kpi_mapping,
+          quantity,
           timer_state: 'Completed',
           completion_type: 'Done',
           estimate_seconds: elapsedSeconds,
@@ -4662,7 +4679,7 @@ function App() {
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-700">Type</label>
                 <div className="flex flex-wrap gap-2">
-                  {['Call', 'Coffee Chat', 'Message', 'Meeting', 'Event'].map((t) => (
+                  {['Call', 'Coffee Chat', 'Message', 'Meeting', 'Event', 'Materials'].map((t) => (
                     <button
                       key={t}
                       type="button"
@@ -4755,8 +4772,9 @@ function App() {
 
               {/* KPI Credits */}
               <div>
-                <label className="mb-2 block text-xs font-semibold text-slate-700">KPI Credits</label>
-                {quickLogErrors.kpiCredits && <p className="mb-1 text-[11px] text-rose-600">{quickLogErrors.kpiCredits}</p>}
+                <label className="mb-2 block text-xs font-semibold text-slate-700">
+                  KPI Credits <span className="font-normal text-slate-400">(optional)</span>
+                </label>
                 {quickLogForm.track && !QUICK_LOG_KPI_GROUPS.some((g) => g.track === quickLogForm.track) ? (
                   <p className="text-xs text-slate-400 italic">No KPI credits defined for this track.</p>
                 ) : (
