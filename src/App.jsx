@@ -3191,7 +3191,7 @@ function App() {
               const chartTracks = timeByTrack.filter((t) => t.track.key !== 'networking' && t.minutesLogged > 0)
               const r = 38, CX = 50, CY = 50
               const circ = 2 * Math.PI * r
-              const GAP = 3
+              const GAP = 0
               let cumFrac = 0
               const segments = chartTracks.map((td) => {
                 const frac = totalTarget > 0 ? td.minutesLogged / totalTarget : 0
