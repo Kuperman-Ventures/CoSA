@@ -238,21 +238,19 @@ export async function upsertTimerSession(session, task, userId) {
 
 export async function loadTimerSessions(userId, days = 90) {
   if (!supabase || !userId) return null
-  try {
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-    const { data, error } = await supabase
-      .from('timer_sessions')
-      .select('*')
-      .eq('user_id', userId)
-      .gte('created_at', since)
-      .not('completion_type', 'is', null)
-      .order('completed_at', { ascending: true })
-    if (error) { console.error('[loadTimerSessions]', error.message); return null }
-    return (data ?? []).map(rowToLogEntry)
-  } catch (err) {
-    console.error('[loadTimerSessions]', err.message)
-    return null
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('timer_sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('created_at', since)
+    .not('completion_type', 'is', null)
+    .order('completed_at', { ascending: true })
+  if (error) {
+    // Throw so doSync's try/catch shows a visible sync error rather than silently leaving data empty.
+    throw new Error(`[loadTimerSessions] ${error.message}`)
   }
+  return (data ?? []).map(rowToLogEntry)
 }
 
 export async function loadTodayTimerSessions(userId, taskInstanceIds) {
