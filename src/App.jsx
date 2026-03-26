@@ -3130,6 +3130,76 @@ function App() {
               <p className="mb-3 text-[11px] text-slate-500">
                 Bars reflect your timer sessions and quick logs.
               </p>
+
+              {/* Donut chart — track time as % of total */}
+              {(() => {
+                const totalMins = timeByTrack.reduce((s, t) => s + t.minutesLogged, 0)
+                if (totalMins < 1) return null
+                const r = 38, CX = 50, CY = 50
+                const circ = 2 * Math.PI * r
+                const GAP = 3
+                const activeSegments = timeByTrack.filter((t) => t.minutesLogged > 0)
+                let cumFrac = 0
+                const segments = activeSegments.map((td) => {
+                  const frac = td.minutesLogged / totalMins
+                  const arcLen = Math.max(frac * circ - GAP, 0)
+                  const dashOffset = circ * (1 - cumFrac)
+                  cumFrac += frac
+                  return { td, arcLen, dashOffset, pct: Math.round(frac * 100) }
+                })
+                const totalHours = (totalMins / 60).toFixed(1)
+                return (
+                  <div className="mb-5 flex items-center gap-5">
+                    <div className="relative shrink-0 h-28 w-28">
+                      <svg viewBox="0 0 100 100" className="h-full w-full" style={{ transform: 'rotate(-90deg)' }}>
+                        {/* Background ring */}
+                        <circle cx={CX} cy={CY} r={r} fill="none" stroke="#f1f5f9" strokeWidth={18} />
+                        {segments.map(({ td, arcLen, dashOffset }) => (
+                          <circle
+                            key={td.track.key}
+                            cx={CX} cy={CY} r={r}
+                            fill="none"
+                            stroke={td.track.color}
+                            strokeWidth={18}
+                            strokeLinecap="butt"
+                            strokeDasharray={`${arcLen} ${circ}`}
+                            strokeDashoffset={dashOffset}
+                          />
+                        ))}
+                      </svg>
+                      {/* Center label */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-base font-bold text-slate-700 leading-none">{totalHours}h</span>
+                        <span className="text-[9px] text-slate-400 mt-0.5">total</span>
+                      </div>
+                    </div>
+
+                    {/* Legend */}
+                    <div className="flex flex-col gap-1.5 min-w-0">
+                      {segments.map(({ td, pct }) => (
+                        <button
+                          key={td.track.key}
+                          type="button"
+                          onClick={() => openTrackDetail(td)}
+                          className="flex items-center gap-2 text-left group"
+                        >
+                          <span
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: td.track.color }}
+                          />
+                          <span className="text-[11px] text-slate-600 truncate group-hover:text-slate-900 transition-colors">
+                            {td.track.label}
+                          </span>
+                          <span className="shrink-0 text-[11px] font-semibold ml-auto pl-2" style={{ color: td.track.color }}>
+                            {pct}%
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="space-y-3">
                 {timeByTrack.map((trackData) => {
                   const { track, minutesLogged, targetMins, pct, pctRaw } = trackData
