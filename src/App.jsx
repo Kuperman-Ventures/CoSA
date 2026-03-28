@@ -1006,8 +1006,11 @@ function App() {
     const persisted = loadPersistedState()
     return persisted?.kpiSessionValues ?? {}
   })
-  // { [todayTaskId]: { [subtaskId]: boolean } } — checkbox state for subtasks in Today Queue
+  // { [todayTaskId]: { [checkKey]: boolean } } — checkbox state for subtasks in Today Queue
+  // checkKey is either subtaskId (plain subtask) or "subtaskId:itemId" (nested item)
   const [subtaskChecks, setSubtaskChecks] = useState({})
+  // { [todayTaskId]: { [subtaskId]: boolean } } — which subtasks are expanded in Today Queue
+  const [subtaskExpanded, setSubtaskExpanded] = useState({})
   const [quickLogEntries, setQuickLogEntries] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem(QUICK_LOG_LOCAL_KEY) ?? '[]') } catch { return [] }
   })
@@ -1653,7 +1656,7 @@ function App() {
           })
         }
 
-        // ── 3. User preferences (cleared dates, allocations) ─────────────────
+        // ── 3. User preferences (cleared dates, allocations, subtask checks) ──
         setSyncStep('Loading your preferences…')
         const prefs = await loadUserPreferences(userId)
         if (prefs?.cleared_dates) {
@@ -1662,6 +1665,9 @@ function App() {
         }
         if (prefs?.allocations && typeof prefs.allocations === 'object') {
           try { window.localStorage.setItem('cosa.allocations', JSON.stringify(prefs.allocations)) } catch {}
+        }
+        if (prefs?.subtask_checks && typeof prefs.subtask_checks === 'object') {
+          setSubtaskChecks(prefs.subtask_checks)
         }
 
         // ── 4. Calendar sync (non-fatal — auth errors shown inline) ──────────
@@ -1729,6 +1735,16 @@ function App() {
     }, 500)
     return () => clearTimeout(taskLibrarySyncTimer.current)
   }, [taskLibrary, session?.user?.id, supabaseConfigured])
+
+  // ── Sync subtask check state to Supabase (debounced 800ms) ───────────────
+  useEffect(() => {
+    if (!supabaseConfigured || !supabase || !session?.user?.id) return
+    const userId = session.user.id
+    const t = setTimeout(() => {
+      upsertUserPreferences({ subtask_checks: subtaskChecks }, userId)
+    }, 800)
+    return () => clearTimeout(t)
+  }, [subtaskChecks, session?.user?.id, supabaseConfigured])
 
   // ── Load current week's review into draft when week changes ─────────────
   useEffect(() => {
@@ -2704,14 +2720,20 @@ function App() {
               {/* ── Subtasks ─────────────────────────────────────────── */}
               {(() => {
                 const taskSubtasks = subtasksMap[selectedLibraryTask.id] ?? []
+                const updateSubtask = (stId, patch) => {
+                  const next = taskSubtasks.map((s) => s.id === stId ? { ...s, ...patch } : s)
+                  updateLibraryTask(selectedLibraryTask.id, 'subtasks', next)
+                }
                 return (
                 <div className="sm:col-span-2">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm text-slate-600">Subtasks <span className="text-xs text-slate-400">(shown as checkboxes in Today Queue)</span></span>
+                    <span className="text-sm text-slate-600">
+                      Subtasks <span className="text-xs text-slate-400">(each can optionally have its own checklist items)</span>
+                    </span>
                     <button
                       type="button"
                       onClick={() => {
-                        const newSubtask = { id: `st-${Date.now()}`, text: '' }
+                        const newSubtask = { id: `st-${Date.now()}`, text: '', items: [] }
                         updateLibraryTask(selectedLibraryTask.id, 'subtasks', [...taskSubtasks, newSubtask])
                       }}
                       className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
@@ -2724,34 +2746,73 @@ function App() {
                       No subtasks yet — click "Add subtask" to create a checklist.
                     </p>
                   ) : (
-                    <ul className="space-y-1.5">
-                      {taskSubtasks.map((st, stIdx) => (
-                        <li key={st.id} className="flex items-center gap-2">
-                          <span className="shrink-0 text-slate-300">☐</span>
-                          <input
-                            type="text"
-                            value={st.text}
-                            placeholder={`Step ${stIdx + 1}`}
-                            onChange={(e) => {
-                              const next = taskSubtasks.map((s) =>
-                                s.id === st.id ? { ...s, text: e.target.value } : s
-                              )
-                              updateLibraryTask(selectedLibraryTask.id, 'subtasks', next)
-                            }}
-                            className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-300"
-                          />
-                          <button
-                            type="button"
-                            title="Remove subtask"
-                            onClick={() => {
-                              updateLibraryTask(selectedLibraryTask.id, 'subtasks', taskSubtasks.filter((s) => s.id !== st.id))
-                            }}
-                            className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
-                          >
-                            ✕
-                          </button>
-                        </li>
-                      ))}
+                    <ul className="space-y-3">
+                      {taskSubtasks.map((st, stIdx) => {
+                        const items = st.items ?? []
+                        return (
+                          <li key={st.id} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                            {/* Subtask header row */}
+                            <div className="flex items-center gap-2">
+                              <span className="shrink-0 text-slate-300">☐</span>
+                              <input
+                                type="text"
+                                value={st.text}
+                                placeholder={`Subtask ${stIdx + 1}`}
+                                onChange={(e) => updateSubtask(st.id, { text: e.target.value })}
+                                className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+                              />
+                              <button
+                                type="button"
+                                title="Remove subtask"
+                                onClick={() => updateLibraryTask(selectedLibraryTask.id, 'subtasks', taskSubtasks.filter((s) => s.id !== st.id))}
+                                className="shrink-0 rounded p-1 text-slate-300 hover:bg-rose-50 hover:text-rose-500"
+                              >
+                                ✕
+                              </button>
+                            </div>
+
+                            {/* Checklist items under this subtask */}
+                            {items.length > 0 && (
+                              <ul className="mt-2 space-y-1.5 border-l-2 border-slate-200 pl-4">
+                                {items.map((item, iIdx) => (
+                                  <li key={item.id} className="flex items-center gap-2">
+                                    <span className="shrink-0 text-[10px] text-slate-300">○</span>
+                                    <input
+                                      type="text"
+                                      value={item.text}
+                                      placeholder={`Item ${iIdx + 1}`}
+                                      onChange={(e) => {
+                                        const nextItems = items.map((it) => it.id === item.id ? { ...it, text: e.target.value } : it)
+                                        updateSubtask(st.id, { items: nextItems })
+                                      }}
+                                      className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-blue-300"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => updateSubtask(st.id, { items: items.filter((it) => it.id !== item.id) })}
+                                      className="shrink-0 rounded p-0.5 text-slate-300 hover:bg-rose-50 hover:text-rose-400"
+                                    >
+                                      ✕
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+
+                            {/* Add item button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newItem = { id: `it-${Date.now()}`, text: '' }
+                                updateSubtask(st.id, { items: [...items, newItem] })
+                              }}
+                              className="mt-2 ml-4 text-[11px] text-slate-400 hover:text-blue-500 transition-colors"
+                            >
+                              + add checklist item
+                            </button>
+                          </li>
+                        )
+                      })}
                     </ul>
                   )}
                 </div>
@@ -4324,30 +4385,107 @@ function App() {
                 {showChecklist ? (
                   <div className="min-w-0 rounded-lg border border-slate-200 p-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Checklist</p>
-                    <ul className="space-y-1.5">
+                    <ul className="space-y-1">
                       {activeSubtasks.map((st) => {
-                        const checked = subtaskChecks[activeTask.id]?.[st.id] ?? false
+                        const items = (st.items ?? []).filter((it) => it.text.trim())
+                        const hasItems = items.length > 0
+                        const taskChecks = subtaskChecks[activeTask.id] ?? {}
+                        const taskExpanded = subtaskExpanded[activeTask.id] ?? {}
+
+                        // Helper: update check state then test for full completion
+                        const applyCheck = (nextChecks) => {
+                          setSubtaskChecks((prev) => ({ ...prev, [activeTask.id]: nextChecks }))
+                          // Auto-complete the task when every subtask/item is checked
+                          const allDone = activeSubtasks.every((s) => {
+                            const its = (s.items ?? []).filter((it) => it.text.trim())
+                            if (its.length === 0) return nextChecks[s.id] ?? false
+                            return its.every((it) => nextChecks[`${s.id}:${it.id}`] ?? false)
+                          })
+                          if (allDone) handleCompleteTask(activeTask.id)
+                        }
+
+                        if (!hasItems) {
+                          // Plain checkbox subtask (no nested items)
+                          const checked = taskChecks[st.id] ?? false
+                          return (
+                            <li key={st.id}>
+                              <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-1 py-1 hover:bg-slate-50">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    applyCheck({ ...taskChecks, [st.id]: !checked })
+                                  }}
+                                  className="h-4 w-4 shrink-0 rounded accent-slate-900"
+                                />
+                                <span className={`text-sm ${checked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                                  {st.text}
+                                </span>
+                              </label>
+                            </li>
+                          )
+                        }
+
+                        // Subtask with nested checklist items — collapsible
+                        const checkedCount = items.filter((it) => taskChecks[`${st.id}:${it.id}`] ?? false).length
+                        const allItemsDone = checkedCount === items.length
+                        const isExpanded = taskExpanded[st.id] ?? false
+
                         return (
-                          <li key={st.id}>
-                            <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-1 py-1 hover:bg-slate-50">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  setSubtaskChecks((prev) => ({
-                                    ...prev,
-                                    [activeTask.id]: {
-                                      ...(prev[activeTask.id] ?? {}),
-                                      [st.id]: !checked,
-                                    },
-                                  }))
-                                }
-                                className="h-4 w-4 shrink-0 rounded accent-slate-900"
-                              />
-                              <span className={`text-sm ${checked ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                          <li key={st.id} className="rounded-md border border-slate-100">
+                            {/* Subtask header — click to expand/collapse */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSubtaskExpanded((prev) => ({
+                                  ...prev,
+                                  [activeTask.id]: { ...(prev[activeTask.id] ?? {}), [st.id]: !isExpanded },
+                                }))
+                              }
+                              className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-slate-50 rounded-md"
+                            >
+                              {isExpanded
+                                ? <ChevronDown size={13} className="shrink-0 text-slate-400" />
+                                : <ChevronRight size={13} className="shrink-0 text-slate-400" />
+                              }
+                              <span className={`flex-1 text-sm font-medium ${allItemsDone ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
                                 {st.text}
                               </span>
-                            </label>
+                              <span className={`shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${
+                                allItemsDone
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : checkedCount > 0
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-slate-100 text-slate-500'
+                              }`}>
+                                {checkedCount}/{items.length}
+                              </span>
+                            </button>
+
+                            {/* Expanded item list */}
+                            {isExpanded && (
+                              <ul className="border-t border-slate-100 px-2 py-1.5 space-y-1">
+                                {items.map((item) => {
+                                  const key = `${st.id}:${item.id}`
+                                  const checked = taskChecks[key] ?? false
+                                  return (
+                                    <li key={item.id}>
+                                      <label className="flex cursor-pointer items-center gap-2.5 rounded px-1 py-0.5 hover:bg-slate-50">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() => applyCheck({ ...taskChecks, [key]: !checked })}
+                                          className="h-3.5 w-3.5 shrink-0 rounded accent-slate-700"
+                                        />
+                                        <span className={`text-xs ${checked ? 'text-slate-400 line-through' : 'text-slate-600'}`}>
+                                          {item.text}
+                                        </span>
+                                      </label>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            )}
                           </li>
                         )
                       })}
