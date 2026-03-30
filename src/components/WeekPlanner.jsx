@@ -6,6 +6,7 @@ import {
   replaceTodayTasks,
   loadCalendarEventTags,
   upsertCalendarEventTag,
+  deleteCalendarEventTag,
 } from '../lib/supabaseSync'
 import {
   createCalendarEventAtTime,
@@ -1193,11 +1194,39 @@ export default function WeekPlanner({
 
   useEffect(() => { fetchWeek() }, [fetchWeek])
 
-  // ── Load calendar tags from Supabase ──────────────────────────────────────
+  // ── Load calendar tags from Supabase, then prune any whose GCal event is gone ──
   useEffect(() => {
     if (!supabaseConfigured || !session?.user?.id) return
-    loadCalendarEventTags(session.user.id).then(setCalendarTags)
-  }, [session?.user?.id, supabaseConfigured])
+    const userId = session.user.id
+    loadCalendarEventTags(userId).then(async (tags) => {
+      if (!Object.keys(tags).length) { setCalendarTags(tags); return }
+      // personalEvents is already fetched for this week — cross-reference to find orphaned tags.
+      // Tags whose date falls in the displayed week but whose event is no longer in GCal are stale.
+      const livePersonalIds = new Set(personalEvents.map((ev) => ev.id))
+      const staleIds = Object.entries(tags)
+        .filter(([gcalId, tag]) => {
+          const tagDate = tag.date
+          if (!tagDate || tagDate < mondayStr) return false  // past weeks — don't touch
+          const wd = getWeekDates(mondayStr)
+          const sundayStr = wd[wd.length - 1].date
+          if (tagDate > sundayStr) return false               // future weeks — skip
+          return !livePersonalIds.has(gcalId)                // event gone from GCal
+        })
+        .map(([gcalId]) => gcalId)
+
+      if (staleIds.length > 0) {
+        console.info('[WeekPlanner] Removing stale calendar tags for deleted GCal events:', staleIds)
+        await Promise.all(staleIds.map((id) => deleteCalendarEventTag(userId, id)))
+        const cleaned = { ...tags }
+        staleIds.forEach((id) => delete cleaned[id])
+        setCalendarTags(cleaned)
+      } else {
+        setCalendarTags(tags)
+      }
+    })
+  // personalEvents is a dep so this re-runs after fetchWeek completes and sets them.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id, supabaseConfigured, personalEvents])
 
   // ── Drop library task onto time grid ─────────────────────────────────────
   async function handleDropLibraryTask(taskId, dateStr, startMins) {

@@ -546,6 +546,23 @@ export async function loadCalendarEventTags(userId) {
 }
 
 /**
+ * Delete a calendar event tag. Called when the underlying GCal event no longer exists.
+ */
+export async function deleteCalendarEventTag(userId, gcalEventId) {
+  if (!supabase || !userId || !gcalEventId) return
+  try {
+    const { error } = await supabase
+      .from('calendar_event_tags')
+      .delete()
+      .eq('user_id', userId)
+      .eq('gcal_event_id', gcalEventId)
+    if (error) console.error('[deleteCalendarEventTag]', error.message)
+  } catch (err) {
+    console.error('[deleteCalendarEventTag]', err.message)
+  }
+}
+
+/**
  * Create or update a calendar event tag (upsert on user_id + gcal_event_id).
  */
 export async function upsertCalendarEventTag(userId, gcalEventId, {
