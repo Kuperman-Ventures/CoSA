@@ -2109,78 +2109,8 @@ function App() {
     setReviewSaving(false)
   }
 
-  function buildReviewHtml({ weekLabel, score, kpisHit, kpisTotal, q1, q2, q3, mondayIntention }) {
-    const scoreColors = { green: '#d1fae5', yellow: '#fef3c7', red: '#fee2e2' }
-    const scoreTextColors = { green: '#065f46', yellow: '#92400e', red: '#991b1b' }
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Friday Review — ${weekLabel}</title>
-  <style>
-    body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 760px; margin: 32px auto; color: #111827; line-height: 1.5; }
-    h1 { font-size: 26px; margin-bottom: 4px; }
-    .sub { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
-    .badge { display: inline-block; padding: 4px 14px; border-radius: 99px; font-weight: 700; font-size: 13px; background: ${scoreColors[score] ?? '#f1f5f9'}; color: ${scoreTextColors[score] ?? '#334155'}; margin-bottom: 20px; }
-    h2 { font-size: 15px; font-weight: 700; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; margin-top: 28px; }
-    p { font-size: 14px; white-space: pre-wrap; min-height: 40px; }
-    .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af; }
-  </style>
-</head>
-<body>
-  <h1>Friday Review</h1>
-  <p class="sub">${weekLabel}</p>
-  <div class="badge">${score.toUpperCase()} — ${kpisHit} of ${kpisTotal} KPIs hit</div>
-  <h2>What actually got in the way?</h2>
-  <p>${q1 || '(not answered)'}</p>
-  <h2>One thing to do differently next week?</h2>
-  <p>${q2 || '(not answered)'}</p>
-  <h2>One thing done well this week?</h2>
-  <p>${q3 || '(not answered)'}</p>
-  <h2>Monday intention</h2>
-  <p>${mondayIntention || '(not set)'}</p>
-  <div class="footer">Chief of Staff — generated ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
-</body>
-</html>`
-  }
-
-  function openPrintWindow(html) {
-    const win = window.open('', '_blank')
-    win.document.write(html)
-    win.document.close()
-    win.print()
-  }
-
-  function handlePrintReview() {
-    const { start: weekStart, end: weekEnd } = getWeekBounds(weekOffset)
-    openPrintWindow(buildReviewHtml({
-      weekLabel: formatWeekLabel(weekStart, weekEnd),
-      score: kpiSummary.weekScore,
-      kpisHit: kpiSummary.kpisHit,
-      kpisTotal: kpiSummary.kpisTotal,
-      q1: reviewDraft.q1,
-      q2: reviewDraft.q2,
-      q3: reviewDraft.q3,
-      mondayIntention: reviewDraft.mondayIntention,
-    }))
-  }
-
-  function handlePrintPastReview(r) {
-    // Reconstruct the week label from the stored week_start date string
-    const ws = new Date(r.week_start + 'T12:00:00')
-    const we = new Date(ws)
-    we.setDate(we.getDate() + 6)
-    openPrintWindow(buildReviewHtml({
-      weekLabel: formatWeekLabel(ws, we),
-      score: r.week_score ?? 'red',
-      kpisHit: r.kpis_hit ?? 0,
-      kpisTotal: r.kpis_total ?? 0,
-      q1: r.q1,
-      q2: r.q2,
-      q3: r.q3,
-      mondayIntention: r.monday_intention,
-    }))
-  }
+  // handlePrintReview and handlePrintPastReview are defined inside
+  // renderKpiDashboard so they can access the locally-computed timeByTrack.
 
   // ── Clear Day handlers ────────────────────────────────────────────────────
 
@@ -3158,6 +3088,58 @@ function App() {
       )
     }
 
+    // Helper: build a timeByTrack array for any arbitrary week range from completionLog.
+    // Used for past-week exports where we don't have live calendar data.
+    function buildTimeByTrack(ws, we) {
+      const netMins = completionLog.reduce((sum, e) => {
+        const d = new Date(e.completedAt)
+        if (d < ws || d > we || e.track !== 'networking') return sum
+        return sum + Math.round((e.elapsedSeconds ?? 0) / 60)
+      }, 0)
+      return Object.values(TRACKS)
+        .filter((track) => track.key !== 'networking')
+        .map((track) => {
+          const entries = completionLog.filter((e) => {
+            const d = new Date(e.completedAt)
+            return d >= ws && d <= we && e.track === track.key
+          })
+          let minutesLogged = entries.reduce((sum, e) => sum + Math.round((e.elapsedSeconds ?? 0) / 60), 0)
+          if (track.key === 'advisors') minutesLogged += Math.round(netMins / 2)
+          if (track.key === 'jobSearch') minutesLogged += netMins - Math.round(netMins / 2)
+          const targetMins = TRACK_MIN_TARGETS[track.key] ?? 0
+          const pctRaw = targetMins > 0 ? Math.round((minutesLogged / targetMins) * 100) : 0
+          const splitEntries = (track.key === 'advisors' || track.key === 'jobSearch')
+            ? completionLog.filter((e) => {
+                const d = new Date(e.completedAt)
+                return d >= ws && d <= we && e.track === 'networking'
+              })
+            : []
+          const subTrackTotals = {}
+          for (const e of entries) {
+            if (!e.subTrack) continue
+            subTrackTotals[e.subTrack] = (subTrackTotals[e.subTrack] ?? 0) + Math.round((e.elapsedSeconds ?? 0) / 60)
+          }
+          return {
+            track, minutesLogged, targetMins, pct: Math.min(100, pctRaw), pctRaw,
+            entries, splitEntries, calendarMins: 0,
+            subTrackRows: Object.entries(subTrackTotals).sort((a, b) => b[1] - a[1]),
+          }
+        })
+        .filter((t) => t.targetMins > 0)
+    }
+
+    // Helper: compute full kpiResults for any week range using completionLog + calendarEventTags.
+    function buildKpiResultsForWeek(ws, we) {
+      const ms = new Date(ws.getFullYear(), ws.getMonth(), 1)
+      const me = new Date(ws.getFullYear(), ws.getMonth() + 1, 0, 23, 59, 59, 999)
+      return KPI_DEFINITIONS.map((def) => {
+        const { count: logCount, total } = countKpi(completionLog, def, ws, we, ms, me)
+        const calCount = countCalendarTagKpiCredits(calendarEventTags, def, ws, we, ms, me)
+        const count = logCount + calCount
+        return { ...def, count, total, hit: isKpiHit(count, total, def) }
+      })
+    }
+
     function handleExportReport() {
       exportWeeklyReportHTML({
         weekStart,
@@ -3170,6 +3152,53 @@ function App() {
           return d >= weekStart && d <= weekEnd
         }),
         fridayReview: savedReview ?? null,
+      })
+    }
+
+    // Export PDF for the current week's Friday Review — identical to the nav Export button.
+    function handlePrintReview() {
+      exportWeeklyReportHTML({
+        weekStart,
+        weekEnd,
+        kpiSummary,
+        kpiTrackGroups: KPI_TRACK_GROUPS,
+        timeByTrack,
+        completionLog: completionLog.filter((e) => {
+          const d = new Date(e.completedAt)
+          return d >= weekStart && d <= weekEnd
+        }),
+        fridayReview: savedReview ?? null,
+      })
+    }
+
+    // Export PDF for a past week — rebuilds time and KPI data from completionLog history.
+    function handlePrintPastReview(r) {
+      const ws = new Date(r.week_start + 'T12:00:00')
+      const we = new Date(ws)
+      we.setDate(we.getDate() + 6)
+      we.setHours(23, 59, 59, 999)
+      const pastTimeByTrack = buildTimeByTrack(ws, we)
+      const pastKpiResults = buildKpiResultsForWeek(ws, we)
+      const weeklyKpisForScore = pastKpiResults.filter(
+        (k) => !k.isRate && k.period === 'week' && k.target && k.countsTowardWeekScore !== false,
+      )
+      const pastKpisHit = weeklyKpisForScore.filter((k) => k.hit).length
+      exportWeeklyReportHTML({
+        weekStart: ws,
+        weekEnd: we,
+        kpiSummary: {
+          weekScore: r.week_score ?? 'red',
+          kpisHit: pastKpisHit,
+          kpisTotal: weeklyKpisForScore.length,
+          kpiResults: pastKpiResults,
+        },
+        kpiTrackGroups: KPI_TRACK_GROUPS,
+        timeByTrack: pastTimeByTrack,
+        completionLog: completionLog.filter((e) => {
+          const d = new Date(e.completedAt)
+          return d >= ws && d <= we
+        }),
+        fridayReview: r,
       })
     }
 
