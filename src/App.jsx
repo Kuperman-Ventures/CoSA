@@ -1683,8 +1683,10 @@ function App() {
         setSyncStep('Loading your activity log…')
         const remoteSessions = await loadTimerSessions(userId)
         if (remoteSessions && remoteSessions.length > 0) {
-          // Supabase is the source of truth — replace local, keeping only in-flight
-          // entries that haven't made it to Supabase yet (non-ql- IDs not in remote).
+          // Supabase is the source of truth.
+          // localOnly keeps any UUID entry whose Supabase insert failed (not in remoteIds,
+          // not a legacy ql- entry) so it stays visible until a future sync persists it.
+          // ql- entries are legacy cache artifacts — new quick logs use real UUIDs.
           setCompletionLog((prev) => {
             const remoteIds = new Set(remoteSessions.map((s) => s.id))
             const localOnly = prev.filter(
@@ -2267,22 +2269,26 @@ function App() {
       isQuickLog: true,
     }
 
-    // Build one completion log entry per KPI; if none selected, one entry for the track
-    const newLogEntries = quickLogForm.kpiCredits.length > 0
-      ? quickLogForm.kpiCredits.map((mapping, i) => ({
-          ...baseEntry,
-          id: `ql-${Date.now()}-${i}-${mapping.replace(/\s+/g, '-')}`,
+    // Generate stable UUIDs upfront — the SAME id is used for both the local
+    // completionLog entry and the Supabase timer_sessions row so they can be
+    // reconciled correctly on reload without data loss if the insert fails.
+    const kpiMappingsToSave = quickLogForm.kpiCredits.length > 0
+      ? quickLogForm.kpiCredits.map((mapping) => ({
+          id: crypto.randomUUID(),
           track: KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? quickLogForm.track,
-          kpiMapping: mapping,
+          kpi_mapping: mapping,
           quantity: quickLogForm.kpiQuantities[mapping] ?? 1,
         }))
-      : [{
-          ...baseEntry,
-          id: `ql-${Date.now()}-0-no-kpi`,
-          track: quickLogForm.track,
-          kpiMapping: null,
-          quantity: 1,
-        }]
+      : [{ id: crypto.randomUUID(), track: quickLogForm.track, kpi_mapping: null, quantity: 1 }]
+
+    // Build one completion log entry per KPI using the pre-generated UUID
+    const newLogEntries = kpiMappingsToSave.map(({ id, track, kpi_mapping, quantity }) => ({
+      ...baseEntry,
+      id,
+      track,
+      kpiMapping: kpi_mapping,
+      quantity,
+    }))
 
     // Update completion log immediately (KPI dashboard reacts instantly)
     setCompletionLog((prev) => [...prev, ...newLogEntries])
@@ -2305,18 +2311,11 @@ function App() {
         userId,
       )
 
-      // 2. One timer_sessions record per KPI; if none selected, one record for the track
-      const kpiMappingsToSave = quickLogForm.kpiCredits.length > 0
-        ? quickLogForm.kpiCredits.map((mapping) => ({
-            track: KPI_LABEL_TO_TRACK[mapping] ?? tracks[0] ?? quickLogForm.track,
-            kpi_mapping: mapping,
-            quantity: quickLogForm.kpiQuantities[mapping] ?? 1,
-          }))
-        : [{ track: quickLogForm.track, kpi_mapping: null, quantity: 1 }]
-
-      for (const { track, kpi_mapping, quantity } of kpiMappingsToSave) {
+      // 2. One timer_sessions row per KPI using the same UUID as the local entry
+      let anyInsertFailed = false
+      for (const { id, track, kpi_mapping, quantity } of kpiMappingsToSave) {
         const row = {
-          id: crypto.randomUUID(),
+          id,
           user_id: userId,
           task_instance_id: null,
           task_name: `Quick Log: ${quickLogForm.activityType} with ${quickLogForm.who}`,
@@ -2342,7 +2341,13 @@ function App() {
           notes: note,
         }
         const { error } = await supabase.from('timer_sessions').insert(row)
-        if (error) console.error('[QuickLog timer_session]', error.message)
+        if (error) {
+          console.error('[QuickLog timer_session]', error.message)
+          anyInsertFailed = true
+        }
+      }
+      if (anyInsertFailed) {
+        setStatusMessage('⚠️ Quick log saved locally but failed to sync — it will retry on next reload.')
       }
 
       // Refresh Quick Log panel so the new entry is visible immediately
