@@ -1162,7 +1162,10 @@ export default function WeekPlanner({
 
   const providerToken = session?.provider_token ?? null
 
-  // ── Fetch GCal events for the displayed week ──────────────────────────────
+  // ── Fetch GCal events + load/prune Supabase tags for the displayed week ──────
+  // Tags are loaded inside fetchWeek so the stale-event cross-reference uses the
+  // freshly-fetched `personal` array — NOT stale React state — avoiding a race
+  // condition that would incorrectly delete live tags on first render.
   const fetchWeek = useCallback(async () => {
     if (!providerToken) return
     setLoading(true)
@@ -1184,49 +1187,41 @@ export default function WeekPlanner({
       setWeekEvents(cosaTagged)
       setUntaggedCosaEvents(cosaUntagged)
       setPersonalEvents(personal)
+
+      // Load Supabase tags and prune any whose underlying GCal event no longer exists
+      // for this week. Using `personal` (not React state) avoids a race condition.
+      if (supabaseConfigured && session?.user?.id) {
+        const userId = session.user.id
+        const tags = await loadCalendarEventTags(userId)
+        const liveIds = new Set(personal.map((ev) => ev.id))
+        const staleIds = Object.entries(tags)
+          .filter(([gcalId, tag]) => {
+            const tagDate = tag.date
+            // Only prune tags that fall inside this displayed week — leave past/future alone.
+            if (!tagDate || tagDate < mondayStr || tagDate > sunday) return false
+            return !liveIds.has(gcalId)
+          })
+          .map(([gcalId]) => gcalId)
+
+        if (staleIds.length > 0) {
+          console.info('[WeekPlanner] Pruning stale tags for deleted GCal events:', staleIds)
+          await Promise.all(staleIds.map((id) => deleteCalendarEventTag(userId, id)))
+          const cleaned = { ...tags }
+          staleIds.forEach((id) => delete cleaned[id])
+          setCalendarTags(cleaned)
+        } else {
+          setCalendarTags(tags)
+        }
+      }
     } catch (err) {
       setError('Failed to load calendar events.')
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [providerToken, mondayStr])
+  }, [providerToken, mondayStr, supabaseConfigured, session?.user?.id])
 
   useEffect(() => { fetchWeek() }, [fetchWeek])
-
-  // ── Load calendar tags from Supabase, then prune any whose GCal event is gone ──
-  useEffect(() => {
-    if (!supabaseConfigured || !session?.user?.id) return
-    const userId = session.user.id
-    loadCalendarEventTags(userId).then(async (tags) => {
-      if (!Object.keys(tags).length) { setCalendarTags(tags); return }
-      // personalEvents is already fetched for this week — cross-reference to find orphaned tags.
-      // Tags whose date falls in the displayed week but whose event is no longer in GCal are stale.
-      const livePersonalIds = new Set(personalEvents.map((ev) => ev.id))
-      const staleIds = Object.entries(tags)
-        .filter(([gcalId, tag]) => {
-          const tagDate = tag.date
-          if (!tagDate || tagDate < mondayStr) return false  // past weeks — don't touch
-          const wd = getWeekDates(mondayStr)
-          const sundayStr = wd[wd.length - 1].date
-          if (tagDate > sundayStr) return false               // future weeks — skip
-          return !livePersonalIds.has(gcalId)                // event gone from GCal
-        })
-        .map(([gcalId]) => gcalId)
-
-      if (staleIds.length > 0) {
-        console.info('[WeekPlanner] Removing stale calendar tags for deleted GCal events:', staleIds)
-        await Promise.all(staleIds.map((id) => deleteCalendarEventTag(userId, id)))
-        const cleaned = { ...tags }
-        staleIds.forEach((id) => delete cleaned[id])
-        setCalendarTags(cleaned)
-      } else {
-        setCalendarTags(tags)
-      }
-    })
-  // personalEvents is a dep so this re-runs after fetchWeek completes and sets them.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id, supabaseConfigured, personalEvents])
 
   // ── Drop library task onto time grid ─────────────────────────────────────
   async function handleDropLibraryTask(taskId, dateStr, startMins) {
