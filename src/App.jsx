@@ -989,7 +989,6 @@ function App() {
   const [syncStep,   setSyncStep]   = useState('Connecting to your account…')
   const [syncError,  setSyncError]  = useState(null)
   const [syncTrigger, setSyncTrigger] = useState(0) // increment to force a re-sync
-  const [isSyncingLog, setIsSyncingLog] = useState(false)
   const [kpiCreditVotes, setKpiCreditVotes] = useState({}) // templateId → boolean
   const [todayPreviewDate, setTodayPreviewDate] = useState(null)
   const [clearedDates, setClearedDates] = useState(() => {
@@ -1728,6 +1727,34 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id, supabaseConfigured, syncTrigger])
 
+  // ── Re-fetch activity log whenever the KPI screen is opened ─────────────
+  // This ensures data logged on another device is always current without
+  // requiring a full page reload.
+  useEffect(() => {
+    if (activeScreen !== 'kpi' || !supabaseConfigured || !session?.user?.id) return
+    const userId = session.user.id
+    ;(async () => {
+      try {
+        const remoteSessions = await loadTimerSessions(userId)
+        if (remoteSessions && remoteSessions.length > 0) {
+          setCompletionLog((prev) => {
+            const remoteIds = new Set(remoteSessions.map((s) => s.id))
+            const localOnly = prev.filter(
+              (e) => !remoteIds.has(e.id) && !String(e.id).startsWith('ql-'),
+            )
+            return [...remoteSessions, ...localOnly]
+          })
+        }
+        const { start: qlStart, end: qlEnd } = getWeekBounds(0)
+        const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
+        setQuickLogEntries(qlEntries)
+      } catch (err) {
+        console.error('[kpi screen log refresh]', err)
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeScreen, session?.user?.id, supabaseConfigured])
+
   // ── Sync task library edits to Supabase (debounced 500ms) ────────────────
   useEffect(() => {
     if (!supabaseConfigured || !supabase || !session?.user?.id) return
@@ -2378,33 +2405,6 @@ function App() {
     setShowQuickLog(false)
     setQuickLogToast(true)
     setTimeout(() => setQuickLogToast(false), 2000)
-  }
-
-  // ── Manual log refresh — re-fetches timer sessions + quick logs from Supabase ──
-  // Needed when entries were logged on another device after this page already loaded.
-  async function handleRefreshLog() {
-    if (!supabaseConfigured || !session?.user?.id) return
-    setIsSyncingLog(true)
-    try {
-      const userId = session.user.id
-      const remoteSessions = await loadTimerSessions(userId)
-      if (remoteSessions && remoteSessions.length > 0) {
-        setCompletionLog((prev) => {
-          const remoteIds = new Set(remoteSessions.map((s) => s.id))
-          const localOnly = prev.filter(
-            (e) => !remoteIds.has(e.id) && !String(e.id).startsWith('ql-'),
-          )
-          return [...remoteSessions, ...localOnly]
-        })
-      }
-      const { start: qlStart, end: qlEnd } = getWeekBounds(0)
-      const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
-      setQuickLogEntries(qlEntries)
-    } catch (err) {
-      console.error('[handleRefreshLog]', err)
-    } finally {
-      setIsSyncingLog(false)
-    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -3252,15 +3252,6 @@ function App() {
             {isCurrentWeek ? <p className="text-xs text-slate-500">Current week</p> : null}
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleRefreshLog}
-              disabled={isSyncingLog}
-              title="Re-fetch logged time from Supabase — use this if entries from another device aren't showing up"
-              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-sm text-slate-600 hover:bg-slate-100 disabled:opacity-50"
-            >
-              {isSyncingLog ? '↻ Syncing…' : '↻ Sync'}
-            </button>
             <button
               type="button"
               onClick={() => { setReconcileExpandedTracks({}); setShowReconcileLog(true) }}
