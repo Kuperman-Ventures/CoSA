@@ -1704,10 +1704,60 @@ function App() {
         setFridayReviews(reviews)
 
         // ── 7. Quick log entries ─────────────────────────────────────────────
+        // Also used as a fallback: if a quick log's timer_sessions insert ever
+        // failed (historically due to task_instance_id NOT NULL constraint),
+        // the entry still exists in quick_log_entries. We synthesise completion
+        // log rows from it so time bars and KPI counts always reflect all logs.
         setSyncStep('Loading quick log entries…')
         const { start: qlStart, end: qlEnd } = getWeekBounds(0)
         const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
         setQuickLogEntries(qlEntries)
+
+        if (qlEntries.length > 0) {
+          setCompletionLog((prev) => {
+            // Build a lookup of timestamps already covered by quick-log timer_sessions
+            const remoteQlTimes = prev
+              .filter((e) => e.isQuickLog)
+              .map((e) => new Date(e.completedAt).getTime())
+
+            const synthetic = []
+            for (const ql of qlEntries) {
+              const qlTime = new Date(ql.logged_at).getTime()
+              // Skip if a matching timer_session already exists (±60 s window)
+              const alreadySynced = remoteQlTimes.some((t) => Math.abs(t - qlTime) <= 60_000)
+              if (alreadySynced) continue
+
+              const elapsedSeconds = (ql.duration_minutes ?? 0) * 60
+              const kpis = Array.isArray(ql.kpi_credits) ? ql.kpi_credits : []
+              if (kpis.length > 0) {
+                kpis.forEach((mapping) => {
+                  synthetic.push({
+                    id: `ql-fallback-${ql.id}-${mapping}`,
+                    taskName: `Quick Log: ${ql.activity_type} with ${ql.who}`,
+                    track: KPI_LABEL_TO_TRACK[mapping] ?? ql.track ?? 'advisors',
+                    kpiMapping: mapping,
+                    quantity: 1,
+                    completedAt: ql.logged_at,
+                    elapsedSeconds,
+                    isQuickLog: true,
+                  })
+                })
+              } else {
+                synthetic.push({
+                  id: `ql-fallback-${ql.id}`,
+                  taskName: `Quick Log: ${ql.activity_type} with ${ql.who}`,
+                  track: ql.track ?? 'advisors',
+                  kpiMapping: null,
+                  quantity: 1,
+                  completedAt: ql.logged_at,
+                  elapsedSeconds,
+                  isQuickLog: true,
+                })
+              }
+            }
+            return synthetic.length > 0 ? [...prev, ...synthetic] : prev
+          })
+        }
 
         // ── 8. Calendar event tags ───────────────────────────────────────────
         setSyncStep('Loading calendar tags…')
@@ -1729,25 +1779,69 @@ function App() {
 
   // ── Re-fetch activity log whenever the KPI screen is opened ─────────────
   // This ensures data logged on another device is always current without
-  // requiring a full page reload.
+  // requiring a full page reload. Also applies the quick_log_entries fallback
+  // so time bars reflect logs even if their timer_sessions inserts failed.
   useEffect(() => {
     if (activeScreen !== 'kpi' || !supabaseConfigured || !session?.user?.id) return
     const userId = session.user.id
     ;(async () => {
       try {
-        const remoteSessions = await loadTimerSessions(userId)
-        if (remoteSessions && remoteSessions.length > 0) {
-          setCompletionLog((prev) => {
+        const [remoteSessions, qlEntries] = await Promise.all([
+          loadTimerSessions(userId),
+          loadQuickLogEntries(...(() => { const { start, end } = getWeekBounds(0); return [start.toISOString(), end.toISOString(), userId] })()),
+        ])
+
+        setQuickLogEntries(qlEntries)
+
+        setCompletionLog((prev) => {
+          // Merge remote timer_sessions
+          let next = prev
+          if (remoteSessions && remoteSessions.length > 0) {
             const remoteIds = new Set(remoteSessions.map((s) => s.id))
             const localOnly = prev.filter(
               (e) => !remoteIds.has(e.id) && !String(e.id).startsWith('ql-'),
             )
-            return [...remoteSessions, ...localOnly]
-          })
-        }
-        const { start: qlStart, end: qlEnd } = getWeekBounds(0)
-        const qlEntries = await loadQuickLogEntries(qlStart.toISOString(), qlEnd.toISOString(), userId)
-        setQuickLogEntries(qlEntries)
+            next = [...remoteSessions, ...localOnly]
+          }
+
+          // Fallback: synthesise entries from quick_log_entries missing in timer_sessions
+          if (qlEntries.length > 0) {
+            const remoteQlTimes = next.filter((e) => e.isQuickLog).map((e) => new Date(e.completedAt).getTime())
+            const synthetic = []
+            for (const ql of qlEntries) {
+              const qlTime = new Date(ql.logged_at).getTime()
+              if (remoteQlTimes.some((t) => Math.abs(t - qlTime) <= 60_000)) continue
+              const elapsedSeconds = (ql.duration_minutes ?? 0) * 60
+              const kpis = Array.isArray(ql.kpi_credits) ? ql.kpi_credits : []
+              if (kpis.length > 0) {
+                kpis.forEach((mapping) => synthetic.push({
+                  id: `ql-fallback-${ql.id}-${mapping}`,
+                  taskName: `Quick Log: ${ql.activity_type} with ${ql.who}`,
+                  track: KPI_LABEL_TO_TRACK[mapping] ?? ql.track ?? 'advisors',
+                  kpiMapping: mapping,
+                  quantity: 1,
+                  completedAt: ql.logged_at,
+                  elapsedSeconds,
+                  isQuickLog: true,
+                }))
+              } else {
+                synthetic.push({
+                  id: `ql-fallback-${ql.id}`,
+                  taskName: `Quick Log: ${ql.activity_type} with ${ql.who}`,
+                  track: ql.track ?? 'advisors',
+                  kpiMapping: null,
+                  quantity: 1,
+                  completedAt: ql.logged_at,
+                  elapsedSeconds,
+                  isQuickLog: true,
+                })
+              }
+            }
+            if (synthetic.length > 0) next = [...next, ...synthetic]
+          }
+
+          return next
+        })
       } catch (err) {
         console.error('[kpi screen log refresh]', err)
       }
