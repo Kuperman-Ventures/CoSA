@@ -511,9 +511,17 @@ function CalendarEventBlock({ ev, isPersonal, isUntaggedCosa, tag, onDelete, onT
       onClick={!needsTag ? (e) => { e.stopPropagation(); onEdit?.(ev) } : undefined}
     >
       <div className="flex items-start justify-between gap-0.5">
-        <span className={`leading-tight font-medium ${needsTag ? (isUntaggedCosa ? 'text-amber-700' : 'text-slate-500') : 'text-slate-700'} truncate`}>
-          {ev.summary ?? '(no title)'}
-        </span>
+        <div className="flex items-start gap-1 min-w-0">
+          {!needsTag && (
+            <span
+              className="shrink-0 rounded-full mt-[2px]"
+              style={{ width: 7, height: 7, backgroundColor: color }}
+            />
+          )}
+          <span className={`leading-tight font-medium ${needsTag ? (isUntaggedCosa ? 'text-amber-700' : 'text-slate-500') : 'text-slate-700'} truncate`}>
+            {ev.summary ?? '(no title)'}
+          </span>
+        </div>
         <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           {needsTag && (
             <button
