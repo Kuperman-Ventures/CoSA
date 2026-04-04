@@ -46,6 +46,15 @@ const TRACK_COLORS = {
   cosaAdmin:   '#0891b2',
 }
 
+const TRACK_BG_COLORS = {
+  advisors:    '#e8f3ed',
+  jobSearch:   '#e5eef8',
+  ventures:    '#f1eaf5',
+  networking:  '#f5ece4',
+  development: '#ede8fb',
+  cosaAdmin:   '#e3f2f8',
+}
+
 const TRACK_SUB_TRACKS = {
   advisors:    ['Networking & Business Development', 'Materials', 'Product', 'Client Work', 'Back Office'],
   jobSearch:   ['Network Development & Outreach', 'Searching', 'Materials'],
@@ -497,6 +506,7 @@ function CalendarEventBlock({ ev, isPersonal, isUntaggedCosa, tag, onDelete, onT
   const height = Math.max(20, (dur / 60) * PX_PER_HOUR)
 
   const needsTag = isPersonal || isUntaggedCosa
+  const bgColor = !needsTag ? (TRACK_BG_COLORS[track] ?? '#f1f5f9') : undefined
 
   return (
     <div
@@ -505,23 +515,15 @@ function CalendarEventBlock({ ev, isPersonal, isUntaggedCosa, tag, onDelete, onT
           ? 'border border-dashed border-amber-400 bg-amber-50'
           : isPersonal
             ? 'border border-dashed border-slate-300 bg-slate-50'
-            : 'border-l-2 bg-white shadow-sm cursor-pointer hover:brightness-95'
+            : 'border-l-2 shadow-sm cursor-pointer hover:brightness-95'
         }`}
-      style={{ top, height, borderColor: needsTag ? undefined : color }}
+      style={{ top, height, borderColor: needsTag ? undefined : color, backgroundColor: bgColor }}
       onClick={!needsTag ? (e) => { e.stopPropagation(); onEdit?.(ev) } : undefined}
     >
       <div className="flex items-start justify-between gap-0.5">
-        <div className="flex items-start gap-1 min-w-0">
-          {!needsTag && (
-            <span
-              className="shrink-0 rounded-full mt-[2px]"
-              style={{ width: 7, height: 7, backgroundColor: color }}
-            />
-          )}
-          <span className={`leading-tight font-medium ${needsTag ? (isUntaggedCosa ? 'text-amber-700' : 'text-slate-500') : 'text-slate-700'} truncate`}>
-            {ev.summary ?? '(no title)'}
-          </span>
-        </div>
+        <span className={`leading-tight font-medium ${needsTag ? (isUntaggedCosa ? 'text-amber-700' : 'text-slate-500') : 'text-slate-700'} truncate`}>
+          {ev.summary ?? '(no title)'}
+        </span>
         <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           {needsTag && (
             <button
