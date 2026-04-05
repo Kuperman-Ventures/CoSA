@@ -1320,6 +1320,11 @@ export default function WeekPlanner({
       if (updated) {
         setWeekEvents((prev) => [...prev, updated])
         setUntaggedCosaEvents((prev) => prev.filter((e) => e.id !== ev.id))
+        // Surface to Today Queue if this event falls on today
+        const todayStr = new Date().toLocaleDateString('en-CA')
+        if (date === todayStr && typeof onTodayEventCreated === 'function') {
+          onTodayEventCreated(updated)
+        }
       }
       if (supabaseConfigured) {
         await upsertCalendarEventTag(session.user.id, ev.id, tag)
