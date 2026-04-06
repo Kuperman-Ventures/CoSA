@@ -1645,7 +1645,17 @@ function App() {
               const remoteSnap = signInSessionsSnapshot[task.id]
               const localSnap  = prev[task.id]
               if (remoteSnap && remoteSnap.timerState !== TIMER_STATES.notStarted) {
-                next[task.id] = remoteSnap
+                // upsertTimerSession is only called at state transitions (start/pause/complete),
+                // not every tick — so the remote elapsedSeconds can be minutes behind the live
+                // local counter. If local is ahead, preserve its elapsed/remaining so a
+                // running timer survives an OAuth re-auth without resetting.
+                const localAhead =
+                  localSnap &&
+                  !TERMINAL.includes(localSnap.timerState) &&
+                  (localSnap.elapsedSeconds ?? 0) > (remoteSnap.elapsedSeconds ?? 0)
+                next[task.id] = localAhead
+                  ? { ...remoteSnap, elapsedSeconds: localSnap.elapsedSeconds, remainingSeconds: localSnap.remainingSeconds }
+                  : remoteSnap
               } else if (localSnap && TERMINAL.includes(localSnap.timerState)) {
                 next[task.id] = localSnap
               } else {
