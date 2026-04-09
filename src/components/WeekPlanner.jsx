@@ -509,32 +509,37 @@ function CalendarEventBlock({ ev, isPersonal, isUntaggedCosa, tag, onDelete, onT
   const needsTag = (isPersonal && !tag) || isUntaggedCosa
   const bgColor = !needsTag ? (TRACK_BG_COLORS[track] ?? '#f1f5f9') : undefined
 
+  const handleBlockClick = (e) => {
+    e.stopPropagation()
+    if (isPersonal || isUntaggedCosa) {
+      onTagClick?.(ev)
+    } else if (!needsTag) {
+      onEdit?.(ev)
+    }
+  }
+
   return (
     <div
-      className={`absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] overflow-hidden group
+      className={`absolute left-0.5 right-0.5 rounded px-1 py-0.5 text-[10px] overflow-hidden group cursor-pointer
         ${isUntaggedCosa
-          ? 'border border-dashed border-amber-400 bg-amber-50'
+          ? 'border border-dashed border-amber-400 bg-amber-50 hover:bg-amber-100'
           : needsTag
-            ? 'border border-dashed border-slate-300 bg-slate-50'
-            : 'border-l-2 shadow-sm cursor-pointer hover:brightness-95'
+            ? 'border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100'
+            : 'border-l-2 shadow-sm hover:brightness-95'
         }`}
       style={{ top, height, borderColor: needsTag ? undefined : color, backgroundColor: bgColor }}
-      onClick={!needsTag && !isPersonal ? (e) => { e.stopPropagation(); onEdit?.(ev) } : undefined}
+      onClick={handleBlockClick}
     >
       <div className="flex items-start justify-between gap-0.5">
         <span className={`leading-tight font-medium ${needsTag ? (isUntaggedCosa ? 'text-amber-700' : 'text-slate-500') : 'text-slate-700'} truncate`}>
           {ev.summary ?? '(no title)'}
         </span>
+        {/* Tag icon still shows on hover as a visual hint */}
         <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           {(isPersonal || isUntaggedCosa) && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onTagClick?.(ev) }}
-              className={`rounded p-0.5 ${isUntaggedCosa ? 'hover:bg-amber-200' : 'hover:bg-slate-200'}`}
-              title={isUntaggedCosa ? 'Tag this CoSA Calendar event' : tag ? 'Change tag' : 'Tag to track'}
-            >
+            <span className="rounded p-0.5" title={isUntaggedCosa ? 'Tag this CoSA Calendar event' : tag ? 'Change tag' : 'Tag to track'}>
               <Tag size={9} />
-            </button>
+            </span>
           )}
         </div>
       </div>
