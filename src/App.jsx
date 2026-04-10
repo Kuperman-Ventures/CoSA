@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WeekPlanner from './components/WeekPlanner'
+import NYUIScreen from './components/NYUIScreen'
 import { Pause, Play, SquareCheck, StopCircle, GripVertical, AlertTriangle, Clock, ChevronDown, ChevronRight, X } from 'lucide-react'
 import {
   DndContext,
@@ -456,7 +457,7 @@ const NAV_ITEMS = [
   { id: 'taskLibrary', label: 'Task Library' },
   { id: 'weekPlanner', label: 'Calendar' },
   { id: 'kpi', label: 'Weekly Review' },
-  { id: 'nyui', label: 'NYUI', href: 'http://localhost:3001' },
+  { id: 'nyui', label: 'NYUI' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
@@ -4978,6 +4979,7 @@ function App() {
         />
       ) : null}
       {activeScreen === 'kpi' ? renderKpiDashboard() : null}
+      {activeScreen === 'nyui' ? <NYUIScreen /> : null}
 
       {/* ── Floating Quick Log button ─────────────────────────────────── */}
       <button
@@ -5231,28 +5233,17 @@ function App() {
         <ul className="mx-auto grid w-full max-w-lg grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
           {NAV_ITEMS.map((item) => (
             <li key={item.id}>
-              {item.href ? (
-                <a
-                  href={item.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block w-full rounded-md px-1 py-2 text-slate-500 hover:bg-slate-100"
-                >
-                  {item.label}
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setActiveScreen(item.id)}
-                  className={`block w-full rounded-md px-1 py-2 ${
-                    item.id === activeScreen
-                      ? 'bg-slate-900 font-semibold text-white'
-                      : 'text-slate-500 hover:bg-slate-100'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setActiveScreen(item.id)}
+                className={`block w-full rounded-md px-1 py-2 ${
+                  item.id === activeScreen
+                    ? 'bg-slate-900 font-semibold text-white'
+                    : 'text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                {item.label}
+              </button>
             </li>
           ))}
         </ul>
