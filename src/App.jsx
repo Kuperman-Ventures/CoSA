@@ -456,6 +456,7 @@ const NAV_ITEMS = [
   { id: 'taskLibrary', label: 'Task Library' },
   { id: 'weekPlanner', label: 'Calendar' },
   { id: 'kpi', label: 'Weekly Review' },
+  { id: 'nyui', label: 'NYUI', href: 'http://localhost:3001' },
 ]
 const STORAGE_KEY = 'cosa.phase1_phase2.local_state.v5'
 const COMPLETION_LOG_KEY = 'cosa.completion_log.v1'
@@ -5227,20 +5228,31 @@ function App() {
       )}
 
       <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-        <ul className="mx-auto grid w-full max-w-lg grid-cols-4 gap-1 p-2 text-center text-xs sm:text-sm">
+        <ul className="mx-auto grid w-full max-w-lg grid-cols-5 gap-1 p-2 text-center text-xs sm:text-sm">
           {NAV_ITEMS.map((item) => (
             <li key={item.id}>
-              <button
-                type="button"
-                onClick={() => setActiveScreen(item.id)}
-                className={`block w-full rounded-md px-1 py-2 ${
-                  item.id === activeScreen
-                    ? 'bg-slate-900 font-semibold text-white'
-                    : 'text-slate-500 hover:bg-slate-100'
-                }`}
-              >
-                {item.label}
-              </button>
+              {item.href ? (
+                <a
+                  href={item.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full rounded-md px-1 py-2 text-slate-500 hover:bg-slate-100"
+                >
+                  {item.label}
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveScreen(item.id)}
+                  className={`block w-full rounded-md px-1 py-2 ${
+                    item.id === activeScreen
+                      ? 'bg-slate-900 font-semibold text-white'
+                      : 'text-slate-500 hover:bg-slate-100'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              )}
             </li>
           ))}
         </ul>
