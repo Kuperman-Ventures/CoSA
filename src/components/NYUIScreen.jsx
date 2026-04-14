@@ -53,8 +53,8 @@ const RESULT_OPTIONS = [
 ]
 const ENTITIES = ['Kuperman Ventures LLC', 'Kuperman Advisors LLC']
 
-const WEEKLY_LIMIT = 31 * 60   // 31 hours in minutes
-const WARN_THRESHOLD = 28 * 60 // warn at 28 hours
+const WEEKLY_LIMIT = 10 * 60   // 10 hours in minutes
+const WARN_THRESHOLD = 8 * 60  // warn at 8 hours
 const DAILY_LIMIT = 10 * 60    // 10 hours in minutes
 
 // ─── Shared UI Primitives ─────────────────────────────────────────────────────
@@ -374,7 +374,7 @@ function NYUIDashboard({ onNavigate }) {
         <div className="flex items-start justify-between mb-4 gap-3">
           <div>
             <h3 className="font-semibold text-slate-900">Business Hours Ledger</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Combined limit: 31h/week · 10h/day</p>
+            <p className="text-xs text-slate-500 mt-0.5">Combined limit: 10h/week · 10h/day</p>
           </div>
           {totalMins >= WEEKLY_LIMIT
             ? <StatusBadge variant="danger">⚠ Limit Exceeded</StatusBadge>
@@ -386,12 +386,12 @@ function NYUIDashboard({ onNavigate }) {
 
         {totalMins >= WEEKLY_LIMIT && (
           <WarningBanner variant="danger" title="Weekly Limit Exceeded — UI Payout at Risk">
-            <p>You have logged <strong>{fmtHm(totalMins)}</strong> this week. Exceeding 31 combined hours triggers a <strong>0% UI payout</strong> for this week.</p>
+            <p>You have logged <strong>{fmtHm(totalMins)}</strong> this week. Exceeding 10 combined hours triggers a <strong>0% UI payout</strong> for this week.</p>
           </WarningBanner>
         )}
         {totalMins >= WARN_THRESHOLD && totalMins < WEEKLY_LIMIT && (
           <WarningBanner variant="warning" title="Approaching Weekly Limit">
-            <p>You have logged <strong>{fmtHm(totalMins)}</strong>. Only <strong>{fmtHm(WEEKLY_LIMIT - totalMins)}</strong> remaining before the 31-hour limit.</p>
+            <p>You have logged <strong>{fmtHm(totalMins)}</strong>. Only <strong>{fmtHm(WEEKLY_LIMIT - totalMins)}</strong> remaining before the 10-hour limit.</p>
           </WarningBanner>
         )}
         {daysOverDailyLimit.map(([date, mins]) => (
@@ -402,7 +402,7 @@ function NYUIDashboard({ onNavigate }) {
 
         <div className={`flex justify-between text-xs text-slate-500 mb-1.5 ${totalMins >= WARN_THRESHOLD ? 'mt-4' : ''}`}>
           <span>{fmtHm(totalMins)}</span>
-          <span>of 31h weekly limit</span>
+          <span>of 10h weekly limit</span>
         </div>
         <ProgressBar pct={bhProgressPct} variant={bhVariant} />
 
@@ -655,7 +655,7 @@ function BusinessHoursForm({ onSuccess, onBack }) {
           ← Back to Dashboard
         </button>
         <h2 className="text-lg font-bold text-slate-900">Log Business Hours</h2>
-        <p className="text-sm text-slate-500 mt-0.5">Record operational work for Kuperman Ventures LLC or Kuperman Advisors LLC. Combined weekly hours must stay under 31.</p>
+        <p className="text-sm text-slate-500 mt-0.5">Record operational work for Kuperman Ventures LLC or Kuperman Advisors LLC. Combined weekly hours must stay under 10.</p>
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
