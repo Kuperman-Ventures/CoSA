@@ -1,0 +1,14 @@
+// Centralized model selection for JasonOS.
+// Routes through the Vercel AI Gateway so we get observability + cost
+// tracking and can swap providers without code changes.
+//
+// On Vercel deploys an OIDC token is auto-injected and AI_GATEWAY_API_KEY
+// is not needed; for local dev set AI_GATEWAY_API_KEY in .env.local.
+import { gateway } from "@ai-sdk/gateway";
+
+// Heavy reasoning — used by the Best-Next-Action engine once per morning.
+export const heavyModel = gateway("anthropic/claude-opus-4-7");
+
+// Fast / cheap — used by the always-on "Tell Claude" command bar and
+// Goal→Plan refinements.
+export const fastModel = gateway("anthropic/claude-sonnet-4-6");

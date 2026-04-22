@@ -1,0 +1,137 @@
+"use client";
+
+import { Sparkles, Star } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { TrackPill } from "./track-pill";
+import { cn } from "@/lib/utils";
+import { type ActionCard as Card, type Verb } from "@/lib/types";
+import { toast } from "sonner";
+
+const VERB_LABEL: Record<Verb, string> = {
+  send: "Send",
+  edit_send: "Edit & Send",
+  draft: "Draft",
+  snooze: "Snooze",
+  add_todo: "Add to-do",
+  schedule: "Schedule",
+  prioritize: "Prioritize",
+  log_to_hubspot: "Log to HubSpot",
+  mark_won: "Mark won",
+  mark_lost: "Mark lost",
+  forward_to: "Forward",
+  add_to_memory: "Save to memory",
+  generate_doc: "Generate doc",
+  open_in_cursor: "Open in Cursor",
+  dismiss: "Dismiss",
+  tell_claude: "Tell Claude",
+};
+
+const PRIMARY_VERBS: Verb[] = [
+  "send",
+  "edit_send",
+  "open_in_cursor",
+  "schedule",
+  "generate_doc",
+  "draft",
+];
+
+export function ActionCardItem({
+  card,
+  compact = false,
+  whyNowOverride,
+  rank,
+}: {
+  card: Card;
+  compact?: boolean;
+  whyNowOverride?: string;
+  rank?: number;
+}) {
+  const primary = card.verbs.find((v) => PRIMARY_VERBS.includes(v));
+  const secondary = card.verbs.filter((v) => v !== primary && v !== "tell_claude");
+  const why = whyNowOverride ?? card.why_now;
+
+  const fire = (verb: Verb) =>
+    verb === "tell_claude"
+      ? window.dispatchEvent(new CustomEvent("jasonos:open-tell-claude"))
+      : toast.success(`${VERB_LABEL[verb]} → ${card.title}`, {
+          description: "Stub action — wire to integration in v1 module work.",
+        });
+
+  return (
+    <article
+      className={cn(
+        "jos-card-enter group rounded-lg border bg-card p-3 transition-colors hover:border-foreground/20",
+        compact ? "space-y-2" : "space-y-3"
+      )}
+    >
+      <header className="flex items-start gap-2">
+        {typeof rank === "number" ? (
+          <div className="num-mono mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border bg-muted text-[11px] font-semibold text-muted-foreground">
+            {rank}
+          </div>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <TrackPill track={card.track} />
+            {card.vip ? (
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
+              >
+                <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
+                VIP
+              </Badge>
+            ) : null}
+            <span className="text-[10px] text-muted-foreground">{card.module.replaceAll("_", " ")}</span>
+          </div>
+          <h3 className="mt-1 truncate text-sm font-medium text-foreground">{card.title}</h3>
+          {card.subtitle ? (
+            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{card.subtitle}</p>
+          ) : null}
+        </div>
+      </header>
+
+      {why ? (
+        <div className="flex items-start gap-1.5 rounded-md border border-amber-500/15 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-200/90">
+          <Sparkles className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" />
+          <span className="leading-snug">{why}</span>
+        </div>
+      ) : null}
+
+      {!compact && card.body?.draft ? (
+        <p className="line-clamp-3 rounded-md bg-muted/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+          {card.body.draft}
+        </p>
+      ) : null}
+
+      <footer className="flex flex-wrap items-center gap-1.5">
+        {primary ? (
+          <Button size="sm" className="h-7 gap-1.5 px-2.5 text-[11px]" onClick={() => fire(primary)}>
+            {VERB_LABEL[primary]}
+          </Button>
+        ) : null}
+        {secondary.slice(0, compact ? 2 : 4).map((v) => (
+          <Button
+            key={v}
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={() => fire(v)}
+          >
+            {VERB_LABEL[v]}
+          </Button>
+        ))}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto h-7 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => fire("tell_claude")}
+        >
+          <Sparkles className="h-3 w-3 text-amber-400" />
+          Tell Claude
+        </Button>
+      </footer>
+    </article>
+  );
+}
