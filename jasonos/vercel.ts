@@ -8,8 +8,10 @@ export const config: VercelConfig = {
   framework: "nextjs",
   buildCommand: "next build",
   // Skip the build if the commit didn't touch the jasonos/ subfolder.
-  // (CoSA's root vercel.json mirrors this in reverse.)
-  ignoreCommand: "git diff --quiet HEAD^ HEAD -- jasonos",
+  // Runs from the project's Root Directory (jasonos/), so we cd up to the
+  // repo root before checking the path. Exit 0 = skip, exit 1 = build.
+  ignoreCommand:
+    'cd "$(git rev-parse --show-toplevel)" && git diff --quiet HEAD^ HEAD -- jasonos',
   // BNA engine can take its time once we feed it real state.
   functions: {
     "app/api/bna/route.ts": { maxDuration: 300 },
