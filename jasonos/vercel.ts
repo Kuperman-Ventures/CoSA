@@ -2,8 +2,8 @@ import { type VercelConfig } from "@vercel/config/v1";
 
 // JasonOS — Vercel project config (typed replacement for vercel.json).
 // Lives at the repo root of the deployed project. Because JasonOS is a
-// subfolder of the CoSA repo, the Vercel project's "Root Directory" must
-// be set to `jasonos/` in the dashboard.
+// subfolder of the CoSA repo, the Vercel project's "Root Directory" is
+// set to `jasonos/` (configured via API on 2026-04-22).
 export const config: VercelConfig = {
   framework: "nextjs",
   buildCommand: "next build",
