@@ -1,4 +1,5 @@
 import { InitiativeDashboard } from "@/components/jasonos/initiative-dashboard";
+import { Plan90Roadmap } from "@/components/jasonos/plan90-roadmap";
 
 export const metadata = { title: "To-Dos · JasonOS" };
 
@@ -8,11 +9,12 @@ export default function TodosPage() {
       <header>
         <h1 className="text-xl font-semibold tracking-tight">To-Dos</h1>
         <p className="mt-1 text-xs text-muted-foreground">
-          Initiatives mapped to Ventures, Advisors, Job Search, and Personal. Checkbox state
-          persists locally to your browser.
+          90-Day Plan up top, then the full Initiative backlog. Checkbox state persists
+          locally to your browser.
         </p>
       </header>
 
+      <Plan90Roadmap />
       <InitiativeDashboard />
     </div>
   );
