@@ -7,8 +7,6 @@ import { MustDos } from "@/components/jasonos/must-dos";
 import { ActionQueue } from "@/components/jasonos/action-queue";
 import { MonitoringGrid } from "@/components/jasonos/monitoring-grid";
 import { DailyWrap } from "@/components/jasonos/daily-wrap";
-import { MorningBrief } from "@/components/jasonos/morning-brief/morning-brief";
-import { ProductHealth } from "@/components/jasonos/monitoring/product-health";
 import { ThisWeekCard } from "@/components/jasonos/this-week-card";
 import type { Track } from "@/lib/types";
 import type { DashboardData } from "@/lib/data/dashboard";
@@ -19,7 +17,6 @@ export function DashboardClient({ data }: { data: DashboardData }) {
   return (
     <div className="mx-auto max-w-[1800px] space-y-4 px-4 py-4">
       <ThisWeekCard />
-      <MorningBrief />
       <HeroStrip
         data={data.hero}
         activeTrack={trackFilter}
@@ -33,7 +30,6 @@ export function DashboardClient({ data }: { data: DashboardData }) {
           <ActionQueue trackFilter={trackFilter} onTrackFilter={setTrackFilter} />
         </div>
         <div className="space-y-4">
-          <ProductHealth />
           <MonitoringGrid tiles={data.tiles} trackFilter={trackFilter} />
         </div>
       </div>
