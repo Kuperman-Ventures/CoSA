@@ -25,6 +25,8 @@ const VERB_LABEL: Record<Verb, string> = {
   open_in_cursor: "Open in Cursor",
   dismiss: "Dismiss",
   tell_claude: "Tell Claude",
+  message: "Message",
+  reconnect: "Reconnect",
 };
 
 const PRIMARY_VERBS: Verb[] = [

@@ -73,7 +73,21 @@ export type Verb =
   | "generate_doc"
   | "open_in_cursor"
   | "dismiss"
-  | "tell_claude";
+  | "tell_claude"
+  | "message"
+  | "reconnect";
+
+// Body is intentionally permissive — `jasonos.cards.body` is jsonb on the DB
+// side, and different modules write different shapes (message draft, ranker
+// pick metadata, BNA evidence, etc.). The well-known fields below are kept
+// strongly typed; arbitrary extras flow through the index signature.
+// Consumers narrow per `module` when they need module-specific keys.
+export interface ActionCardBody {
+  draft?: string;
+  context?: string;
+  links?: { label: string; href: string }[];
+  [key: string]: unknown;
+}
 
 export interface ActionCard {
   id: string;
@@ -82,7 +96,7 @@ export interface ActionCard {
   object_type: string;
   title: string;
   subtitle?: string;
-  body?: { draft?: string; context?: string; links?: { label: string; href: string }[] };
+  body?: ActionCardBody;
   linked_object_ids?: Record<string, string | undefined>;
   priority_score?: number;
   state: CardState;
@@ -137,11 +151,24 @@ export interface Contact {
   company_id?: string;
   vip: boolean;
   tracks: Track[];
+  tags: string[]; // see migration 0005 — supports 'alumni:tbwa', 'conference:cannes-2024', etc.
   source_ids: { encore_os?: string; hubspot?: string; leaddelta?: string };
   last_touch_date?: string;
   last_touch_channel?: string;
   objective_result?: "yes" | "no" | "neutral";
   notes?: string;
+}
+
+export interface ContactScore {
+  id: string;
+  contact_id: string;
+  recency: number; // 1-5
+  seniority: number; // 1-5
+  fit: number; // 1-5
+  scored_by: "user" | "ai";
+  notes?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Company {
