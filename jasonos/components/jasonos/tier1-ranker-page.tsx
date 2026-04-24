@@ -132,6 +132,11 @@ export function Tier1RankerPage({
   // Last-applied auto-rank ordering (so "Finish" knows the rank for each pick).
   const [autoOrder, setAutoOrder] = useState<string[] | null>(null);
 
+  // After auto-rank runs, the table re-sorts by computed score desc (with
+  // unscored rows tied at the bottom, name-asc tiebreak) so the user can see
+  // what the strategy chose. Reset to "default" if the user re-imports etc.
+  const [sortMode, setSortMode] = useState<"default" | "byScore">("default");
+
   const [isFinishing, startFinish] = useTransition();
   const [finishStatus, setFinishStatus] = useState<string | null>(null);
 
@@ -185,7 +190,7 @@ export function Tier1RankerPage({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return effectiveScores.filter(({ contact, score: s }) => {
+    const rows = effectiveScores.filter(({ contact, score: s }) => {
       if (view === "tier1" && !selectedIds.has(contact.id)) return false;
       if (view === "untagged" && s !== null) return false;
 
@@ -201,7 +206,23 @@ export function Tier1RankerPage({
       }
       return true;
     });
-  }, [effectiveScores, view, selectedIds, activeCluster, search]);
+
+    if (sortMode === "byScore") {
+      // Sort by computed score desc; unscored go to the bottom. Stable
+      // tiebreak on name asc keeps the order deterministic.
+      return [...rows].sort((a, b) => {
+        const aHas = a.score !== null;
+        const bHas = b.score !== null;
+        if (aHas !== bHas) return aHas ? -1 : 1;
+        const sa = score(a.score?.recency, a.score?.seniority, a.score?.fit, weights);
+        const sb = score(b.score?.recency, b.score?.seniority, b.score?.fit, weights);
+        if (sb !== sa) return sb - sa;
+        return a.contact.name.localeCompare(b.contact.name);
+      });
+    }
+
+    return rows;
+  }, [effectiveScores, view, selectedIds, activeCluster, search, sortMode, weights]);
 
   // ---- Mutations ----------------------------------------------------------
 
@@ -234,7 +255,9 @@ export function Tier1RankerPage({
         const next = new Set(prev);
         if (next.has(contactId)) {
           next.delete(contactId);
-        } else if (next.size < TARGET_SIZE) {
+        } else {
+          // 30 is now a soft goal, not a hard cap. Let users select more so the
+          // gate purely lives on "at least 1" for Finish.
           next.add(contactId);
         }
         return next;
@@ -247,10 +270,11 @@ export function Tier1RankerPage({
     const picks = autoRank(effectiveScores, strategy, weights, TARGET_SIZE);
     setSelectedIds(new Set(picks.map((p) => p.contactId)));
     setAutoOrder(picks.map((p) => p.contactId));
+    setSortMode("byScore");
   }, [effectiveScores, strategy, weights]);
 
   const handleFinish = useCallback(() => {
-    if (selectedIds.size !== TARGET_SIZE) return;
+    if (selectedIds.size === 0) return;
 
     // Build picks. If auto-rank produced an ordering, use it; otherwise rank
     // by score desc.
@@ -307,10 +331,10 @@ export function Tier1RankerPage({
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Contacts</h1>
           <p className="mt-1 text-xs text-muted-foreground">
-            Tier 1 Reconnect Ranker — score the network 1-5 on
-            recency / seniority / fit, then auto-rank the top 30. Picks get
-            written to <code>jasonos.cards</code> so they feed ActionQueue and
-            Today&apos;s Must-Dos automatically.
+            Tier 1 Reconnect Ranker — score the network 1-5 on recency /
+            seniority / fit, then auto-rank the top 30. Picks get written to{" "}
+            <code>jasonos.cards</code> so they feed ActionQueue and Today&apos;s
+            Must-Dos automatically.
           </p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
@@ -352,7 +376,8 @@ export function Tier1RankerPage({
             onImport={() => setImportOpen(true)}
             onFinish={handleFinish}
             isFinishing={isFinishing}
-            finishEnabled={selectedCount === TARGET_SIZE}
+            finishEnabled={selectedCount > 0}
+            selectedCount={selectedCount}
             finishStatus={finishStatus}
           />
 
@@ -503,6 +528,7 @@ function ControlsRow({
   onFinish,
   isFinishing,
   finishEnabled,
+  selectedCount,
   finishStatus,
 }: {
   search: string;
@@ -514,8 +540,10 @@ function ControlsRow({
   onFinish: () => void;
   isFinishing: boolean;
   finishEnabled: boolean;
+  selectedCount: number;
   finishStatus: string | null;
 }) {
+  const pickWord = selectedCount === 1 ? "pick" : "picks";
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="relative flex-1 min-w-[200px]">
@@ -563,7 +591,7 @@ function ControlsRow({
           ) : (
             <>
               <CheckCircle2 className="h-3.5 w-3.5" />
-              Finish &amp; save 30 picks
+              Finish &amp; save {selectedCount} {pickWord}
             </>
           )}
         </Button>

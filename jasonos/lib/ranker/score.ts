@@ -191,7 +191,11 @@ export function autoRank(
   weights: RankerWeights,
   targetSize = 30
 ): RankedPick[] {
-  let pool = scored(rcs, weights);
+  // Candidate pool = only contacts with a contact_scores row. Unscored contacts
+  // are excluded entirely from auto-rank candidacy regardless of strategy. This
+  // prevents zero-scored rows from filling out the top 30 when the user has
+  // scored fewer than 30 contacts.
+  let pool = scored(rcs, weights).filter((rc) => rc.score !== null);
 
   if (strategy === "fresh") {
     pool = pool.filter((rc) => {
