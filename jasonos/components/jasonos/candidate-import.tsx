@@ -24,36 +24,92 @@ import { bulkInsertContacts } from "@/lib/actions/contacts";
 
 type ColField =
   | "name"
+  | "first_name"
+  | "last_name"
   | "email"
   | "linkedin_url"
   | "title"
+  | "company"
   | "last_touch_date"
   | "alumni_cluster"
   | "ignore";
 
 const FIELD_LABEL: Record<ColField, string> = {
-  name: "Name (required)",
+  name: "Full name",
+  first_name: "First name",
+  last_name: "Last name",
   email: "Email",
   linkedin_url: "LinkedIn URL",
   title: "Title",
+  company: "Company name",
   last_touch_date: "Last contact date",
   alumni_cluster: "Alumni cluster",
   ignore: "— ignore —",
 };
 
+// Order matters: more specific matchers first. Each matcher is tested as an
+// exact-token or prefix match against the lowercased header (split on
+// non-word chars), NOT a substring includes — that's what made the previous
+// version map "Marketing contact status" to "name".
 const FIELD_GUESS: Array<{ field: ColField; matchers: string[] }> = [
-  { field: "name", matchers: ["name", "full name", "first name", "contact"] },
-  { field: "email", matchers: ["email", "e-mail", "mail"] },
-  { field: "linkedin_url", matchers: ["linkedin", "li url", "profile"] },
-  { field: "title", matchers: ["title", "role", "position", "job"] },
-  { field: "last_touch_date", matchers: ["last contact", "last touch", "last meeting", "date"] },
-  { field: "alumni_cluster", matchers: ["alumni", "cluster", "company", "org", "where"] },
+  { field: "first_name", matchers: ["first name", "firstname", "given name"] },
+  { field: "last_name", matchers: ["last name", "lastname", "surname", "family name"] },
+  { field: "email", matchers: ["email", "e-mail", "primary email"] },
+  { field: "linkedin_url", matchers: ["linkedin", "li url", "linkedin url", "profile url"] },
+  { field: "title", matchers: ["title", "role", "position", "job title"] },
+  { field: "last_touch_date", matchers: [
+    "last contact", "last touch", "last meeting", "last activity", "last interaction",
+  ] },
+  { field: "alumni_cluster", matchers: ["alumni", "cluster", "alumni cluster"] },
+  { field: "company", matchers: ["company name", "company", "organization", "employer"] },
+  { field: "name", matchers: ["full name", "name"] },
 ];
 
+const NEGATIVE_HINTS = [
+  "id",
+  "owner",
+  "status",
+  "phone",
+  "city",
+  "country",
+  "region",
+  "industry",
+  "lead",
+  "create",
+  "source",
+  "list",
+  "tag",
+];
+
+function tokenize(header: string): string[] {
+  return header.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
 function guessField(header: string): ColField {
-  const h = header.toLowerCase();
+  const lower = header.toLowerCase().trim();
+  const tokens = tokenize(header);
+
+  // Skip obviously non-mappable headers (Record IDs, owners, statuses, etc.)
+  if (
+    NEGATIVE_HINTS.some((h) => tokens.includes(h)) &&
+    !lower.includes("name") &&
+    !lower.includes("email") &&
+    !lower.includes("linkedin") &&
+    !lower.includes("alumni") &&
+    !lower.includes("last activity") &&
+    !lower.includes("last contact")
+  ) {
+    return "ignore";
+  }
+
   for (const { field, matchers } of FIELD_GUESS) {
-    if (matchers.some((m) => h.includes(m))) return field;
+    for (const m of matchers) {
+      if (lower === m) return field;
+      if (lower.startsWith(m + " ")) return field;
+      if (lower.endsWith(" " + m)) return field;
+      // For multi-word matchers, allow contiguous token match
+      if (m.includes(" ") && lower.includes(m)) return field;
+    }
   }
   return "ignore";
 }
@@ -156,8 +212,14 @@ export function CandidateImport({ open, onOpenChange }: Props) {
   const handleImport = () => {
     setErrorMsg(null);
     setStatusMsg(null);
-    if (!colByField.name) {
-      setErrorMsg("Map a column to 'Name' before importing.");
+
+    const hasFullName = Boolean(colByField.name);
+    const hasFirstLast =
+      Boolean(colByField.first_name) || Boolean(colByField.last_name);
+    if (!hasFullName && !hasFirstLast) {
+      setErrorMsg(
+        "Map a column to 'Full name', or map 'First name' and/or 'Last name', before importing."
+      );
       return;
     }
 
@@ -169,8 +231,16 @@ export function CandidateImport({ open, onOpenChange }: Props) {
       const email = get("email");
       const cluster: AlumniCluster | undefined =
         row.cluster || defaultCluster || undefined;
+
+      // Compose name: prefer explicit Full name; otherwise join First + Last.
+      const fullName = get("name");
+      const first = get("first_name");
+      const last = get("last_name");
+      const joinedName =
+        fullName || [first, last].filter(Boolean).join(" ").trim();
+
       return {
-        name: get("name") ?? "",
+        name: joinedName,
         emails: email ? [email] : [],
         linkedin_url: get("linkedin_url") || undefined,
         title: get("title") || undefined,
@@ -263,19 +333,26 @@ export function CandidateImport({ open, onOpenChange }: Props) {
               <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Column mapping
               </h3>
+              <p className="mb-3 text-[11px] text-muted-foreground">
+                Map a single &quot;Full name&quot; column, or map &quot;First name&quot; +
+                &quot;Last name&quot; separately and they&apos;ll be joined.
+              </p>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {headers.map((h) => (
-                  <div key={h} className="flex items-center gap-2 text-xs">
-                    <span className="w-1/2 truncate font-mono text-muted-foreground">
+                  <div key={h} className="space-y-1">
+                    <div
+                      className="truncate font-mono text-[11px] text-muted-foreground"
+                      title={h}
+                    >
                       {h}
-                    </span>
+                    </div>
                     <Select
                       value={mapping[h]}
                       onValueChange={(v) =>
                         setMapping((m) => ({ ...m, [h]: v as ColField }))
                       }
                     >
-                      <SelectTrigger className="h-7 flex-1 text-xs">
+                      <SelectTrigger className="h-7 w-full text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
