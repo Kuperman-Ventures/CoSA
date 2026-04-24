@@ -271,7 +271,7 @@ export function CandidateImport({ open, onOpenChange }: Props) {
         if (!b) reset();
       }}
     >
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-h-[90vh] w-[min(96vw,1100px)] max-w-[min(96vw,1100px)] overflow-y-auto sm:max-w-[min(96vw,1100px)]">
         <DialogHeader>
           <DialogTitle>Import contacts</DialogTitle>
           <DialogDescription>
