@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ExternalLink, Link2, MessageSquareText, XCircle } from "lucide-react";
+import { ExternalLink, MessageSquareText, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Sheet,
@@ -38,10 +38,13 @@ export function ReconnectDetailDrawer({
 
   if (!contact) return null;
 
-  const firmNames = parseOtherFirmNames(contact.other_contacts_at_firm);
-  const firmMatches = firmNames
-    .map((name) => contacts.find((c) => c.name.toLowerCase() === name.toLowerCase()))
-    .filter(Boolean) as ReconnectContact[];
+  const firmMatches = contacts
+    .filter(
+      (c) =>
+        c.id !== contact.id &&
+        normalizeFirm(c.firm) === normalizeFirm(contact.firm)
+    )
+    .sort((a, b) => b.strategic_score - a.strategic_score);
 
   const updateStatus = (status: RecruiterStatus, prompt?: string) => {
     const context = prompt ? window.prompt(prompt) ?? undefined : undefined;
@@ -187,20 +190,46 @@ export function ReconnectDetailDrawer({
           </section>
 
           <section className="space-y-2">
-            <h3 className="text-sm font-semibold tracking-tight">Other Contacts At Firm</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold tracking-tight">
+                Who Else You Know At {contact.firm}
+              </h3>
+              <span className="num-mono text-xs text-muted-foreground">
+                {firmMatches.length}
+              </span>
+            </div>
             {firmMatches.length ? (
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {firmMatches.map((match) => (
-                  <div key={match.id} className="flex items-center justify-between rounded-lg border p-2 text-sm">
-                    <span>{match.name}</span>
-                    <span className="text-xs text-muted-foreground">{match.tier}</span>
+                  <div key={match.id} className="rounded-lg border bg-background/40 p-3 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium">{match.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {match.title || match.specialty || "No title captured"}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <TierBadge tier={match.tier} />
+                        <span className="num-mono text-xs text-muted-foreground">
+                          {match.strategic_score}
+                        </span>
+                      </div>
+                    </div>
+                    {match.summary_of_prior_comms ? (
+                      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                        {match.summary_of_prior_comms}
+                      </p>
+                    ) : null}
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="flex items-start gap-2 rounded-lg border p-3 text-xs text-muted-foreground">
-                <Link2 className="mt-0.5 h-3.5 w-3.5" />
-                {contact.other_contacts_at_firm || "No other contacts listed."}
+              <div className="rounded-lg border p-3 text-xs text-muted-foreground">
+                No other seeded contacts found at this firm.
+                {contact.other_contacts_at_firm ? (
+                  <div className="mt-2">{contact.other_contacts_at_firm}</div>
+                ) : null}
               </div>
             )}
           </section>
@@ -228,13 +257,6 @@ function ContextBlock({ label, body }: { label: string; body?: string }) {
   );
 }
 
-function parseOtherFirmNames(text?: string) {
-  if (!text || !text.includes(":")) return [];
-  return text
-    .split(":")
-    .slice(1)
-    .join(":")
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean);
+function normalizeFirm(firm?: string) {
+  return (firm ?? "").trim().toLowerCase();
 }

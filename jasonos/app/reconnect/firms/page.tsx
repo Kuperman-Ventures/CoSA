@@ -14,13 +14,15 @@ export default async function ReconnectFirmsPage() {
         count: 0,
         total: 0,
         top: contact,
+        contacts: [],
       };
       current.count += 1;
       current.total += contact.strategic_score;
+      current.contacts.push(contact);
       if (contact.strategic_score > current.top.strategic_score) current.top = contact;
       map.set(contact.firm, current);
       return map;
-    }, new Map<string, { firm: string; count: number; total: number; top: (typeof data.contacts)[number] }>())
+    }, new Map<string, { firm: string; count: number; total: number; top: (typeof data.contacts)[number]; contacts: typeof data.contacts }>())
   ).map(([, firm]) => firm).sort((a, b) => b.total / b.count - a.total / a.count);
 
   return (
@@ -52,6 +54,30 @@ export default async function ReconnectFirmsPage() {
             <p className="mt-3 text-sm text-muted-foreground">
               Top contact: <span className="text-foreground">{firm.top.name}</span>
             </p>
+            <div className="mt-3 space-y-1.5">
+              {firm.contacts
+                .sort((a, b) => b.strategic_score - a.strategic_score)
+                .slice(0, 5)
+                .map((contact) => (
+                  <div
+                    key={contact.id}
+                    className="flex items-center justify-between gap-3 rounded-md border bg-background/40 px-2 py-1.5 text-xs"
+                  >
+                    <span className="truncate">{contact.name}</span>
+                    <span className="num-mono shrink-0 text-muted-foreground">
+                      {contact.tier.replace("TIER ", "T")} · {contact.strategic_score}
+                    </span>
+                  </div>
+                ))}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              render={<Link href={`/reconnect/contacts?q=${encodeURIComponent(firm.firm)}`} />}
+            >
+              Open firm contacts
+            </Button>
           </article>
         ))}
       </div>
