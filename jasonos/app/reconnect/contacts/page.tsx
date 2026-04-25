@@ -20,7 +20,7 @@ const STATUSES: RecruiterStatus[] = [
   "snoozed",
   "archived",
 ];
-const SOURCES: RecruiterSource[] = ["LeadDelta", "Outlook (new)", "Both"];
+const SOURCES: RecruiterSource[] = ["LeadDelta", "Outlook (new)", "HubSpot (new)", "Both"];
 
 export default async function ReconnectContactsPage({
   searchParams,

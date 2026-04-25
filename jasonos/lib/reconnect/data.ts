@@ -253,7 +253,10 @@ function normalizeTier(value: string | null): RecruiterTier {
 }
 
 function normalizeSource(value: string | null): RecruiterSource {
-  return value === "LeadDelta" || value === "Outlook (new)" || value === "Both"
+  return value === "LeadDelta" ||
+    value === "Outlook (new)" ||
+    value === "HubSpot (new)" ||
+    value === "Both"
     ? value
     : "LeadDelta";
 }

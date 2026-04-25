@@ -10,7 +10,11 @@ export type RecruiterStatus =
   | "snoozed"
   | "archived";
 
-export type RecruiterSource = "LeadDelta" | "Outlook (new)" | "Both";
+export type RecruiterSource =
+  | "LeadDelta"
+  | "Outlook (new)"
+  | "HubSpot (new)"
+  | "Both";
 
 export interface Recruiter {
   id: string;
