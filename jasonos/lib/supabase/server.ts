@@ -38,3 +38,12 @@ export function createServiceRoleClient() {
     { db: { schema: "jasonos" }, auth: { persistSession: false } }
   );
 }
+
+// Reconnect's rr_ tables currently live in the public schema.
+export function createPublicServiceRoleClient() {
+  return createPlainClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { db: { schema: "public" }, auth: { persistSession: false } }
+  );
+}

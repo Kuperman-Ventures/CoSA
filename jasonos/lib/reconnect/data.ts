@@ -1,0 +1,290 @@
+import "server-only";
+
+import { createPublicServiceRoleClient } from "@/lib/supabase/server";
+import { MOCK_RECONNECT_CONTACTS } from "./mock-data";
+import type {
+  ReconnectContact,
+  ReconnectDashboardData,
+  Recruiter,
+  RecruiterContactState,
+  RecruiterNote,
+  RecruiterSource,
+  RecruiterTier,
+  RecruiterTouch,
+} from "./types";
+
+const QUEUE_TIERS: RecruiterTier[] = ["TIER 1", "TIER 2"];
+
+function daysSince(date?: string) {
+  if (!date) return Number.POSITIVE_INFINITY;
+  return (Date.now() - new Date(date).getTime()) / (24 * 60 * 60 * 1000);
+}
+
+function isDueToday(date?: string) {
+  if (!date) return false;
+  const due = new Date(date);
+  const today = new Date();
+  due.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+  return due <= today;
+}
+
+export function computeReconnectStats(contacts: ReconnectContact[]) {
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const touches = contacts.flatMap((c) => c.touches);
+
+  return {
+    toActOn: contacts.filter(
+      (c) => QUEUE_TIERS.includes(c.tier) && c.state.status === "queue"
+    ).length,
+    outreachThisWeek: touches.filter(
+      (t) => t.direction === "outbound" && new Date(t.created_at).getTime() >= sevenDaysAgo
+    ).length,
+    repliesThisWeek:
+      touches.filter(
+        (t) => t.direction === "inbound" && new Date(t.created_at).getTime() >= sevenDaysAgo
+      ).length +
+      contacts.filter(
+        (c) =>
+          c.state.status === "replied" &&
+          new Date(c.state.updated_at).getTime() >= sevenDaysAgo
+      ).length,
+    awaitingResponse: contacts.filter(
+      (c) => c.state.status === "sent" && daysSince(c.state.updated_at) > 7
+    ).length,
+  };
+}
+
+export function getReconnectQueue(contacts: ReconnectContact[]) {
+  return contacts
+    .filter((contact) => {
+      if (!QUEUE_TIERS.includes(contact.tier)) return false;
+      if (contact.state.status === "queue") return true;
+      return contact.state.status === "snoozed" && isDueToday(contact.state.next_action_due_date);
+    })
+    .sort((a, b) => {
+      const byScore = b.strategic_score - a.strategic_score;
+      if (byScore !== 0) return byScore;
+      return daysSince(b.last_contact_date) - daysSince(a.last_contact_date);
+    });
+}
+
+export async function getReconnectDashboardData(): Promise<ReconnectDashboardData> {
+  const contacts = await getReconnectContacts();
+  return {
+    contacts,
+    queue: getReconnectQueue(contacts),
+    stats: computeReconnectStats(contacts),
+  };
+}
+
+async function getReconnectContacts(): Promise<ReconnectContact[]> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return MOCK_RECONNECT_CONTACTS;
+
+  try {
+    const sb = createPublicServiceRoleClient();
+    const [{ data: recruiters, error: recruitersError }, { data: states, error: statesError }] =
+      await Promise.all([
+        sb
+          .from("rr_recruiters")
+          .select(
+            "id,name,linkedin_url,firm,title,specialty,firm_fit_score,practice_match_score,recency_score,signal_score,strategic_score,strategic_priority,last_contact_date,summary_of_prior_comms,outlook_history,other_contacts_at_firm,source,hubspot_url,strategic_recommended_approach"
+          )
+          .order("strategic_score", { ascending: false }),
+        sb
+          .from("rr_contact_state")
+          .select(
+            "contact_id,status,status_updated_at,next_action_due_date,custom_priority_override,starred"
+          ),
+      ]);
+
+    if (recruitersError || statesError || !recruiters?.length) {
+      return MOCK_RECONNECT_CONTACTS;
+    }
+
+    const ids = recruiters.map((r) => r.id as string);
+    const [{ data: notes }, { data: touches }] = await Promise.all([
+      sb
+        .from("rr_notes")
+        .select("id,contact_id,body,created_at")
+        .in("contact_id", ids)
+        .order("created_at", { ascending: false }),
+      sb
+        .from("rr_touches")
+        .select("id,contact_id,channel,direction,touched_at,brief")
+        .in("contact_id", ids)
+        .order("touched_at", { ascending: false }),
+    ]);
+
+    return mapReconnectRows(
+      recruiters as PublicRecruiterRow[],
+      (states ?? []) as PublicContactStateRow[],
+      (notes ?? []) as PublicNoteRow[],
+      (touches ?? []) as PublicTouchRow[]
+    );
+  } catch {
+    return MOCK_RECONNECT_CONTACTS;
+  }
+}
+
+type PublicRecruiterRow = {
+  id: string;
+  name: string;
+  linkedin_url: string | null;
+  firm: string | null;
+  title: string | null;
+  specialty: string | null;
+  firm_fit_score: number | null;
+  practice_match_score: number | null;
+  recency_score: number | null;
+  signal_score: number | null;
+  strategic_score: number | null;
+  strategic_priority: string | null;
+  last_contact_date: string | null;
+  summary_of_prior_comms: string | null;
+  outlook_history: string | null;
+  other_contacts_at_firm: string | null;
+  source: string | null;
+  hubspot_url: string | null;
+  strategic_recommended_approach: string | null;
+};
+
+type PublicContactStateRow = {
+  contact_id: string;
+  status: string | null;
+  status_updated_at: string | null;
+  next_action_due_date: string | null;
+  custom_priority_override: string | null;
+  starred: boolean | null;
+};
+
+type PublicNoteRow = {
+  id: string;
+  contact_id: string;
+  body: string;
+  created_at: string;
+};
+
+type PublicTouchRow = {
+  id: string;
+  contact_id: string;
+  channel: string | null;
+  direction: string | null;
+  touched_at: string | null;
+  brief: string | null;
+};
+
+function mapReconnectRows(
+  recruiters: PublicRecruiterRow[],
+  states: PublicContactStateRow[],
+  notes: PublicNoteRow[],
+  touches: PublicTouchRow[]
+): ReconnectContact[] {
+  const stateByContact = new Map(states.map((s) => [s.contact_id, s]));
+  const notesByContact = groupBy(notes, (n) => n.contact_id);
+  const touchesByContact = groupBy(touches, (t) => t.contact_id);
+
+  return recruiters.map((row) => {
+    const state = stateByContact.get(row.id);
+    const recruiter: Recruiter = {
+      id: row.id,
+      name: row.name,
+      firm: row.firm ?? "Unknown firm",
+      title: row.title ?? undefined,
+      specialty: row.specialty ?? undefined,
+      source: normalizeSource(row.source),
+      tier: normalizeTier(row.strategic_priority),
+      strategic_score: row.strategic_score ?? 0,
+      firm_fit_score: row.firm_fit_score ?? 0,
+      practice_match_score: row.practice_match_score ?? 0,
+      recency_score: row.recency_score ?? 0,
+      signal_score: row.signal_score ?? 0,
+      strategic_recommended_approach:
+        row.strategic_recommended_approach ?? "No recommended approach yet.",
+      summary_of_prior_comms: row.summary_of_prior_comms ?? undefined,
+      outlook_history: row.outlook_history ?? undefined,
+      linkedin_url: row.linkedin_url ?? undefined,
+      hubspot_url: row.hubspot_url ?? undefined,
+      last_contact_date: row.last_contact_date ?? undefined,
+      other_contacts_at_firm: row.other_contacts_at_firm ?? undefined,
+    };
+
+    return {
+      ...recruiter,
+      state: {
+        recruiter_id: row.id,
+        status: normalizeStatus(state?.status),
+        next_action_due_date: state?.next_action_due_date ?? undefined,
+        custom_priority_override: undefined,
+        starred: !!state?.starred,
+        updated_at: state?.status_updated_at ?? new Date().toISOString(),
+      } satisfies RecruiterContactState,
+      notes: (notesByContact.get(row.id) ?? []).map<RecruiterNote>((n) => ({
+        id: n.id,
+        recruiter_id: n.contact_id,
+        body: n.body,
+        created_at: n.created_at,
+      })),
+      touches: (touchesByContact.get(row.id) ?? []).map<RecruiterTouch>((t) => ({
+        id: t.id,
+        recruiter_id: t.contact_id,
+        channel: normalizeChannel(t.channel),
+        direction: t.direction === "inbound" ? "inbound" : "outbound",
+        body: t.brief ?? "",
+        created_at: t.touched_at ?? new Date().toISOString(),
+      })),
+    };
+  });
+}
+
+function groupBy<T>(items: T[], key: (item: T) => string) {
+  const map = new Map<string, T[]>();
+  for (const item of items) {
+    const k = key(item);
+    map.set(k, [...(map.get(k) ?? []), item]);
+  }
+  return map;
+}
+
+function normalizeTier(value: string | null): RecruiterTier {
+  return value === "TIER 1" || value === "TIER 2" || value === "TIER 3" || value === "TIER 4"
+    ? value
+    : "TIER 4";
+}
+
+function normalizeSource(value: string | null): RecruiterSource {
+  return value === "LeadDelta" || value === "Outlook (new)" || value === "Both"
+    ? value
+    : "LeadDelta";
+}
+
+function normalizeStatus(value: string | null | undefined) {
+  switch (value) {
+    case "sent":
+    case "replied":
+    case "in_conversation":
+    case "live_role":
+    case "closed":
+    case "snoozed":
+    case "archived":
+      return value;
+    default:
+      return "queue";
+  }
+}
+
+function normalizeChannel(value: string | null): RecruiterTouch["channel"] {
+  switch (value) {
+    case "email":
+    case "linkedin":
+    case "phone":
+    case "meeting":
+    case "other":
+      return value;
+    case "event":
+    case "referral":
+    default:
+      return "other";
+  }
+}
+
