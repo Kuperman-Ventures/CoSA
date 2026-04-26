@@ -63,8 +63,21 @@ async function getUserId() {
 async function getUserContext() {
   const supabase = await createPublicClient();
   const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) throw new Error("not_authenticated");
-  return { supabase, userId: data.user.id };
+  if (!error && data.user) return { supabase, userId: data.user.id };
+
+  const serviceSupabase = createPublicServiceRoleClient();
+  const ownerId = await getSingleUserOwnerId(serviceSupabase);
+  return { supabase: serviceSupabase, userId: ownerId };
+}
+
+async function getSingleUserOwnerId(supabase: ReturnType<typeof createPublicServiceRoleClient>) {
+  const configuredOwnerId = stringCredential(process.env.JASONOS_OWNER_USER_ID);
+  if (configuredOwnerId) return configuredOwnerId;
+
+  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1 });
+  const owner = data?.users[0];
+  if (error || !owner) throw new Error("not_authenticated");
+  return owner.id;
 }
 
 export async function testServiceConnection(

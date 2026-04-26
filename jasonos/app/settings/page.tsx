@@ -4,7 +4,7 @@ import { getSettingsPayload } from "@/lib/settings/data";
 import { SettingsClient } from "@/components/jasonos/settings/settings-client";
 
 export const metadata = { title: "Settings · JasonOS" };
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const [stripe, ls, settings] = await Promise.all([
