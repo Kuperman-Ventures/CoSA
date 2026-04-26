@@ -11,10 +11,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { addReconnectNote, setReconnectStatus } from "@/app/actions/reconnect";
+import { setContactTriage } from "@/lib/server-actions/triage";
+import { INTENTS, INTENT_LABELS, type Intent } from "@/lib/triage/types";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
 import { TierBadge } from "./tier-badge";
@@ -27,12 +30,14 @@ export function ReconnectDetailDrawer({
   onClose,
   onLocalStatus,
   onLocalNote,
+  onLocalTriage,
 }: {
   contact: ReconnectContact | null;
   contacts: ReconnectContact[];
   onClose: () => void;
   onLocalStatus: (id: string, status: RecruiterStatus, note?: string) => void;
   onLocalNote: (id: string, body: string) => void;
+  onLocalTriage: (id: string, intent: Intent | null, personalGoal: string | null) => void;
 }) {
   const [note, setNote] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -56,6 +61,27 @@ export function ReconnectDetailDrawer({
         result.ok
           ? `${RECRUITER_STATUS_LABELS[status]} updated`
           : result.message
+      );
+    });
+  };
+
+  const updateTriage = (nextIntent: Intent | null) => {
+    const goal =
+      nextIntent === null
+        ? null
+        : window.prompt("One-line goal for this contact", contact.personal_goal ?? "") ??
+          contact.personal_goal ??
+          null;
+
+    onLocalTriage(contact.id, nextIntent, goal);
+    startTransition(async () => {
+      const result = await setContactTriage({
+        contactId: contact.id,
+        intent: nextIntent,
+        personalGoal: goal,
+      });
+      toast[result.ok ? "success" : "error"](
+        result.ok ? "Intent updated" : result.error
       );
     });
   };
@@ -86,6 +112,16 @@ export function ReconnectDetailDrawer({
                 {contact.title ? `${contact.title} · ` : ""}
                 {contact.firm}
               </SheetDescription>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Badge variant={contact.intent ? "secondary" : "outline"}>
+                  Intent: {contact.intent ? INTENT_LABELS[contact.intent] : "not set"}
+                </Badge>
+                {contact.personal_goal ? (
+                  <span className="text-xs text-muted-foreground">
+                    Goal: {contact.personal_goal}
+                  </span>
+                ) : null}
+              </div>
             </div>
             <div className="flex flex-wrap justify-end gap-2 pr-8">
               <AskDispatchButton
@@ -162,6 +198,31 @@ export function ReconnectDetailDrawer({
                 disabled={isPending}
               >
                 Close Out
+              </Button>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="mb-2 text-sm font-semibold tracking-tight">Intent</h3>
+            <div className="flex flex-wrap gap-2">
+              {INTENTS.map((intent) => (
+                <Button
+                  key={intent}
+                  size="sm"
+                  variant={contact.intent === intent ? "default" : "outline"}
+                  onClick={() => updateTriage(intent)}
+                  disabled={isPending}
+                >
+                  {INTENT_LABELS[intent]}
+                </Button>
+              ))}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => updateTriage(null)}
+                disabled={isPending}
+              >
+                Clear
               </Button>
             </div>
           </section>

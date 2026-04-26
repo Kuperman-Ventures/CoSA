@@ -7,6 +7,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ArrowLeft, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { Intent } from "@/lib/triage/types";
 import type {
   ReconnectContact,
   RecruiterSource,
@@ -221,6 +222,19 @@ export function ReconnectContactsClient({
                       },
                       ...c.notes,
                     ],
+                  }
+                : c
+            )
+          )
+        }
+        onLocalTriage={(id: string, intent: Intent | null, personalGoal: string | null) =>
+          setContacts((current) =>
+            current.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    intent,
+                    personal_goal: personalGoal,
                   }
                 : c
             )

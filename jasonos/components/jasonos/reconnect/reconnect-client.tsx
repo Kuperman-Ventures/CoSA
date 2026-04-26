@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
+import type { Intent } from "@/lib/triage/types";
 import type {
   ReconnectContact,
   ReconnectDashboardData,
@@ -15,7 +17,13 @@ import { ReconnectStatsStrip } from "./stats-strip";
 import { ReconnectQueueCard } from "./queue-card";
 import { ReconnectDetailDrawer } from "./detail-drawer";
 
-export function ReconnectClient({ data }: { data: ReconnectDashboardData }) {
+export function ReconnectClient({
+  data,
+  triageCount,
+}: {
+  data: ReconnectDashboardData;
+  triageCount: number;
+}) {
   const [contacts, setContacts] = useState(data.contacts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [includeTier3, setIncludeTier3] = useState(false);
@@ -99,6 +107,20 @@ export function ReconnectClient({ data }: { data: ReconnectDashboardData }) {
     );
   };
 
+  const setLocalTriage = (id: string, intent: Intent | null, personalGoal: string | null) => {
+    setContacts((current) =>
+      current.map((contact) =>
+        contact.id === id
+          ? {
+              ...contact,
+              intent,
+              personal_goal: personalGoal,
+            }
+          : contact
+      )
+    );
+  };
+
   return (
     <div className="mx-auto max-w-[1500px] space-y-4 px-4 py-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -116,6 +138,14 @@ export function ReconnectClient({ data }: { data: ReconnectDashboardData }) {
           </p>
         </div>
         <div className="flex gap-2">
+          {triageCount > 0 ? (
+            <Button variant="default" render={<Link href="/runner/triage" />}>
+              Triage queue
+              <Badge variant="secondary" className="ml-1 h-5">
+                {triageCount}
+              </Badge>
+            </Button>
+          ) : null}
           <AskDispatchButton
             requestType="pipeline_analysis"
             sourcePage="/reconnect"
@@ -186,6 +216,7 @@ export function ReconnectClient({ data }: { data: ReconnectDashboardData }) {
         onClose={() => setSelectedId(null)}
         onLocalStatus={setStatus}
         onLocalNote={addLocalNote}
+        onLocalTriage={setLocalTriage}
       />
     </div>
   );

@@ -1,10 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { DispatchInbox } from "@/components/dispatch/DispatchInbox";
+import { getUntriagedReconnectCount } from "@/lib/server-actions/triage";
 import { Command, Sparkles } from "lucide-react";
 
 const NAV = [
@@ -18,6 +21,23 @@ const NAV = [
 
 export function TopNav() {
   const pathname = usePathname();
+  const [triageCount, setTriageCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    getUntriagedReconnectCount()
+      .then((count) => {
+        if (active) setTriageCount(count);
+      })
+      .catch(() => {
+        if (active) setTriageCount(0);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [pathname]);
+
   return (
     <header className="sticky top-0 z-40 glass hairline border-b">
       <div className="mx-auto flex h-12 max-w-[1800px] items-center gap-6 px-4">
@@ -50,6 +70,22 @@ export function TopNav() {
               </Link>
             );
           })}
+          {triageCount > 0 ? (
+            <Link
+              href="/runner/triage"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition-colors",
+                pathname?.startsWith("/runner/triage")
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+              )}
+            >
+              Triage
+              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                {triageCount}
+              </Badge>
+            </Link>
+          ) : null}
         </nav>
 
         <div className="ml-auto flex items-center gap-2">

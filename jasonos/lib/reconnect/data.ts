@@ -1,8 +1,12 @@
 import "server-only";
 
-import { createPublicServiceRoleClient } from "@/lib/supabase/server";
+import {
+  createPublicServiceRoleClient,
+  createServiceRoleClient,
+} from "@/lib/supabase/server";
 import { MOCK_RECONNECT_CONTACTS } from "./mock-data";
 import type {
+  ReconnectIntent,
   ReconnectContact,
   ReconnectDashboardData,
   Recruiter,
@@ -103,7 +107,7 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
     }
 
     const ids = recruiters.map((r) => r.id as string);
-    const [{ data: notes }, { data: touches }] = await Promise.all([
+    const [{ data: notes }, { data: touches }, triageByContact] = await Promise.all([
       sb
         .from("rr_notes")
         .select("id,contact_id,body,created_at")
@@ -114,13 +118,15 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
         .select("id,contact_id,channel,direction,touched_at,brief")
         .in("contact_id", ids)
         .order("touched_at", { ascending: false }),
+      getContactTriageById(ids),
     ]);
 
     return mapReconnectRows(
       recruiters as PublicRecruiterRow[],
       (states ?? []) as PublicContactStateRow[],
       (notes ?? []) as PublicNoteRow[],
-      (touches ?? []) as PublicTouchRow[]
+      (touches ?? []) as PublicTouchRow[],
+      triageByContact
     );
   } catch {
     return MOCK_RECONNECT_CONTACTS;
@@ -175,11 +181,18 @@ type PublicTouchRow = {
   brief: string | null;
 };
 
+type ContactTriageRow = {
+  id: string;
+  intent: ReconnectIntent | null;
+  personal_goal: string | null;
+};
+
 function mapReconnectRows(
   recruiters: PublicRecruiterRow[],
   states: PublicContactStateRow[],
   notes: PublicNoteRow[],
-  touches: PublicTouchRow[]
+  touches: PublicTouchRow[],
+  triageByContact: Map<string, ContactTriageRow>
 ): ReconnectContact[] {
   const stateByContact = new Map(states.map((s) => [s.contact_id, s]));
   const notesByContact = groupBy(notes, (n) => n.contact_id);
@@ -187,6 +200,7 @@ function mapReconnectRows(
 
   return recruiters.map((row) => {
     const state = stateByContact.get(row.id);
+    const triage = triageByContact.get(row.id);
     const recruiter: Recruiter = {
       id: row.id,
       name: row.name,
@@ -235,8 +249,36 @@ function mapReconnectRows(
         body: t.brief ?? "",
         created_at: t.touched_at ?? new Date().toISOString(),
       })),
+      intent: triage?.intent ?? null,
+      personal_goal: triage?.personal_goal ?? null,
     };
   });
+}
+
+async function getContactTriageById(ids: string[]) {
+  if (!ids.length) return new Map<string, ContactTriageRow>();
+
+  try {
+    const sb = createServiceRoleClient();
+    const { data, error } = await sb
+      .from("contacts")
+      .select("id,intent,personal_goal")
+      .in("id", ids);
+
+    if (error || !data) return new Map<string, ContactTriageRow>();
+    return new Map(
+      (data as ContactTriageRow[]).map((row) => [
+        row.id,
+        {
+          id: row.id,
+          intent: row.intent,
+          personal_goal: row.personal_goal,
+        },
+      ])
+    );
+  } catch {
+    return new Map<string, ContactTriageRow>();
+  }
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string) {

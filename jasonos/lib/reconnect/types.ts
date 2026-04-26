@@ -16,6 +16,13 @@ export type RecruiterSource =
   | "HubSpot (new)"
   | "Both";
 
+export type ReconnectIntent =
+  | "warm"
+  | "intel"
+  | "door"
+  | "pipeline"
+  | "role_inquiry";
+
 export interface Recruiter {
   id: string;
   name: string;
@@ -68,6 +75,8 @@ export interface ReconnectContact extends Recruiter {
   state: RecruiterContactState;
   notes: RecruiterNote[];
   touches: RecruiterTouch[];
+  intent?: ReconnectIntent | null;
+  personal_goal?: string | null;
 }
 
 export interface ReconnectStats {
