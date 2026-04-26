@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ExternalLink, MessageSquareText, XCircle } from "lucide-react";
+import { ExternalLink, Inbox, MessageSquareText, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Sheet,
@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { addReconnectNote, setReconnectStatus } from "@/app/actions/reconnect";
-import { setContactTriage } from "@/lib/server-actions/triage";
+import { sendContactToTriage, setContactTriage } from "@/lib/server-actions/triage";
 import { INTENTS, INTENT_LABELS, type Intent } from "@/lib/triage/types";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
@@ -31,6 +31,7 @@ export function ReconnectDetailDrawer({
   onLocalStatus,
   onLocalNote,
   onLocalTriage,
+  onLocalReconnectCardSent,
 }: {
   contact: ReconnectContact | null;
   contacts: ReconnectContact[];
@@ -38,6 +39,7 @@ export function ReconnectDetailDrawer({
   onLocalStatus: (id: string, status: RecruiterStatus, note?: string) => void;
   onLocalNote: (id: string, body: string) => void;
   onLocalTriage: (id: string, intent: Intent | null, personalGoal: string | null) => void;
+  onLocalReconnectCardSent?: (id: string) => void;
 }) {
   const [note, setNote] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -83,6 +85,20 @@ export function ReconnectDetailDrawer({
       toast[result.ok ? "success" : "error"](
         result.ok ? "Intent updated" : result.error
       );
+    });
+  };
+
+  const sendToTriage = () => {
+    startTransition(async () => {
+      const result = await sendContactToTriage({ contactId: contact.id });
+      if (!result.ok) {
+        toast.error(result.error);
+      } else if (result.alreadyExists) {
+        toast.info("Already in your triage queue");
+      } else {
+        onLocalReconnectCardSent?.(contact.id);
+        toast.success("Sent to Triage queue");
+      }
     });
   };
 
@@ -147,6 +163,17 @@ export function ReconnectDetailDrawer({
                 }}
                 label="Recruiter strategy"
               />
+              {!contact.has_open_reconnect_card ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={sendToTriage}
+                  disabled={isPending}
+                >
+                  <Inbox className="h-3.5 w-3.5" />
+                  Send to Triage
+                </Button>
+              ) : null}
               {contact.linkedin_url ? (
                 <Button variant="outline" size="sm" render={<a href={contact.linkedin_url} target="_blank" />} >
                   LinkedIn <ExternalLink className="h-3.5 w-3.5" />

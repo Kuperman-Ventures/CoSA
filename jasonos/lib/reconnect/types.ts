@@ -23,6 +23,13 @@ export type ReconnectIntent =
   | "pipeline"
   | "role_inquiry";
 
+export type ReconnectObjectType = "all" | "recruiter" | "tier1_contact" | "manual";
+
+export interface ReconnectTypeCounts {
+  total: number;
+  by_type: Record<string, number>;
+}
+
 export interface Recruiter {
   id: string;
   name: string;
@@ -77,6 +84,8 @@ export interface ReconnectContact extends Recruiter {
   touches: RecruiterTouch[];
   intent?: ReconnectIntent | null;
   personal_goal?: string | null;
+  reconnect_object_type?: string | null;
+  has_open_reconnect_card?: boolean;
 }
 
 export interface ReconnectStats {

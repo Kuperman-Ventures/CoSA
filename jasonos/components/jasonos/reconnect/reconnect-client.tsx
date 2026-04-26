@@ -10,7 +10,9 @@ import type { Intent } from "@/lib/triage/types";
 import type {
   ReconnectContact,
   ReconnectDashboardData,
+  ReconnectObjectType,
   ReconnectStats,
+  ReconnectTypeCounts,
   RecruiterStatus,
 } from "@/lib/reconnect/types";
 import { ReconnectStatsStrip } from "./stats-strip";
@@ -20,20 +22,31 @@ import { ReconnectDetailDrawer } from "./detail-drawer";
 export function ReconnectClient({
   data,
   triageCount,
+  typeCounts,
 }: {
   data: ReconnectDashboardData;
   triageCount: number;
+  typeCounts: ReconnectTypeCounts;
 }) {
   const [contacts, setContacts] = useState(data.contacts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [includeTier3, setIncludeTier3] = useState(false);
+  const [selectedType, setSelectedType] = useState<ReconnectObjectType>("all");
 
   const stats = useMemo(() => computeStats(contacts), [contacts]);
+  const typeFilteredContacts = useMemo(
+    () =>
+      selectedType === "all"
+        ? contacts
+        : contacts.filter((contact) => contact.reconnect_object_type === selectedType),
+    [contacts, selectedType]
+  );
   const queue = useMemo(
-    () => getQueue(contacts, includeTier3),
-    [contacts, includeTier3]
+    () => getQueue(typeFilteredContacts, includeTier3),
+    [typeFilteredContacts, includeTier3]
   );
   const selected = selectedId ? contacts.find((c) => c.id === selectedId) ?? null : null;
+  const selectedEmptyHint = getTypeEmptyHint(selectedType);
 
   const setStatus = (id: string, status: RecruiterStatus, note?: string) => {
     setContacts((current) =>
@@ -121,6 +134,20 @@ export function ReconnectClient({
     );
   };
 
+  const setLocalReconnectCardSent = (id: string) => {
+    setContacts((current) =>
+      current.map((contact) =>
+        contact.id === id
+          ? {
+              ...contact,
+              reconnect_object_type: "manual",
+              has_open_reconnect_card: true,
+            }
+          : contact
+      )
+    );
+  };
+
   return (
     <div className="mx-auto max-w-[1500px] space-y-4 px-4 py-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -165,6 +192,12 @@ export function ReconnectClient({
 
       <ReconnectStatsStrip stats={stats} />
 
+      <TypeTabs
+        selected={selectedType}
+        counts={typeCounts}
+        onSelect={setSelectedType}
+      />
+
       <section className="rounded-xl border bg-card">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
           <div>
@@ -182,7 +215,17 @@ export function ReconnectClient({
           </Button>
         </header>
 
-        {queue.length ? (
+        {selectedType !== "all" && typeFilteredContacts.length === 0 ? (
+          <div className="grid place-items-center px-4 py-16 text-center">
+            <CheckCircle2 className="h-10 w-10 text-muted-foreground/60" />
+            <h3 className="mt-3 text-lg font-semibold tracking-tight">
+              No {getTypeLabel(selectedType).toLowerCase()} contacts in Reconnect yet.
+            </h3>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              {selectedEmptyHint}
+            </p>
+          </div>
+        ) : queue.length ? (
           <div className="space-y-3 p-3">
             {queue.map((contact) => (
               <ReconnectQueueCard
@@ -217,9 +260,72 @@ export function ReconnectClient({
         onLocalStatus={setStatus}
         onLocalNote={addLocalNote}
         onLocalTriage={setLocalTriage}
+        onLocalReconnectCardSent={setLocalReconnectCardSent}
       />
     </div>
   );
+}
+
+function TypeTabs({
+  selected,
+  counts,
+  onSelect,
+}: {
+  selected: ReconnectObjectType;
+  counts: ReconnectTypeCounts;
+  onSelect: (type: ReconnectObjectType) => void;
+}) {
+  const tabs: Array<{ type: ReconnectObjectType; label: string; count: number }> = [
+    { type: "all", label: "All", count: counts.total },
+    { type: "recruiter", label: "Recruiters", count: counts.by_type.recruiter ?? 0 },
+    { type: "tier1_contact", label: "Tier 1", count: counts.by_type.tier1_contact ?? 0 },
+    { type: "manual", label: "Manual", count: counts.by_type.manual ?? 0 },
+  ];
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {tabs.map((tab) => (
+        <button
+          key={tab.type}
+          type="button"
+          onClick={() => onSelect(tab.type)}
+          className={`rounded-full border px-3 py-1 text-sm transition-colors ${
+            selected === tab.type
+              ? "bg-foreground text-background"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+        >
+          {tab.label} ({tab.count})
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function getTypeLabel(type: ReconnectObjectType) {
+  switch (type) {
+    case "tier1_contact":
+      return "Tier 1";
+    case "manual":
+      return "Manual";
+    case "recruiter":
+      return "Recruiter";
+    case "all":
+      return "Reconnect";
+  }
+}
+
+function getTypeEmptyHint(type: ReconnectObjectType) {
+  switch (type) {
+    case "tier1_contact":
+      return "Run the Tier 1 Ranker on /contacts to populate this list.";
+    case "manual":
+      return "Click 'Send to Triage' on any contact to add them here.";
+    case "recruiter":
+      return "Recruiter cards will appear here when they are open in Reconnect.";
+    case "all":
+      return "Reconnect cards will appear here when they are open.";
+  }
 }
 
 function computeStats(contacts: ReconnectContact[]): ReconnectStats {

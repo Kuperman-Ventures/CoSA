@@ -15,6 +15,7 @@ import {
   Inbox,
   CheckCircle2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,7 @@ import {
   saveRunnerState,
   upsertContactScore,
 } from "@/lib/actions/contacts";
+import { sendContactToTriage } from "@/lib/server-actions/triage";
 import {
   RUNNER_ID,
   TASK_ID,
@@ -717,13 +719,14 @@ function RankerTable({
               <th className="px-2 py-2 text-left">Seniority</th>
               <th className="px-2 py-2 text-left">Fit</th>
               <th className="px-2 py-2 text-right">Score</th>
+              <th className="px-2 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-3 py-10 text-center text-xs text-muted-foreground"
                 >
                   No contacts match the current filters.
@@ -768,6 +771,23 @@ function ContactRow({
   const s = rc.score;
   const computed = score(s?.recency, s?.seniority, s?.fit, weights);
   const breakdown = scoreBreakdown(s?.recency, s?.seniority, s?.fit, weights);
+  const [sendPending, startSend] = useTransition();
+  const [sentToTriage, setSentToTriage] = useState(false);
+
+  const handleSendToTriage = () => {
+    startSend(async () => {
+      const result = await sendContactToTriage({ contactId: rc.contact.id });
+      if (!result.ok) {
+        toast.error(result.error);
+      } else if (result.alreadyExists) {
+        setSentToTriage(true);
+        toast.info("Already in your triage queue");
+      } else {
+        setSentToTriage(true);
+        toast.success("Sent to Triage queue");
+      }
+    });
+  };
 
   return (
     <tr
@@ -822,6 +842,20 @@ function ContactRow({
         title={breakdown}
       >
         {s ? computed : <span className="text-muted-foreground">—</span>}
+      </td>
+      <td className="px-2 py-2 text-right align-top">
+        {!selected ? (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={handleSendToTriage}
+            disabled={sendPending || sentToTriage}
+            aria-label={`Send ${rc.contact.name} to triage`}
+            title={sentToTriage ? "Already in your triage queue" : "Send to Triage"}
+          >
+            <Inbox className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
       </td>
     </tr>
   );

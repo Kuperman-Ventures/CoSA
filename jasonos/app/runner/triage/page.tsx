@@ -1,5 +1,8 @@
-import Link from "next/link";
-import { getNextUntriagedCard } from "@/lib/server-actions/triage";
+import {
+  getNextUntriagedCard,
+  getUntriagedReconnectCountsByTrack,
+} from "@/lib/server-actions/triage";
+import type { TrackFilter } from "@/lib/triage/types";
 import { TriageRunnerWrapper } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -7,32 +10,23 @@ export const dynamic = "force-dynamic";
 export default async function TriagePage({
   searchParams,
 }: {
-  searchParams: Promise<{ skip?: string }>;
+  searchParams: Promise<{ skip?: string; track?: string }>;
 }) {
   const params = await searchParams;
   const skippedContactIds = parseSkippedContactIds(params.skip);
-  const next = await getNextUntriagedCard(skippedContactIds);
-
-  if (!next) {
-    return (
-      <main className="mx-auto max-w-2xl space-y-4 p-12 text-center">
-        <h1 className="text-2xl font-semibold">All caught up</h1>
-        <p className="text-muted-foreground">
-          Every reconnect contact has an intent set. Come back after the next
-          ranker run.
-        </p>
-        <Link href="/reconnect" className="underline">
-          Back to Reconnect
-        </Link>
-      </main>
-    );
-  }
+  const track = parseTrackFilter(params.track);
+  const [next, counts] = await Promise.all([
+    getNextUntriagedCard(skippedContactIds, track),
+    getUntriagedReconnectCountsByTrack(),
+  ]);
 
   return (
     <TriageRunnerWrapper
-      key={next.card_id}
+      key={next?.card_id ?? track ?? "all"}
       initial={next}
       skippedContactIds={skippedContactIds}
+      currentTrack={track}
+      counts={counts}
     />
   );
 }
@@ -43,4 +37,16 @@ function parseSkippedContactIds(value?: string) {
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean);
+}
+
+function parseTrackFilter(value?: string): TrackFilter {
+  switch (value) {
+    case "venture":
+    case "advisors":
+    case "job_search":
+    case "personal":
+      return value;
+    default:
+      return null;
+  }
 }

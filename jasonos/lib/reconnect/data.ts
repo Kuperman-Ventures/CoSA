@@ -9,6 +9,7 @@ import type {
   ReconnectIntent,
   ReconnectContact,
   ReconnectDashboardData,
+  ReconnectTypeCounts,
   Recruiter,
   RecruiterContactState,
   RecruiterNote,
@@ -82,6 +83,34 @@ export async function getReconnectDashboardData(): Promise<ReconnectDashboardDat
   };
 }
 
+export async function getReconnectTypeCounts(): Promise<ReconnectTypeCounts> {
+  const empty: ReconnectTypeCounts = { total: 0, by_type: {} };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return empty;
+
+  try {
+    const sb = createServiceRoleClient();
+    const { data, error } = await sb
+      .from("cards")
+      .select("object_type")
+      .eq("module", "reconnect")
+      .eq("state", "open");
+
+    if (error || !data) return empty;
+
+    return data.reduce<ReconnectTypeCounts>(
+      (counts, row) => {
+        const type = typeof row.object_type === "string" ? row.object_type : "unknown";
+        counts.total += 1;
+        counts.by_type[type] = (counts.by_type[type] ?? 0) + 1;
+        return counts;
+      },
+      { total: 0, by_type: {} }
+    );
+  } catch {
+    return empty;
+  }
+}
+
 async function getReconnectContacts(): Promise<ReconnectContact[]> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return MOCK_RECONNECT_CONTACTS;
 
@@ -107,26 +136,29 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
     }
 
     const ids = recruiters.map((r) => r.id as string);
-    const [{ data: notes }, { data: touches }, triageByContact] = await Promise.all([
-      sb
-        .from("rr_notes")
-        .select("id,contact_id,body,created_at")
-        .in("contact_id", ids)
-        .order("created_at", { ascending: false }),
-      sb
-        .from("rr_touches")
-        .select("id,contact_id,channel,direction,touched_at,brief")
-        .in("contact_id", ids)
-        .order("touched_at", { ascending: false }),
-      getContactTriageById(ids),
-    ]);
+    const [{ data: notes }, { data: touches }, triageByContact, reconnectMeta] =
+      await Promise.all([
+        sb
+          .from("rr_notes")
+          .select("id,contact_id,body,created_at")
+          .in("contact_id", ids)
+          .order("created_at", { ascending: false }),
+        sb
+          .from("rr_touches")
+          .select("id,contact_id,channel,direction,touched_at,brief")
+          .in("contact_id", ids)
+          .order("touched_at", { ascending: false }),
+        getContactTriageById(ids),
+        getReconnectCardMetaByContactId(ids),
+      ]);
 
     return mapReconnectRows(
       recruiters as PublicRecruiterRow[],
       (states ?? []) as PublicContactStateRow[],
       (notes ?? []) as PublicNoteRow[],
       (touches ?? []) as PublicTouchRow[],
-      triageByContact
+      triageByContact,
+      reconnectMeta
     );
   } catch {
     return MOCK_RECONNECT_CONTACTS;
@@ -187,12 +219,19 @@ type ContactTriageRow = {
   personal_goal: string | null;
 };
 
+type ReconnectCardMeta = {
+  contact_id: string;
+  object_type: string | null;
+  has_open_card: boolean;
+};
+
 function mapReconnectRows(
   recruiters: PublicRecruiterRow[],
   states: PublicContactStateRow[],
   notes: PublicNoteRow[],
   touches: PublicTouchRow[],
-  triageByContact: Map<string, ContactTriageRow>
+  triageByContact: Map<string, ContactTriageRow>,
+  reconnectMeta: Map<string, ReconnectCardMeta>
 ): ReconnectContact[] {
   const stateByContact = new Map(states.map((s) => [s.contact_id, s]));
   const notesByContact = groupBy(notes, (n) => n.contact_id);
@@ -201,6 +240,7 @@ function mapReconnectRows(
   return recruiters.map((row) => {
     const state = stateByContact.get(row.id);
     const triage = triageByContact.get(row.id);
+    const cardMeta = reconnectMeta.get(row.id);
     const recruiter: Recruiter = {
       id: row.id,
       name: row.name,
@@ -251,6 +291,8 @@ function mapReconnectRows(
       })),
       intent: triage?.intent ?? null,
       personal_goal: triage?.personal_goal ?? null,
+      reconnect_object_type: cardMeta?.object_type ?? "recruiter",
+      has_open_reconnect_card: cardMeta?.has_open_card ?? false,
     };
   });
 }
@@ -278,6 +320,40 @@ async function getContactTriageById(ids: string[]) {
     );
   } catch {
     return new Map<string, ContactTriageRow>();
+  }
+}
+
+async function getReconnectCardMetaByContactId(ids: string[]) {
+  if (!ids.length) return new Map<string, ReconnectCardMeta>();
+
+  try {
+    const sb = createServiceRoleClient();
+    const { data, error } = await sb
+      .from("cards")
+      .select("object_type,state,linked_object_ids")
+      .eq("module", "reconnect")
+      .in("linked_object_ids->>contact_id", ids);
+
+    if (error || !data) return new Map<string, ReconnectCardMeta>();
+
+    const meta = new Map<string, ReconnectCardMeta>();
+    for (const row of data as Array<{
+      object_type: string | null;
+      state: string | null;
+      linked_object_ids: { contact_id?: string } | null;
+    }>) {
+      const contactId = row.linked_object_ids?.contact_id;
+      if (!contactId) continue;
+      const current = meta.get(contactId);
+      meta.set(contactId, {
+        contact_id: contactId,
+        object_type: row.object_type ?? current?.object_type ?? null,
+        has_open_card: current?.has_open_card || row.state === "open",
+      });
+    }
+    return meta;
+  } catch {
+    return new Map<string, ReconnectCardMeta>();
   }
 }
 

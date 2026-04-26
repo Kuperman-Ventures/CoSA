@@ -1,4 +1,12 @@
+import type { Track } from "@/lib/types";
+
 export type Intent = "warm" | "intel" | "door" | "pipeline" | "role_inquiry";
+export type TrackFilter = Track | null;
+
+export type TriageTrackCounts = {
+  total: number;
+  by_track: Record<Track, number>;
+};
 
 export const INTENT_LABELS: Record<Intent, string> = {
   warm: "Warm reconnect",
@@ -26,6 +34,7 @@ export interface UntriagedReconnectCard {
   contact_name: string;
   contact_title: string | null;
   contact_tags: string[];
+  contact_track: Track;
   current_intent: Intent | null;
   current_goal: string | null;
   remaining_count: number;

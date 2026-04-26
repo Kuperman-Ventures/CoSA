@@ -240,6 +240,19 @@ export function ReconnectContactsClient({
             )
           )
         }
+        onLocalReconnectCardSent={(id) =>
+          setContacts((current) =>
+            current.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    reconnect_object_type: "manual",
+                    has_open_reconnect_card: true,
+                  }
+                : c
+            )
+          )
+        }
       />
     </div>
   );
