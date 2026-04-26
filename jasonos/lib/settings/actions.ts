@@ -60,6 +60,13 @@ async function getUserId() {
   return data.user.id;
 }
 
+async function getUserContext() {
+  const supabase = await createPublicClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) throw new Error("not_authenticated");
+  return { supabase, userId: data.user.id };
+}
+
 export async function testServiceConnection(
   serviceName: string,
   credentials: Record<string, string | number | boolean> = {}
@@ -168,15 +175,14 @@ export async function testServiceConnection(
 }
 
 export async function saveServiceConnection(input: z.infer<typeof SaveConnectionSchema>) {
-  const userId = await getUserId();
+  const { supabase, userId } = await getUserContext();
   const service = getServiceDefinition(input.service_name);
   if (!service) throw new Error("unknown_service");
 
   const now = new Date().toISOString();
-  const supabase = createPublicServiceRoleClient();
 
   if (input.disconnect) {
-    await supabase.from("service_connections").upsert(
+    const { error } = await supabase.from("service_connections").upsert(
       {
         user_id: userId,
         service_name: service.name,
@@ -193,6 +199,7 @@ export async function saveServiceConnection(input: z.infer<typeof SaveConnection
       },
       { onConflict: "user_id,service_name" }
     );
+    if (error) throw new Error(error.message);
     return { status: "not_configured" as ServiceStatus, message: "Disconnected." };
   }
 
@@ -201,7 +208,7 @@ export async function saveServiceConnection(input: z.infer<typeof SaveConnection
   const key = stringCredential(credentials.api_key);
   const safeConfig = sanitizeConfig(credentials, service.name);
 
-  await supabase.from("service_connections").upsert(
+  const { error } = await supabase.from("service_connections").upsert(
     {
       user_id: userId,
       service_name: service.name,
@@ -218,6 +225,7 @@ export async function saveServiceConnection(input: z.infer<typeof SaveConnection
     },
     { onConflict: "user_id,service_name" }
   );
+  if (error) throw new Error(error.message);
 
   return {
     status: test.success ? "connected" : "error",
@@ -229,15 +237,14 @@ export async function saveServiceConnection(input: z.infer<typeof SaveConnection
 }
 
 export async function healthCheckAll() {
-  const userId = await getUserId();
+  const { supabase, userId } = await getUserContext();
   const now = new Date().toISOString();
-  const supabase = createPublicServiceRoleClient();
   const results = await Promise.all(
     SERVICE_DEFINITIONS.map(async (service) => {
       const result = await testServiceConnection(service.name).catch((error) =>
         failed(error, `${service.label} health check failed.`)
       );
-      await supabase.from("service_connections").upsert(
+      const { error } = await supabase.from("service_connections").upsert(
         {
           user_id: userId,
           service_name: service.name,
@@ -251,6 +258,7 @@ export async function healthCheckAll() {
         },
         { onConflict: "user_id,service_name" }
       );
+      if (error) throw new Error(error.message);
       return result;
     })
   );
@@ -266,11 +274,10 @@ export async function healthCheckAll() {
 }
 
 export async function saveUserSettings(input: z.infer<typeof SaveThresholdsSchema>) {
-  const userId = await getUserId();
-  const supabase = createPublicServiceRoleClient();
+  const { supabase, userId } = await getUserContext();
   const thresholds = { ...DEFAULT_ALERT_THRESHOLDS, ...input.thresholds };
   const models = { ...DEFAULT_MODEL_PREFERENCES, ...(input.models ?? {}) };
-  await supabase.from("user_preferences").upsert(
+  const { error } = await supabase.from("user_preferences").upsert(
     {
       user_id: userId,
       alert_thresholds: thresholds,
@@ -279,6 +286,7 @@ export async function saveUserSettings(input: z.infer<typeof SaveThresholdsSchem
     },
     { onConflict: "user_id" }
   );
+  if (error) throw new Error(error.message);
   return { thresholds, models };
 }
 
