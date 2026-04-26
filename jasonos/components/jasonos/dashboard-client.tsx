@@ -8,6 +8,7 @@ import { ActionQueue } from "@/components/jasonos/action-queue";
 import { MonitoringGrid } from "@/components/jasonos/monitoring-grid";
 import { DailyWrap } from "@/components/jasonos/daily-wrap";
 import { ThisWeekCard } from "@/components/jasonos/this-week-card";
+import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import type { Track } from "@/lib/types";
 import type { DashboardData } from "@/lib/data/dashboard";
 
@@ -16,6 +17,18 @@ export function DashboardClient({ data }: { data: DashboardData }) {
 
   return (
     <div className="mx-auto max-w-[1800px] space-y-4 px-4 py-4">
+      <div className="flex justify-end">
+        <AskDispatchButton
+          requestType="daily_briefing"
+          sourcePage="/"
+          context={{
+            date: new Date().toISOString().slice(0, 10),
+            open_tasks: data.kpis,
+            pending_outreaches: data.hero.find((item) => item.track === "job_search"),
+          }}
+          label="Ask Dispatch for briefing"
+        />
+      </div>
       <ThisWeekCard />
       <HeroStrip
         data={data.hero}

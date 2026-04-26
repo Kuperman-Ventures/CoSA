@@ -5,6 +5,7 @@ import { formatDistanceToNow } from "date-fns";
 import { MoreHorizontal, Moon, Reply, Send } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { markReconnectReplied, markReconnectSent, snoozeReconnectContact } from "@/app/actions/reconnect";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import { TierBadge } from "./tier-badge";
@@ -98,6 +99,18 @@ export function ReconnectQueueCard({
             ? formatDistanceToNow(new Date(contact.last_contact_date), { addSuffix: true })
             : "No contact yet"}
         </span>
+        <AskDispatchButton
+          requestType="outreach_draft"
+          sourcePage="/reconnect"
+          context={{
+            contact_id: contact.id,
+            name: contact.name,
+            purpose: contact.strategic_recommended_approach,
+            previous_outreach_summary:
+              contact.summary_of_prior_comms ?? contact.outlook_history ?? null,
+          }}
+          label="Ask Dispatch"
+        />
         <Button
           size="sm"
           disabled={isPending}

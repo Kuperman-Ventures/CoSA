@@ -29,6 +29,32 @@ export async function createClient() {
   );
 }
 
+// Auth-aware public schema client for bridge tables that intentionally live
+// outside the JasonOS schema.
+export async function createPublicClient() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          } catch {
+            // ignored — happens when called from a Server Component
+          }
+        },
+      },
+    }
+  );
+}
+
 // Service-role client for trusted background work (BNA runs, integrations).
 // Never expose this to the browser.
 export function createServiceRoleClient() {

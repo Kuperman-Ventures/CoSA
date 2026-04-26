@@ -20,6 +20,7 @@ export interface Recruiter {
   id: string;
   name: string;
   firm: string;
+  firm_normalized?: string;
   title?: string;
   specialty?: string;
   source: RecruiterSource;

@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Calendar Event Color Options</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f8f7f4;
+    --surface: #ffffff;
+    --border: #e5e2dc;
+    --text-primary: #1a1917;
+    --text-secondary: #6b6762;
+    --text-muted: #a09d98;
+
+    --advisors:    #1E6B3C;
+    --jobSearch:   #2E75B6;
+    --ventures:    #9B6BAE;
+    --networking:  #B8600B;
+    --development: #7c3aed;
+    --cosaAdmin:   #0891b2;
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 2.5rem 2rem;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: 0.35rem;
+  }
+  .subtitle {
+    font-size: 0.825rem;
+    color: var(--text-secondary);
+    margin-bottom: 2.5rem;
+    line-height: 1.5;
+  }
+
+  .options-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1.75rem;
+  }
+
+  .option-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    transition: box-shadow 0.2s;
+  }
+  .option-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+
+  .option-header {
+    padding: 1rem 1.25rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .option-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    font-family: 'DM Mono', monospace;
+  }
+  .option-name {
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+  .option-desc {
+    font-size: 0.775rem;
+    color: var(--text-secondary);
+    padding: 0.5rem 1.25rem 0;
+    line-height: 1.5;
+  }
+
+  /* ── Simulated Calendar Column ── */
+  .calendar-preview {
+    padding: 1rem 1.25rem;
+    display: grid;
+    grid-template-columns: 28px 1fr 1fr;
+    gap: 0 6px;
+  }
+  .time-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding-top: 2px;
+  }
+  .time-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    font-family: 'DM Mono', monospace;
+    text-align: right;
+    height: 56px;
+    display: flex;
+    align-items: flex-start;
+    padding-right: 4px;
+  }
+  .day-col {
+    position: relative;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px 4px;
+  }
+
+  /* ── Base event block ── */
+  .ev {
+    position: relative;
+    border-radius: 5px;
+    padding: 5px 7px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: filter 0.15s;
+    font-size: 10px;
+  }
+  .ev:hover { filter: brightness(0.95); }
+  .ev-title { font-weight: 600; line-height: 1.3; color: #1a1917; }
+  .ev-sub   { font-size: 9px; color: #6b6762; margin-top: 1px; }
+  .ev-time  { font-size: 9px; color: #a09d98; margin-top: 1px; }
+
+  /* ══ OPTION A — Current (just left border) ══ */
+  .opt-a .ev {
+    background: #ffffff;
+    border: 1px solid #e5e2dc;
+    border-left-width: 3px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  }
+
+  /* ══ OPTION B — Tinted Background ══ */
+  .opt-b .ev {
+    border-left: 3px solid;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  }
+  .opt-b .ev[data-track="advisors"]    { background: #e8f3ed; border-color: var(--advisors); }
+  .opt-b .ev[data-track="jobSearch"]   { background: #e5eef8; border-color: var(--jobSearch); }
+  .opt-b .ev[data-track="ventures"]    { background: #f1eaf5; border-color: var(--ventures); }
+  .opt-b .ev[data-track="networking"]  { background: #f5ece4; border-color: var(--networking); }
+  .opt-b .ev[data-track="development"] { background: #ede8fb; border-color: var(--development); }
+  .opt-b .ev[data-track="cosaAdmin"]   { background: #e3f2f8; border-color: var(--cosaAdmin); }
+
+  /* ══ OPTION C — Bold Left Bar (wider) + Tinted BG ══ */
+  .opt-c .ev {
+    border-left: 4px solid;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    border-radius: 0 5px 5px 0;
+  }
+  .opt-c .ev[data-track="advisors"]    { background: #edf6f1; border-color: var(--advisors); }
+  .opt-c .ev[data-track="jobSearch"]   { background: #e8f1fa; border-color: var(--jobSearch); }
+  .opt-c .ev[data-track="ventures"]    { background: #f3edf7; border-color: var(--ventures); }
+  .opt-c .ev[data-track="networking"]  { background: #f7ede5; border-color: var(--networking); }
+  .opt-c .ev[data-track="development"] { background: #eeebfd; border-color: var(--development); }
+  .opt-c .ev[data-track="cosaAdmin"]   { background: #e5f3f9; border-color: var(--cosaAdmin); }
+  .opt-c .ev .ev-title { color: #1a1917; }
+
+  /* ══ OPTION D — Full Color Background ══ */
+  .opt-d .ev {
+    border: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  }
+  .opt-d .ev[data-track="advisors"]    { background: var(--advisors); }
+  .opt-d .ev[data-track="jobSearch"]   { background: var(--jobSearch); }
+  .opt-d .ev[data-track="ventures"]    { background: var(--ventures); }
+  .opt-d .ev[data-track="networking"]  { background: var(--networking); }
+  .opt-d .ev[data-track="development"] { background: var(--development); }
+  .opt-d .ev[data-track="cosaAdmin"]   { background: var(--cosaAdmin); }
+  .opt-d .ev .ev-title { color: #ffffff; font-weight: 600; }
+  .opt-d .ev .ev-sub   { color: rgba(255,255,255,0.75); }
+  .opt-d .ev .ev-time  { color: rgba(255,255,255,0.65); }
+
+  /* ══ OPTION E — Color Header Strip ══ */
+  .opt-e .ev {
+    background: #ffffff;
+    border: 1px solid #e5e2dc;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  }
+  .opt-e .ev-strip {
+    height: 4px;
+    width: 100%;
+  }
+  .opt-e .ev[data-track="advisors"]    .ev-strip { background: var(--advisors); }
+  .opt-e .ev[data-track="jobSearch"]   .ev-strip { background: var(--jobSearch); }
+  .opt-e .ev[data-track="ventures"]    .ev-strip { background: var(--ventures); }
+  .opt-e .ev[data-track="networking"]  .ev-strip { background: var(--networking); }
+  .opt-e .ev[data-track="development"] .ev-strip { background: var(--development); }
+  .opt-e .ev[data-track="cosaAdmin"]   .ev-strip { background: var(--cosaAdmin); }
+  .opt-e .ev-body { padding: 4px 7px 5px; }
+  .opt-e .ev .ev-title { color: #1a1917; }
+
+  /* ══ OPTION F — Left Bar + Color Dot ══ */
+  .opt-f .ev {
+    background: #ffffff;
+    border: 1px solid #e5e2dc;
+    border-left-width: 3px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  .opt-f .ev-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .opt-f .ev[data-track="advisors"]    { border-color: var(--advisors); }
+  .opt-f .ev[data-track="jobSearch"]   { border-color: var(--jobSearch); }
+  .opt-f .ev[data-track="ventures"]    { border-color: var(--ventures); }
+  .opt-f .ev[data-track="networking"]  { border-color: var(--networking); }
+  .opt-f .ev[data-track="development"] { border-color: var(--development); }
+  .opt-f .ev[data-track="cosaAdmin"]   { border-color: var(--cosaAdmin); }
+  .opt-f .ev[data-track="advisors"]    .ev-dot { background: var(--advisors); }
+  .opt-f .ev[data-track="jobSearch"]   .ev-dot { background: var(--jobSearch); }
+  .opt-f .ev[data-track="ventures"]    .ev-dot { background: var(--ventures); }
+  .opt-f .ev[data-track="networking"]  .ev-dot { background: var(--networking); }
+  .opt-f .ev[data-track="development"] .ev-dot { background: var(--development); }
+  .opt-f .ev[data-track="cosaAdmin"]   .ev-dot { background: var(--cosaAdmin); }
+
+  /* ══ OPTION G — Gradient Fill (left→tint→white) ══ */
+  .opt-g .ev {
+    border-left: 4px solid;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    border-radius: 0 5px 5px 0;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
+  }
+  .opt-g .ev[data-track="advisors"]    {
+    background: linear-gradient(90deg, #c8e8d6 0%, #edf6f1 55%, #f8faf9 100%);
+    border-color: var(--advisors);
+  }
+  .opt-g .ev[data-track="jobSearch"]   {
+    background: linear-gradient(90deg, #ccdff4 0%, #e8f1fa 55%, #f5f8fc 100%);
+    border-color: var(--jobSearch);
+  }
+  .opt-g .ev[data-track="ventures"]    {
+    background: linear-gradient(90deg, #dcc8ea 0%, #f3edf7 55%, #faf7fc 100%);
+    border-color: var(--ventures);
+  }
+  .opt-g .ev[data-track="networking"]  {
+    background: linear-gradient(90deg, #f0ccaa 0%, #f7ede5 55%, #fdf9f6 100%);
+    border-color: var(--networking);
+  }
+  .opt-g .ev[data-track="development"] {
+    background: linear-gradient(90deg, #c9b8f8 0%, #eeebfd 55%, #f9f8ff 100%);
+    border-color: var(--development);
+  }
+  .opt-g .ev[data-track="cosaAdmin"]   {
+    background: linear-gradient(90deg, #b0dcee 0%, #e5f3f9 55%, #f5fafc 100%);
+    border-color: var(--cosaAdmin);
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    margin-bottom: 1.75rem;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Current badge */
+  .current-badge {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: #f0efe9;
+    color: var(--text-muted);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-left: 4px;
+    vertical-align: middle;
+    font-family: 'DM Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<h1>Calendar Event Color Options</h1>
+<p class="subtitle">
+  All options keep the left bar — each adds more visual color signal to help you identify tracks at a glance.<br />
+  Hover over events to see the hover state.
+</p>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#1E6B3C"></div> Kuperman Advisors</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2E75B6"></div> Job Search</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#9B6BAE"></div> KV Ventures</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#B8600B"></div> Networking</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div> Development</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#0891b2"></div> Admin</div>
+</div>
+
+<div class="options-grid">
+
+  <!-- ── Option A: Current ── -->
+  <div class="option-card">
+    <div class="option-header">
+      <span class="option-label">A</span>
+      <span class="option-name">Current <span class="current-badge">today</span></span>
+    </div>
+    <p class="option-desc">White background, 2px colored left border only. Clean but the track color is a thin sliver.</p>
+    <div class="calendar-preview opt-a">
+      <div class="time-col">
+        <div class="time-label">9a</div>
+        <div class="time-label">10a</div>
+        <div class="time-label">11a</div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="advisors" style="border-left-color:#1E6B3C; height:52px;">
+          <div class="ev-title">BD Call — Nordstrom</div>
+          <div class="ev-sub">Advisors · Networking</div>
+          <div class="ev-time">9:00 · 45m</div>
+        </div>
+        <div class="ev" data-track="ventures" style="border-left-color:#9B6BAE; height:42px;">
+          <div class="ev-title">Alpha Sprint Planning</div>
+          <div class="ev-time">10:00 · 30m</div>
+        </div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="jobSearch" style="border-left-color:#2E75B6; height:36px;">
+          <div class="ev-title">Resume Review</div>
+          <div class="ev-time">9:30 · 30m</div>
+        </div>
+        <div class="ev" data-track="development" style="border-left-color:#7c3aed; height:54px;">
+          <div class="ev-title">CoSA Dev — Sprint 12</div>
+          <div class="ev-sub">Development</div>
+          <div class="ev-time">10:15 · 45m</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Option B: Tinted Background ── -->
+  <div class="option-card">
+    <div class="option-header">
+      <span class="option-label">B</span>
+      <span class="option-name">Tinted Background</span>
+    </div>
+    <p class="option-desc">Left border stays + a soft pastel background tint. Keeps text readable, makes track instantly obvious.</p>
+    <div class="calendar-preview opt-b">
+      <div class="time-col">
+        <div class="time-label">9a</div>
+        <div class="time-label">10a</div>
+        <div class="time-label">11a</div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="advisors" style="height:52px;">
+          <div class="ev-title">BD Call — Nordstrom</div>
+          <div class="ev-sub">Advisors · Networking</div>
+          <div class="ev-time">9:00 · 45m</div>
+        </div>
+        <div class="ev" data-track="ventures" style="height:42px;">
+          <div class="ev-title">Alpha Sprint Planning</div>
+          <div class="ev-time">10:00 · 30m</div>
+        </div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="jobSearch" style="height:36px;">
+          <div class="ev-title">Resume Review</div>
+          <div class="ev-time">9:30 · 30m</div>
+        </div>
+        <div class="ev" data-track="development" style="height:54px;">
+          <div class="ev-title">CoSA Dev — Sprint 12</div>
+          <div class="ev-sub">Development</div>
+          <div class="ev-time">10:15 · 45m</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Option C: Wider Bar + Tint ── -->
+  <div class="option-card">
+    <div class="option-header">
+      <span class="option-label">C</span>
+      <span class="option-name">Wider Bar + Tint</span>
+    </div>
+    <p class="option-desc">4px left border (thicker, bolder) + subtle tinted background. More visual weight on the color signal.</p>
+    <div class="calendar-preview opt-c">
+      <div class="time-col">
+        <div class="time-label">9a</div>
+        <div class="time-label">10a</div>
+        <div class="time-label">11a</div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="advisors" style="height:52px;">
+          <div class="ev-title">BD Call — Nordstrom</div>
+          <div class="ev-sub">Advisors · Networking</div>
+          <div class="ev-time">9:00 · 45m</div>
+        </div>
+        <div class="ev" data-track="ventures" style="height:42px;">
+          <div class="ev-title">Alpha Sprint Planning</div>
+          <div class="ev-time">10:00 · 30m</div>
+        </div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="jobSearch" style="height:36px;">
+          <div class="ev-title">Resume Review</div>
+          <div class="ev-time">9:30 · 30m</div>
+        </div>
+        <div class="ev" data-track="development" style="height:54px;">
+          <div class="ev-title">CoSA Dev — Sprint 12</div>
+          <div class="ev-sub">Development</div>
+          <div class="ev-time">10:15 · 45m</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Option D: Full Color ── -->
+  <div class="option-card">
+    <div class="option-header">
+      <span class="option-label">D</span>
+      <span class="option-name">Full Color Fill</span>
+    </div>
+    <p class="option-desc">Google Calendar-style — full track color background, white text. Maximum visual clarity, bold look.</p>
+    <div class="calendar-preview opt-d">
+      <div class="time-col">
+        <div class="time-label">9a</div>
+        <div class="time-label">10a</div>
+        <div class="time-label">11a</div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="advisors" style="height:52px;">
+          <div class="ev-title">BD Call — Nordstrom</div>
+          <div class="ev-sub">Advisors · Networking</div>
+          <div class="ev-time">9:00 · 45m</div>
+        </div>
+        <div class="ev" data-track="ventures" style="height:42px;">
+          <div class="ev-title">Alpha Sprint Planning</div>
+          <div class="ev-time">10:00 · 30m</div>
+        </div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="jobSearch" style="height:36px;">
+          <div class="ev-title">Resume Review</div>
+          <div class="ev-time">9:30 · 30m</div>
+        </div>
+        <div class="ev" data-track="development" style="height:54px;">
+          <div class="ev-title">CoSA Dev — Sprint 12</div>
+          <div class="ev-sub">Development</div>
+          <div class="ev-time">10:15 · 45m</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Option E: Top Strip ── -->
+  <div class="option-card">
+    <div class="option-header">
+      <span class="option-label">E</span>
+      <span class="option-name">Top Color Strip</span>
+    </div>
+    <p class="option-desc">A 4px colored bar across the top of each event, white body below. Gives a "tab" feel — clean and distinct.</p>
+    <div class="calendar-preview opt-e">
+      <div class="time-col">
+        <div class="time-label">9a</div>
+        <div class="time-label">10a</div>
+        <div class="time-label">11a</div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="advisors" style="height:52px;">
+          <div class="ev-strip"></div>
+          <div class="ev-body">
+            <div class="ev-title">BD Call — Nordstrom</div>
+            <div class="ev-sub">Advisors · Networking</div>
+            <div class="ev-time">9:00 · 45m</div>
+          </div>
+        </div>
+        <div class="ev" data-track="ventures" style="height:42px;">
+          <div class="ev-strip"></div>
+          <div class="ev-body">
+            <div class="ev-title">Alpha Sprint Planning</div>
+            <div class="ev-time">10:00 · 30m</div>
+          </div>
+        </div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="jobSearch" style="height:36px;">
+          <div class="ev-strip"></div>
+          <div class="ev-body">
+            <div class="ev-title">Resume Review</div>
+            <div class="ev-time">9:30 · 30m</div>
+          </div>
+        </div>
+        <div class="ev" data-track="development" style="height:54px;">
+          <div class="ev-strip"></div>
+          <div class="ev-body">
+            <div class="ev-title">CoSA Dev — Sprint 12</div>
+            <div class="ev-sub">Development</div>
+            <div class="ev-time">10:15 · 45m</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Option F: Left Bar + Color Dot ── -->
+  <div class="option-card">
+    <div class="option-header">
+      <span class="option-label">F</span>
+      <span class="option-name">Left Bar + Color Dot</span>
+    </div>
+    <p class="option-desc">Keeps the current left border + adds a filled color dot next to the title. Subtle secondary signal.</p>
+    <div class="calendar-preview opt-f">
+      <div class="time-col">
+        <div class="time-label">9a</div>
+        <div class="time-label">10a</div>
+        <div class="time-label">11a</div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="advisors" style="height:52px;">
+          <div class="ev-dot" style="background:#1E6B3C;"></div>
+          <div>
+            <div class="ev-title">BD Call — Nordstrom</div>
+            <div class="ev-sub">Advisors · Networking</div>
+            <div class="ev-time">9:00 · 45m</div>
+          </div>
+        </div>
+        <div class="ev" data-track="ventures" style="height:42px;">
+          <div class="ev-dot" style="background:#9B6BAE;"></div>
+          <div>
+            <div class="ev-title">Alpha Sprint Planning</div>
+            <div class="ev-time">10:00 · 30m</div>
+          </div>
+        </div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="jobSearch" style="height:36px;">
+          <div class="ev-dot" style="background:#2E75B6;"></div>
+          <div>
+            <div class="ev-title">Resume Review</div>
+            <div class="ev-time">9:30 · 30m</div>
+          </div>
+        </div>
+        <div class="ev" data-track="development" style="height:54px;">
+          <div class="ev-dot" style="background:#7c3aed;"></div>
+          <div>
+            <div class="ev-title">CoSA Dev — Sprint 12</div>
+            <div class="ev-sub">Development</div>
+            <div class="ev-time">10:15 · 45m</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Option G: Gradient Left Wash ── -->
+  <div class="option-card">
+    <div class="option-header">
+      <span class="option-label">G</span>
+      <span class="option-name">Gradient Left Wash</span>
+    </div>
+    <p class="option-desc">Bold left border + gradient that fades from the track color to white. Rich depth, keeps readability.</p>
+    <div class="calendar-preview opt-g">
+      <div class="time-col">
+        <div class="time-label">9a</div>
+        <div class="time-label">10a</div>
+        <div class="time-label">11a</div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="advisors" style="height:52px;">
+          <div class="ev-title">BD Call — Nordstrom</div>
+          <div class="ev-sub">Advisors · Networking</div>
+          <div class="ev-time">9:00 · 45m</div>
+        </div>
+        <div class="ev" data-track="ventures" style="height:42px;">
+          <div class="ev-title">Alpha Sprint Planning</div>
+          <div class="ev-time">10:00 · 30m</div>
+        </div>
+      </div>
+      <div class="day-col">
+        <div class="ev" data-track="jobSearch" style="height:36px;">
+          <div class="ev-title">Resume Review</div>
+          <div class="ev-time">9:30 · 30m</div>
+        </div>
+        <div class="ev" data-track="development" style="height:54px;">
+          <div class="ev-title">CoSA Dev — Sprint 12</div>
+          <div class="ev-sub">Development</div>
+          <div class="ev-time">10:15 · 45m</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

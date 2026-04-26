@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
+import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { addReconnectNote, setReconnectStatus } from "@/app/actions/reconnect";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
@@ -42,7 +43,7 @@ export function ReconnectDetailDrawer({
     .filter(
       (c) =>
         c.id !== contact.id &&
-        normalizeFirm(c.firm) === normalizeFirm(contact.firm)
+        firmKey(c) === firmKey(contact)
     )
     .sort((a, b) => b.strategic_score - a.strategic_score);
 
@@ -86,7 +87,30 @@ export function ReconnectDetailDrawer({
                 {contact.firm}
               </SheetDescription>
             </div>
-            <div className="flex gap-2 pr-8">
+            <div className="flex flex-wrap justify-end gap-2 pr-8">
+              <AskDispatchButton
+                requestType="contact_strategy"
+                sourcePage="/reconnect/contacts"
+                context={{
+                  contact_id: contact.id,
+                  name: contact.name,
+                  company: contact.firm,
+                  relationship_tier: contact.tier,
+                  last_touch: contact.last_contact_date ?? null,
+                }}
+                label="Contact strategy"
+              />
+              <AskDispatchButton
+                requestType="recruiter_strategy"
+                sourcePage="/reconnect"
+                context={{
+                  recruiter_id: contact.id,
+                  firm_name: contact.firm,
+                  practice_area: contact.specialty ?? contact.title ?? null,
+                  relationship_status: contact.state.status,
+                }}
+                label="Recruiter strategy"
+              />
               {contact.linkedin_url ? (
                 <Button variant="outline" size="sm" render={<a href={contact.linkedin_url} target="_blank" />} >
                   LinkedIn <ExternalLink className="h-3.5 w-3.5" />
@@ -257,6 +281,6 @@ function ContextBlock({ label, body }: { label: string; body?: string }) {
   );
 }
 
-function normalizeFirm(firm?: string) {
-  return (firm ?? "").trim().toLowerCase();
+function firmKey(contact: ReconnectContact) {
+  return (contact.firm_normalized || contact.firm).trim().toLowerCase();
 }

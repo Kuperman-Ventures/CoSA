@@ -1,0 +1,77 @@
+# Applying Supabase migrations
+
+JasonOS doesn't have the Supabase CLI linked locally yet, so until that
+happens migrations are applied manually via the Supabase Dashboard.
+
+## What's pending (as of 2026-04-22)
+
+- [`0002_user_integrations.sql`](../supabase/migrations/0002_user_integrations.sql)
+  — adds `jasonos.user_integrations` (OAuth refresh tokens, one row per
+  user × provider) and `jasonos.metric_snapshots` (daily KPI snapshots
+  for real sparklines).
+- [`0003_health_checks.sql`](../supabase/migrations/0003_health_checks.sql)
+  — adds `jasonos.health_checks` (Product Health probe log) and the
+  `jasonos.health_checks_latest` view.
+
+Until both are applied:
+
+- `/api/morning-brief` returns Gmail/Calendar/Granola/Fireflies as
+  `configured: false` (no `user_integrations` table to read from).
+- `/api/monitoring/health-check` runs but returns
+  `persisted: false, note: "supabase service role missing"` even after
+  you set `SUPABASE_SERVICE_ROLE_KEY`, because the table doesn't exist.
+- `/api/monitoring/health-summary` returns synthetic-empty data.
+- `/api/action-queue/add` echoes a `mock-` card without persisting.
+
+## Apply via Dashboard (fastest)
+
+1. Open <https://supabase.com/dashboard/project/vtxbdyqpmwtzijqlzvtc/sql/new>.
+2. Paste the contents of [`0002_user_integrations.sql`](../supabase/migrations/0002_user_integrations.sql),
+   click **Run**.
+3. Paste the contents of [`0003_health_checks.sql`](../supabase/migrations/0003_health_checks.sql),
+   click **Run**.
+4. Verify in the Table Editor that `jasonos.user_integrations`,
+   `jasonos.metric_snapshots`, and `jasonos.health_checks` exist.
+
+## Apply via Supabase CLI (preferred long-term)
+
+One-time setup:
+
+```sh
+brew install supabase/tap/supabase   # if not already installed
+cd jasonos
+supabase login
+supabase link --project-ref vtxbdyqpmwtzijqlzvtc
+```
+
+Then:
+
+```sh
+supabase db push
+```
+
+The CLI will diff `supabase/migrations/` against the remote and apply
+anything pending. Future migrations: drop new `.sql` files in
+`supabase/migrations/` and run `supabase db push`.
+
+## Apply via psql (CI-friendly)
+
+```sh
+PGURL='postgres://postgres:<DB_PASSWORD>@db.vtxbdyqpmwtzijqlzvtc.supabase.co:5432/postgres'
+
+psql "$PGURL" -f supabase/migrations/0002_user_integrations.sql
+psql "$PGURL" -f supabase/migrations/0003_health_checks.sql
+```
+
+(`DB_PASSWORD` is in Supabase Dashboard → Project Settings → Database.)
+
+## Smoke test after applying
+
+```sh
+# Should return persisted: true, checked: 9
+curl -s https://jasonos.vercel.app/api/monitoring/health-check?source=cron \
+  -H "Authorization: Bearer $CRON_SECRET" | jq
+
+# Should return configured: true with one entry per target
+curl -s https://jasonos.vercel.app/api/monitoring/health-summary | jq '.configured, .targets | length'
+```

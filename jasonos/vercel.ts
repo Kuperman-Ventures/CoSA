@@ -12,13 +12,23 @@ export const config: VercelConfig = {
   // repo root before checking the path. Exit 0 = skip, exit 1 = build.
   ignoreCommand:
     'cd "$(git rev-parse --show-toplevel)" && git diff --quiet HEAD^ HEAD -- jasonos',
-  // BNA engine can take its time once we feed it real state.
   functions: {
+    // BNA engine can take its time once we feed it real state.
     "app/api/bna/route.ts": { maxDuration: 300 },
     "app/api/tell-claude/route.ts": { maxDuration: 60 },
+    // Product Health probes 9 targets in parallel with a 10s timeout each;
+    // give the function some slack so a single slow site doesn't trip the
+    // function timeout.
+    "app/api/monitoring/health-check/route.ts": { maxDuration: 60 },
   },
-  // Daily 8am ET BNA run (placeholder — wire when /api/bna is implemented).
   crons: [
+    // Daily 8am ET BNA run (placeholder — wire when /api/bna is implemented).
     { path: "/api/bna?source=cron", schedule: "0 12 * * *" },
+    // Product Health — every 2 minutes. Requires Vercel Pro (per-minute
+    // crons). The route is gated by CRON_SECRET when that env var is set.
+    {
+      path: "/api/monitoring/health-check?source=cron",
+      schedule: "*/2 * * * *",
+    },
   ],
 };

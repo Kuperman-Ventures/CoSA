@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getReconnectDashboardData } from "@/lib/reconnect/data";
 import { Button } from "@/components/ui/button";
+import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { ArrowLeft } from "lucide-react";
 
 export const metadata = { title: "Reconnect Firms · JasonOS" };
@@ -9,7 +10,8 @@ export default async function ReconnectFirmsPage() {
   const data = await getReconnectDashboardData();
   const firms = Array.from(
     data.contacts.reduce((map, contact) => {
-      const current = map.get(contact.firm) ?? {
+      const key = contact.firm_normalized || contact.firm.trim().toLowerCase();
+      const current = map.get(key) ?? {
         firm: contact.firm,
         count: 0,
         total: 0,
@@ -20,7 +22,7 @@ export default async function ReconnectFirmsPage() {
       current.total += contact.strategic_score;
       current.contacts.push(contact);
       if (contact.strategic_score > current.top.strategic_score) current.top = contact;
-      map.set(contact.firm, current);
+      map.set(key, current);
       return map;
     }, new Map<string, { firm: string; count: number; total: number; top: (typeof data.contacts)[number]; contacts: typeof data.contacts }>())
   ).map(([, firm]) => firm).sort((a, b) => b.total / b.count - a.total / a.count);
@@ -70,14 +72,27 @@ export default async function ReconnectFirmsPage() {
                   </div>
                 ))}
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              render={<Link href={`/reconnect/contacts?q=${encodeURIComponent(firm.firm)}`} />}
-            >
-              Open firm contacts
-            </Button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <AskDispatchButton
+                requestType="company_research"
+                sourcePage="/reconnect/firms"
+                context={{
+                  company_id: firm.top.firm_normalized ?? firm.firm,
+                  name: firm.firm,
+                  website: null,
+                  industry: firm.top.specialty ?? null,
+                  stage: null,
+                }}
+                label="Ask Dispatch"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                render={<Link href={`/reconnect/contacts?q=${encodeURIComponent(firm.firm)}`} />}
+              >
+                Open firm contacts
+              </Button>
+            </div>
           </article>
         ))}
       </div>

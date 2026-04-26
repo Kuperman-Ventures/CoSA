@@ -3,47 +3,58 @@
 import { ActionCardItem } from "./action-card";
 import { Button } from "@/components/ui/button";
 import { Pin, RefreshCw, Sparkles } from "lucide-react";
-import { useMemo } from "react";
-import { MOCK_BNA, MOCK_CARDS } from "@/lib/mock/data";
+import { useTodaysMustDos } from "@/hooks/dashboard/use-todays-must-dos";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
-export function MustDos() {
-  const items = useMemo(
-    () =>
-      MOCK_BNA.map((b) => {
-        const card = MOCK_CARDS.find((c) => c.id === b.card_id);
-        return card ? { card, ...b } : null;
-      }).filter(Boolean) as { card: (typeof MOCK_CARDS)[number]; rank: number; why_now: string; suggested_time_block?: string; pinned?: boolean }[],
-    []
-  );
+export interface MustDosProps {
+  variant?: "default" | "compact";
+  limit?: number;
+  className?: string;
+  showHeader?: boolean;
+}
+
+export function MustDos({
+  variant = "default",
+  limit,
+  className,
+  showHeader = true,
+}: MustDosProps) {
+  const { items: all } = useTodaysMustDos();
+  const compact = variant === "compact";
+  const items = limit ? all.slice(0, limit) : all;
 
   return (
-    <section className="rounded-xl border bg-card">
-      <header className="flex items-center justify-between gap-2 border-b px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-          <h2 className="text-sm font-semibold tracking-tight">Today&rsquo;s Must-Dos</h2>
-          <span className="text-[11px] text-muted-foreground">
-            · {items.length} ranked by Claude
-          </span>
-        </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-          onClick={() =>
-            toast.info("BNA re-run queued", {
-              description:
-                "Wired to /api/bna once Supabase + integrations land. Currently mock.",
-            })
-          }
-        >
-          <RefreshCw className="h-3 w-3" />
-          Re-run
-        </Button>
-      </header>
+    <section className={cn("rounded-xl border bg-card", className)}>
+      {showHeader ? (
+        <header className="flex items-center justify-between gap-2 border-b px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            <h2 className="text-sm font-semibold tracking-tight">Today&rsquo;s Must-Dos</h2>
+            <span className="text-[11px] text-muted-foreground">
+              · {items.length} ranked by Claude
+            </span>
+          </div>
+          {!compact ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() =>
+                toast.info("BNA re-run queued", {
+                  description:
+                    "Wired to /api/bna once Supabase + integrations land. Currently mock.",
+                })
+              }
+            >
+              <RefreshCw className="h-3 w-3" />
+              Re-run
+            </Button>
+          ) : null}
+        </header>
+      ) : null}
 
-      <div className="space-y-2 p-3">
+      <div className={cn("space-y-2", compact ? "p-2" : "p-3")}>
         {items.map((it) => (
           <div key={it.card.id} className="relative">
             {it.pinned ? (
@@ -59,7 +70,7 @@ export function MustDos() {
                   ? `${it.why_now}  •  ${it.suggested_time_block}`
                   : it.why_now
               }
-              compact
+              compact={compact}
             />
           </div>
         ))}

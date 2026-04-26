@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+
+await loadEnvLocal();
 
 const DEFAULT_SEED_PATH =
   "/Users/thor/Documents/Claude/Projects/Job Search 4.0/cursor-app-kickoff/seed_recruiters.json";
@@ -139,4 +144,19 @@ function requiredString(value, field) {
 
 function numberOrNull(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+async function loadEnvLocal() {
+  const path = join(dirname(fileURLToPath(import.meta.url)), "../.env.local");
+  if (!existsSync(path)) return;
+
+  const raw = await readFile(path, "utf8");
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const [key, ...valueParts] = trimmed.split("=");
+    if (process.env[key]) continue;
+    const value = valueParts.join("=").trim().replace(/^['"]|['"]$/g, "");
+    process.env[key] = value;
+  }
 }

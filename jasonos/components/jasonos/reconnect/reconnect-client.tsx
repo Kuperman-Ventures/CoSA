@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowRight, CheckCircle2, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import type {
   ReconnectContact,
   ReconnectDashboardData,
@@ -115,6 +116,16 @@ export function ReconnectClient({ data }: { data: ReconnectDashboardData }) {
           </p>
         </div>
         <div className="flex gap-2">
+          <AskDispatchButton
+            requestType="pipeline_analysis"
+            sourcePage="/reconnect"
+            context={{
+              total_roles: contacts.length,
+              stage_distribution: getStageDistribution(contacts),
+              stale_count: stats.awaitingResponse,
+            }}
+            label="Ask Dispatch"
+          />
           <Button variant="outline" render={<Link href="/reconnect/contacts" />}>
             Full pipeline
             <ArrowRight className="h-4 w-4" />
@@ -218,6 +229,13 @@ function getQueue(contacts: ReconnectContact[], includeTier3: boolean) {
         lastContactMs(a.last_contact_date) - lastContactMs(b.last_contact_date)
       );
     });
+}
+
+function getStageDistribution(contacts: ReconnectContact[]) {
+  return contacts.reduce<Record<string, number>>((counts, contact) => {
+    counts[contact.state.status] = (counts[contact.state.status] ?? 0) + 1;
+    return counts;
+  }, {});
 }
 
 function lastContactMs(date?: string) {

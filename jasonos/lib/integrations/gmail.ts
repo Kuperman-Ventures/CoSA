@@ -1,0 +1,154 @@
+// Gmail adapter — overnight reply intake for the Morning Brief.
+// Uses the OAuth2 refresh token stored in jasonos.user_integrations
+// (provider='google'). Falls back to empty + configured:false if no token.
+
+import "server-only";
+import { createServiceRoleClient } from "@/lib/supabase/server";
+import { emptyResult, envConfigured, type IntegrationResult } from "./_base";
+
+export interface GmailReply {
+  id: string;
+  threadId: string;
+  fromEmail: string;
+  fromName?: string;
+  subject: string;
+  snippet: string;
+  receivedAt: string;
+  summary?: string;        // optional Sonnet 1-liner, populated downstream
+  labelIds?: string[];
+}
+
+const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1";
+
+interface GoogleTokenRow {
+  access_token: string | null;
+  refresh_token: string | null;
+  expires_at: string | null;
+}
+
+async function loadGoogleToken(): Promise<GoogleTokenRow | null> {
+  if (!envConfigured("NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")) {
+    return null;
+  }
+  try {
+    const sb = createServiceRoleClient();
+    const { data, error } = await sb
+      .from("user_integrations")
+      .select("access_token, refresh_token, expires_at")
+      .eq("provider", "google")
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as GoogleTokenRow;
+  } catch {
+    return null;
+  }
+}
+
+async function refreshAccessToken(refreshToken: string): Promise<string | null> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!res.ok) return null;
+  const j = (await res.json()) as { access_token?: string };
+  return j.access_token ?? null;
+}
+
+async function getAccessToken(): Promise<string | null> {
+  const row = await loadGoogleToken();
+  if (!row) return null;
+  if (row.access_token && row.expires_at && Date.parse(row.expires_at) - Date.now() > 60_000) {
+    return row.access_token;
+  }
+  if (row.refresh_token) return refreshAccessToken(row.refresh_token);
+  return row.access_token ?? null;
+}
+
+async function gmailFetch<T>(path: string, accessToken: string): Promise<T> {
+  const res = await fetch(`${GMAIL_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Gmail ${res.status} ${path} :: ${txt.slice(0, 200)}`);
+  }
+  return (await res.json()) as T;
+}
+
+interface GmailListResp {
+  messages?: { id: string; threadId: string }[];
+}
+interface GmailMsgResp {
+  id: string;
+  threadId: string;
+  snippet?: string;
+  internalDate?: string;
+  labelIds?: string[];
+  payload?: { headers?: { name: string; value: string }[] };
+}
+
+function parseFrom(value: string | undefined): { email: string; name?: string } {
+  if (!value) return { email: "" };
+  const m = value.match(/^(.*?)<([^>]+)>$/);
+  if (m) return { name: m[1].trim().replace(/^"|"$/g, "") || undefined, email: m[2].trim() };
+  return { email: value.trim() };
+}
+
+export async function getOvernightReplies(opts?: {
+  sinceIso?: string;
+  max?: number;
+}): Promise<IntegrationResult<GmailReply[]>> {
+  const access = await getAccessToken();
+  if (!access) return emptyResult([], false);
+
+  try {
+    const since = opts?.sinceIso ? new Date(opts.sinceIso) : new Date(Date.now() - 14 * 3600_000);
+    const afterEpoch = Math.floor(since.getTime() / 1000);
+    const max = opts?.max ?? 25;
+    const q = encodeURIComponent(`is:inbox after:${afterEpoch} -from:me`);
+    const list = await gmailFetch<GmailListResp>(
+      `/users/me/messages?maxResults=${max}&q=${q}`,
+      access
+    );
+    const messages = list.messages ?? [];
+    const detailed = await Promise.all(
+      messages.map((m) =>
+        gmailFetch<GmailMsgResp>(
+          `/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+          access
+        )
+      )
+    );
+    const replies: GmailReply[] = detailed.map((d) => {
+      const headers = d.payload?.headers ?? [];
+      const get = (n: string) => headers.find((h) => h.name === n)?.value;
+      const from = parseFrom(get("From"));
+      const ts = d.internalDate ? Number(d.internalDate) : Date.now();
+      return {
+        id: d.id,
+        threadId: d.threadId,
+        fromEmail: from.email,
+        fromName: from.name,
+        subject: get("Subject") ?? "(no subject)",
+        snippet: d.snippet ?? "",
+        receivedAt: new Date(ts).toISOString(),
+        labelIds: d.labelIds,
+      };
+    });
+    return emptyResult(replies, true);
+  } catch (err) {
+    console.error("[gmail] overnight fetch failed:", err);
+    return emptyResult([], true, err instanceof Error ? err.message : String(err));
+  }
+}

@@ -88,7 +88,7 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
         sb
           .from("rr_recruiters")
           .select(
-            "id,name,linkedin_url,firm,title,specialty,firm_fit_score,practice_match_score,recency_score,signal_score,strategic_score,strategic_priority,last_contact_date,summary_of_prior_comms,outlook_history,other_contacts_at_firm,source,hubspot_url,strategic_recommended_approach"
+            "id,name,linkedin_url,firm,firm_normalized,title,specialty,firm_fit_score,practice_match_score,recency_score,signal_score,strategic_score,strategic_priority,last_contact_date,summary_of_prior_comms,outlook_history,other_contacts_at_firm,source,hubspot_url,strategic_recommended_approach"
           )
           .order("strategic_score", { ascending: false }),
         sb
@@ -132,6 +132,7 @@ type PublicRecruiterRow = {
   name: string;
   linkedin_url: string | null;
   firm: string | null;
+  firm_normalized: string | null;
   title: string | null;
   specialty: string | null;
   firm_fit_score: number | null;
@@ -190,6 +191,7 @@ function mapReconnectRows(
       id: row.id,
       name: row.name,
       firm: row.firm ?? "Unknown firm",
+      firm_normalized: row.firm_normalized ?? normalizeFirm(row.firm ?? "Unknown firm"),
       title: row.title ?? undefined,
       specialty: row.specialty ?? undefined,
       source: normalizeSource(row.source),
@@ -289,5 +291,9 @@ function normalizeChannel(value: string | null): RecruiterTouch["channel"] {
     default:
       return "other";
   }
+}
+
+function normalizeFirm(firm: string) {
+  return firm.trim().toLowerCase();
 }
 
