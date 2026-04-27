@@ -11,6 +11,8 @@ import {
 import {
   Search,
   ArrowDownUp,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   Inbox,
   CheckCircle2,
@@ -113,6 +115,8 @@ export function Tier1RankerPage({
   );
   const [view, setView] = useState<ViewMode>("all");
   const [importOpen, setImportOpen] = useState(false);
+  const [recruitersOpen, setRecruitersOpen] = useState(true);
+  const [contactsOpen, setContactsOpen] = useState(true);
 
   // Optimistic, in-memory score overrides — server eventually catches up via
   // revalidatePath. Lets the score column update instantly when a pip is clicked.
@@ -225,6 +229,15 @@ export function Tier1RankerPage({
 
     return rows;
   }, [effectiveScores, view, selectedIds, activeCluster, search, sortMode, weights]);
+
+  const recruiterRows = useMemo(
+    () => filtered.filter((row) => isRecruiterContact(row)),
+    [filtered]
+  );
+  const contactRows = useMemo(
+    () => filtered.filter((row) => !isRecruiterContact(row)),
+    [filtered]
+  );
 
   // ---- Mutations ----------------------------------------------------------
 
@@ -391,12 +404,30 @@ export function Tier1RankerPage({
 
           <ViewToolbar view={view} onView={setView} />
 
-          <RankerTable
-            rows={filtered}
+          <RankerSection
+            title="Recruiters"
+            description="Search, talent, and recruiter contacts."
+            rows={recruiterRows}
+            open={recruitersOpen}
+            onToggle={() => setRecruitersOpen((value) => !value)}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
             onSetPip={setPip}
             weights={weights}
+            emptyMessage="No recruiters match the current filters."
+          />
+
+          <RankerSection
+            title="Contacts"
+            description="Everyone else in the network."
+            rows={contactRows}
+            open={contactsOpen}
+            onToggle={() => setContactsOpen((value) => !value)}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onSetPip={setPip}
+            weights={weights}
+            emptyMessage="No non-recruiter contacts match the current filters."
           />
         </>
       )}
@@ -692,23 +723,87 @@ function ViewToolbar({
   );
 }
 
+function RankerSection({
+  title,
+  description,
+  rows,
+  open,
+  onToggle,
+  selectedIds,
+  onToggleSelect,
+  onSetPip,
+  weights,
+  emptyMessage,
+}: {
+  title: string;
+  description: string;
+  rows: RankableContact[];
+  open: boolean;
+  onToggle: () => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onSetPip: (id: string, key: "recency" | "seniority" | "fit", v: number) => void;
+  weights: RankerWeights;
+  emptyMessage: string;
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border bg-card">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 border-b bg-muted/20 px-3 py-2 text-left transition-colors hover:bg-muted/35"
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {open ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+            <h2 className="text-xs font-semibold uppercase tracking-wide">
+              {title}
+            </h2>
+            <span className="font-mono rounded-full border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+              {rows.length}
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">{description}</p>
+        </div>
+      </button>
+
+      {open ? (
+        <RankerTable
+          rows={rows}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
+          onSetPip={onSetPip}
+          weights={weights}
+          emptyMessage={emptyMessage}
+        />
+      ) : null}
+    </section>
+  );
+}
+
 function RankerTable({
   rows,
   selectedIds,
   onToggleSelect,
   onSetPip,
   weights,
+  emptyMessage,
 }: {
   rows: RankableContact[];
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onSetPip: (id: string, key: "recency" | "seniority" | "fit", v: number) => void;
   weights: RankerWeights;
+  emptyMessage: string;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border bg-card">
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
           <thead className="bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="w-8 px-2 py-2 text-left"></th>
@@ -729,7 +824,7 @@ function RankerTable({
                   colSpan={9}
                   className="px-3 py-10 text-center text-xs text-muted-foreground"
                 >
-                  No contacts match the current filters.
+                  {emptyMessage}
                 </td>
               </tr>
             ) : (
@@ -745,8 +840,7 @@ function RankerTable({
               ))
             )}
           </tbody>
-        </table>
-      </div>
+      </table>
     </div>
   );
 }
@@ -899,6 +993,19 @@ function PipsCell({
       </div>
     </td>
   );
+}
+
+function isRecruiterContact(row: RankableContact) {
+  const tags = row.contact.tags ?? [];
+  return tags.some((tag) => {
+    const normalized = tag.trim().toLowerCase();
+    return (
+      normalized === "recruiter" ||
+      normalized === "origin:recruiter" ||
+      normalized === "source:recruiter" ||
+      normalized.startsWith("firm:")
+    );
+  });
 }
 
 export type { Props as Tier1RankerPageProps };

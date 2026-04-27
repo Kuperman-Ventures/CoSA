@@ -70,22 +70,20 @@ export function TopNav() {
               </Link>
             );
           })}
-          {triageCount > 0 ? (
-            <Link
-              href="/runner/triage"
-              className={cn(
-                "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition-colors",
-                pathname?.startsWith("/runner/triage")
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              )}
-            >
-              Triage
-              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
-                {triageCount}
-              </Badge>
-            </Link>
-          ) : null}
+          <Link
+            href="/runner/triage"
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 transition-colors",
+              pathname?.startsWith("/runner/triage")
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            )}
+          >
+            Triage
+            <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+              {triageCount}
+            </Badge>
+          </Link>
         </nav>
 
         <div className="ml-auto flex items-center gap-2">

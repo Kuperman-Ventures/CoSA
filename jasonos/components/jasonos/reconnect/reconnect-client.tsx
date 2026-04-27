@@ -165,14 +165,12 @@ export function ReconnectClient({
           </p>
         </div>
         <div className="flex gap-2">
-          {triageCount > 0 ? (
-            <Button variant="default" render={<Link href="/runner/triage" />}>
-              Triage queue
-              <Badge variant="secondary" className="ml-1 h-5">
-                {triageCount}
-              </Badge>
-            </Button>
-          ) : null}
+          <Button variant="default" render={<Link href="/runner/triage" />}>
+            Triage queue
+            <Badge variant="secondary" className="ml-1 h-5">
+              {triageCount}
+            </Badge>
+          </Button>
           <AskDispatchButton
             requestType="pipeline_analysis"
             sourcePage="/reconnect"
