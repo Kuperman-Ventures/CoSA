@@ -93,6 +93,7 @@ export interface ReconnectStats {
   outreachThisWeek: number;
   repliesThisWeek: number;
   awaitingResponse: number;
+  triagedReady: number;
 }
 
 export interface ReconnectDashboardData {

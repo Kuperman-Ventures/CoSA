@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ExternalLink, Inbox, MessageSquareText, XCircle } from "lucide-react";
+import { Copy, ExternalLink, Inbox, MessageSquareText, RefreshCcw, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Sheet,
@@ -18,6 +18,7 @@ import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { addReconnectNote, setReconnectStatus } from "@/app/actions/reconnect";
 import { sendContactToTriage, setContactTriage } from "@/lib/server-actions/triage";
 import { INTENTS, INTENT_LABELS, type Intent } from "@/lib/triage/types";
+import { extractFirstName, generateDraft } from "@/lib/triage/draft-templates";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
 import { TierBadge } from "./tier-badge";
@@ -42,9 +43,32 @@ export function ReconnectDetailDrawer({
   onLocalReconnectCardSent?: (id: string) => void;
 }) {
   const [note, setNote] = useState("");
+  const [draftState, setDraftState] = useState({ key: "", text: "", base: "" });
   const [isPending, startTransition] = useTransition();
 
   if (!contact) return null;
+
+  const draftKey = contact.intent
+    ? [
+        contact.id,
+        contact.intent,
+        contact.personal_goal ?? "",
+        contact.firm ?? "",
+        contact.specialty ?? "",
+      ].join("|")
+    : "";
+  const initialDraft = contact.intent
+    ? generateDraft(contact.intent, {
+        firstName: extractFirstName(contact.name),
+        firm: contact.firm || undefined,
+        specialty: contact.specialty || undefined,
+        personalGoal: contact.personal_goal || undefined,
+        channel: "linkedin",
+      })
+    : "";
+  const draftText = draftState.key === draftKey ? draftState.text : initialDraft;
+  const draftBase = draftState.key === draftKey ? draftState.base : initialDraft;
+  const draftDirty = Boolean(draftKey && draftText !== draftBase);
 
   const firmMatches = contacts
     .filter(
@@ -68,6 +92,14 @@ export function ReconnectDetailDrawer({
   };
 
   const updateTriage = (nextIntent: Intent | null) => {
+    if (
+      draftDirty &&
+      nextIntent !== contact.intent &&
+      !window.confirm("Regenerate the outreach draft from the updated intent? Your edits will be replaced.")
+    ) {
+      return;
+    }
+
     const goal =
       nextIntent === null
         ? null
@@ -110,6 +142,48 @@ export function ReconnectDetailDrawer({
     startTransition(async () => {
       const result = await addReconnectNote(contact.id, body);
       toast[result.ok ? "success" : "error"](result.ok ? "Note added" : result.message);
+    });
+  };
+
+  const setDraftText = (text: string) => {
+    setDraftState({ key: draftKey, text, base: draftBase });
+  };
+
+  const regenerateDraft = () => {
+    setDraftState({ key: draftKey, text: initialDraft, base: initialDraft });
+    toast.success("Draft regenerated");
+  };
+
+  const copyDraftToClipboard = async () => {
+    const body = draftText.trim();
+    if (!body) return false;
+    await navigator.clipboard.writeText(body);
+    toast.success("Copied to clipboard");
+    return true;
+  };
+
+  const markDraftAsSent = () => {
+    const body = draftText.trim();
+    if (!body) return;
+
+    startTransition(async () => {
+      try {
+        await navigator.clipboard.writeText(body);
+        onLocalStatus(contact.id, "sent", body);
+        const [statusResult, noteResult] = await Promise.all([
+          setReconnectStatus(contact.id, "sent"),
+          addReconnectNote(contact.id, body),
+        ]);
+        if (!statusResult.ok) {
+          toast.error(statusResult.message);
+        } else if (!noteResult.ok) {
+          toast.error(noteResult.message);
+        } else {
+          toast.success("Copied and marked sent");
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not copy draft");
+      }
     });
   };
 
@@ -253,6 +327,48 @@ export function ReconnectDetailDrawer({
               </Button>
             </div>
           </section>
+
+          {contact.intent ? (
+            <section className="rounded-xl border bg-background/30 p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold tracking-tight">Draft outreach</h3>
+                <Button size="sm" variant="ghost" onClick={regenerateDraft}>
+                  <RefreshCcw className="mr-1 h-3 w-3" />
+                  Regenerate
+                </Button>
+              </div>
+
+              <Textarea
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+                rows={9}
+                className="font-mono text-sm"
+              />
+
+              <div className="mt-2 flex justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void copyDraftToClipboard()}
+                  disabled={!draftText.trim()}
+                >
+                  <Copy className="mr-1 h-3 w-3" />
+                  Copy
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={markDraftAsSent}
+                  disabled={!draftText.trim() || isPending}
+                >
+                  Copy & mark sent
+                </Button>
+              </div>
+            </section>
+          ) : (
+            <section className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+              Triage this contact (pick an intent above) to generate a starter outreach draft.
+            </section>
+          )}
 
           <section>
             <h3 className="mb-2 text-sm font-semibold tracking-tight">Score Breakdown</h3>

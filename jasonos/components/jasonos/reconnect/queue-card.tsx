@@ -10,6 +10,7 @@ import { markReconnectReplied, markReconnectSent, snoozeReconnectContact } from 
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import { TierBadge } from "./tier-badge";
 import { ScoreChip } from "./score-chip";
+import { IntentBadge } from "./intent-badge";
 
 export function ReconnectQueueCard({
   contact,
@@ -51,6 +52,7 @@ export function ReconnectQueueCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <TierBadge tier={contact.tier} />
+            <IntentBadge intent={contact.intent} personalGoal={contact.personal_goal} />
             <ScoreChip score={contact.strategic_score} />
             {contact.specialty ? (
               <span className="rounded-full border bg-background px-2 py-1 text-[11px] text-muted-foreground">

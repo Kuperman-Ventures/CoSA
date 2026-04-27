@@ -19,6 +19,24 @@ import { ReconnectStatsStrip } from "./stats-strip";
 import { ReconnectQueueCard } from "./queue-card";
 import { ReconnectDetailDrawer } from "./detail-drawer";
 
+type IntentFilter = null | "triaged" | "untriaged" | "triaged_ready" | Intent;
+
+const INTENT_PRIORITY: Record<Intent, number> = {
+  pipeline: 0,
+  door: 1,
+  role_inquiry: 2,
+  intel: 3,
+  warm: 4,
+};
+
+const INTENT_FILTER_LABELS: Record<Intent, string> = {
+  door: "Door",
+  pipeline: "Pipeline",
+  role_inquiry: "Role",
+  intel: "Intel",
+  warm: "Warm",
+};
+
 export function ReconnectClient({
   data,
   triageCount,
@@ -32,18 +50,28 @@ export function ReconnectClient({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [includeTier3, setIncludeTier3] = useState(false);
   const [selectedType, setSelectedType] = useState<ReconnectObjectType>("all");
+  const [intentFilter, setIntentFilter] = useState<IntentFilter>(null);
 
   const stats = useMemo(() => computeStats(contacts), [contacts]);
+  const intentCounts = useMemo(() => computeIntentCounts(contacts), [contacts]);
+  const sortedContacts = useMemo(
+    () => [...contacts].sort(compareReconnectContacts),
+    [contacts]
+  );
   const typeFilteredContacts = useMemo(
     () =>
       selectedType === "all"
-        ? contacts
-        : contacts.filter((contact) => contact.reconnect_object_type === selectedType),
-    [contacts, selectedType]
+        ? sortedContacts
+        : sortedContacts.filter((contact) => contact.reconnect_object_type === selectedType),
+    [sortedContacts, selectedType]
+  );
+  const filteredContacts = useMemo(
+    () => filterByIntent(typeFilteredContacts, intentFilter),
+    [typeFilteredContacts, intentFilter]
   );
   const queue = useMemo(
-    () => getQueue(typeFilteredContacts, includeTier3),
-    [typeFilteredContacts, includeTier3]
+    () => getQueue(filteredContacts, includeTier3),
+    [filteredContacts, includeTier3]
   );
   const selected = selectedId ? contacts.find((c) => c.id === selectedId) ?? null : null;
   const selectedEmptyHint = getTypeEmptyHint(selectedType);
@@ -188,7 +216,21 @@ export function ReconnectClient({
         </div>
       </header>
 
-      <ReconnectStatsStrip stats={stats} />
+      <IntentFilterChips
+        selected={intentFilter}
+        counts={intentCounts}
+        onSelect={setIntentFilter}
+      />
+
+      <ReconnectStatsStrip
+        stats={stats}
+        triagedReadyActive={intentFilter === "triaged_ready"}
+        onTriagedReadyClick={() =>
+          setIntentFilter((current) =>
+            current === "triaged_ready" ? null : "triaged_ready"
+          )
+        }
+      />
 
       <TypeTabs
         selected={selectedType}
@@ -213,14 +255,14 @@ export function ReconnectClient({
           </Button>
         </header>
 
-        {selectedType !== "all" && typeFilteredContacts.length === 0 ? (
+        {filteredContacts.length === 0 ? (
           <div className="grid place-items-center px-4 py-16 text-center">
             <CheckCircle2 className="h-10 w-10 text-muted-foreground/60" />
             <h3 className="mt-3 text-lg font-semibold tracking-tight">
-              No {getTypeLabel(selectedType).toLowerCase()} contacts in Reconnect yet.
+              No contacts match this Reconnect view.
             </h3>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              {selectedEmptyHint}
+              {selectedType !== "all" ? selectedEmptyHint : "Clear the triage filter to see the full queue."}
             </p>
           </div>
         ) : queue.length ? (
@@ -264,6 +306,75 @@ export function ReconnectClient({
   );
 }
 
+function IntentFilterChips({
+  selected,
+  counts,
+  onSelect,
+}: {
+  selected: IntentFilter;
+  counts: IntentCounts;
+  onSelect: (filter: IntentFilter) => void;
+}) {
+  const baseChips: Array<{ filter: IntentFilter; label: string; count: number }> = [
+    { filter: null, label: "All", count: counts.total },
+    { filter: "triaged", label: "Triaged", count: counts.triaged },
+    { filter: "untriaged", label: "Untriaged", count: counts.untriaged },
+  ];
+  const intentChips = (Object.keys(INTENT_PRIORITY) as Intent[])
+    .filter((intent) => counts.byIntent[intent] > 0)
+    .map((intent) => ({
+      filter: intent,
+      label: INTENT_FILTER_LABELS[intent],
+      count: counts.byIntent[intent],
+    }));
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {baseChips.map((chip) => (
+        <FilterChip
+          key={chip.filter ?? "all"}
+          active={selected === chip.filter}
+          label={`${chip.label} (${chip.count})`}
+          onClick={() => onSelect(chip.filter)}
+        />
+      ))}
+      {intentChips.length ? <div className="mx-2 h-5 border-l" /> : null}
+      {intentChips.map((chip) => (
+        <FilterChip
+          key={chip.filter}
+          active={selected === chip.filter}
+          label={`${chip.label} (${chip.count})`}
+          onClick={() => onSelect(chip.filter)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FilterChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1 text-sm transition-colors ${
+        active
+          ? "bg-foreground text-background"
+          : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 function TypeTabs({
   selected,
   counts,
@@ -300,19 +411,6 @@ function TypeTabs({
   );
 }
 
-function getTypeLabel(type: ReconnectObjectType) {
-  switch (type) {
-    case "tier1_contact":
-      return "Tier 1";
-    case "manual":
-      return "Manual";
-    case "recruiter":
-      return "Recruiter";
-    case "all":
-      return "Reconnect";
-  }
-}
-
 function getTypeEmptyHint(type: ReconnectObjectType) {
   switch (type) {
     case "tier1_contact":
@@ -345,6 +443,7 @@ function computeStats(contacts: ReconnectContact[]): ReconnectStats {
         Date.now() - new Date(c.state.updated_at).getTime() >
           7 * 24 * 60 * 60 * 1000
     ).length,
+    triagedReady: contacts.filter((c) => c.intent && c.state.status === "queue").length,
   };
 }
 
@@ -357,13 +456,64 @@ function getQueue(contacts: ReconnectContact[], includeTier3: boolean) {
         (includeTier3 && contact.tier === "TIER 3");
       return tierMatch && contact.state.status === "queue";
     })
-    .sort((a, b) => {
-      const byScore = b.strategic_score - a.strategic_score;
-      if (byScore) return byScore;
-      return (
-        lastContactMs(a.last_contact_date) - lastContactMs(b.last_contact_date)
-      );
-    });
+    .sort(compareReconnectContacts);
+}
+
+interface IntentCounts {
+  total: number;
+  triaged: number;
+  untriaged: number;
+  byIntent: Record<Intent, number>;
+}
+
+function computeIntentCounts(contacts: ReconnectContact[]): IntentCounts {
+  const counts: IntentCounts = {
+    total: contacts.length,
+    triaged: 0,
+    untriaged: 0,
+    byIntent: {
+      pipeline: 0,
+      door: 0,
+      role_inquiry: 0,
+      intel: 0,
+      warm: 0,
+    },
+  };
+
+  for (const contact of contacts) {
+    if (!contact.intent) {
+      counts.untriaged += 1;
+      continue;
+    }
+    counts.triaged += 1;
+    counts.byIntent[contact.intent] += 1;
+  }
+
+  return counts;
+}
+
+function filterByIntent(contacts: ReconnectContact[], filter: IntentFilter) {
+  if (!filter) return contacts;
+  if (filter === "triaged") return contacts.filter((contact) => !!contact.intent);
+  if (filter === "untriaged") return contacts.filter((contact) => !contact.intent);
+  if (filter === "triaged_ready") {
+    return contacts.filter((contact) => !!contact.intent && contact.state.status === "queue");
+  }
+  return contacts.filter((contact) => contact.intent === filter);
+}
+
+function compareReconnectContacts(a: ReconnectContact, b: ReconnectContact) {
+  const aHasIntent = !!a.intent;
+  const bHasIntent = !!b.intent;
+  if (aHasIntent && !bHasIntent) return -1;
+  if (!aHasIntent && bHasIntent) return 1;
+  if (a.intent && b.intent && a.intent !== b.intent) {
+    return INTENT_PRIORITY[a.intent] - INTENT_PRIORITY[b.intent];
+  }
+
+  const byScore = (b.strategic_score ?? 0) - (a.strategic_score ?? 0);
+  if (byScore) return byScore;
+  return lastContactMs(a.last_contact_date) - lastContactMs(b.last_contact_date);
 }
 
 function getStageDistribution(contacts: ReconnectContact[]) {

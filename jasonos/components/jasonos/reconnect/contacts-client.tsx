@@ -17,6 +17,7 @@ import type {
 import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
 import { TierBadge } from "./tier-badge";
 import { ScoreChip } from "./score-chip";
+import { IntentBadge } from "./intent-badge";
 import { ReconnectDetailDrawer } from "./detail-drawer";
 
 const TIERS: RecruiterTier[] = ["TIER 1", "TIER 2", "TIER 3", "TIER 4"];
@@ -351,7 +352,10 @@ function ContactRow({
       className="cursor-pointer hover:bg-muted/30"
     >
       <td className="px-3 py-2">
-        <TierBadge tier={contact.tier} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <TierBadge tier={contact.tier} />
+          <IntentBadge intent={contact.intent} personalGoal={contact.personal_goal} />
+        </div>
       </td>
       <td className="px-3 py-2">
         <ScoreChip score={contact.strategic_score} />

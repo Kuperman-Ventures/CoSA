@@ -57,6 +57,7 @@ export function computeReconnectStats(contacts: ReconnectContact[]) {
     awaitingResponse: contacts.filter(
       (c) => c.state.status === "sent" && daysSince(c.state.updated_at) > 7
     ).length,
+    triagedReady: contacts.filter((c) => c.intent && c.state.status === "queue").length,
   };
 }
 
