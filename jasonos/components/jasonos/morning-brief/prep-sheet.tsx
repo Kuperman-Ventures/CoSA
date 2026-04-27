@@ -38,18 +38,21 @@ export function PrepSheet({
 
   useEffect(() => {
     if (!event || !open) return;
-    setData(null);
-    setLoading(true);
-    const externalAttendees = event.attendees.filter((a) => !a.isMe).slice(0, 5);
-    fetch(`/api/morning-brief/prep`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ attendees: externalAttendees.map((a) => ({ email: a.email, name: a.name })) }),
-    })
-      .then((r) => r.json())
-      .then((j: PrepData) => setData(j))
-      .catch(() => setData({ attendees: [] }))
-      .finally(() => setLoading(false));
+    const id = window.setTimeout(() => {
+      setData(null);
+      setLoading(true);
+      const externalAttendees = event.attendees.filter((a) => !a.isMe).slice(0, 5);
+      fetch(`/api/morning-brief/prep`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attendees: externalAttendees.map((a) => ({ email: a.email, name: a.name })) }),
+      })
+        .then((r) => r.json())
+        .then((j: PrepData) => setData(j))
+        .catch(() => setData({ attendees: [] }))
+        .finally(() => setLoading(false));
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [event, open]);
 
   return (

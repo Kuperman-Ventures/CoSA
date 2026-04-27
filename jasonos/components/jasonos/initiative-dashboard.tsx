@@ -81,8 +81,11 @@ export function InitiativeDashboard() {
   const [collapsedInits, setCollapsedInits] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    setDone(safeReadDone());
-    setHydrated(true);
+    const id = window.setTimeout(() => {
+      setDone(safeReadDone());
+      setHydrated(true);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, []);
 
   const toggleTask = useCallback((taskId: string) => {

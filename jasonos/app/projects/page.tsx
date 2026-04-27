@@ -1,12 +1,39 @@
-import { MOCK_PROJECTS, MOCK_TODOS } from "@/lib/mock/data";
+import { EmptyState } from "@/components/jasonos/empty-state";
 import { TrackPill } from "@/components/jasonos/track-pill";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Target } from "lucide-react";
 import { format } from "date-fns";
+import { createServiceRoleClient } from "@/lib/supabase/server";
+import type { Project, ToDo } from "@/lib/types";
 
 export const metadata = { title: "Projects · JasonOS" };
 
-export default function ProjectsPage() {
+async function getProjectsData(): Promise<{ projects: Project[]; todos: ToDo[]; configured: boolean }> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { projects: [], todos: [], configured: false };
+  }
+
+  try {
+    const sb = createServiceRoleClient();
+    const [{ data: projects }, { data: todos }] = await Promise.all([
+      sb.from("projects").select("*").order("updated_at", { ascending: false }),
+      sb.from("todos").select("*").order("due_date", { ascending: true }),
+    ]);
+
+    return {
+      projects: (projects ?? []) as Project[],
+      todos: (todos ?? []) as ToDo[],
+      configured: true,
+    };
+  } catch (error) {
+    console.error("[projects] Supabase query failed", error);
+    return { projects: [], todos: [], configured: true };
+  }
+}
+
+export default async function ProjectsPage() {
+  const { projects, todos: allTodos, configured } = await getProjectsData();
+
   return (
     <div className="mx-auto max-w-[1200px] space-y-4 px-4 py-6">
       <header className="flex items-center justify-between">
@@ -23,8 +50,20 @@ export default function ProjectsPage() {
       </header>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {MOCK_PROJECTS.map((p) => {
-          const todos = MOCK_TODOS.filter((t) => t.project_id === p.id);
+        {projects.length === 0 ? (
+          <EmptyState
+            title="No projects yet"
+            hint={
+              configured
+                ? "Create a project from a goal or let Tell Claude decompose a plan."
+                : "Connect Supabase to load projects."
+            }
+            action={{ label: "Tell Claude", href: "/" }}
+            className="md:col-span-2"
+          />
+        ) : null}
+        {projects.map((p) => {
+          const todos = allTodos.filter((t) => t.project_id === p.id);
           return (
             <article
               key={p.id}

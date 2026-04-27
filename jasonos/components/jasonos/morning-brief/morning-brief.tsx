@@ -97,7 +97,6 @@ export function MorningBrief() {
   ].sort((a, b) => Date.parse(b.endedAt) - Date.parse(a.endedAt));
 
   const events = calendar?.data ?? [];
-  const firstEvent = events[0];
 
   const isLoading = status === "loading";
 
@@ -283,7 +282,7 @@ export function MorningBrief() {
         <BriefSection
           title="Fresh ICP Hits"
           subtitle="Crunchbase Daily · ICP-filtered"
-          source={icpLive ? "Crunchbase" : "mock (Crunchbase IMAP pending)"}
+          source={icpLive ? "Crunchbase" : "Crunchbase not connected"}
           liveBadge={icpLive}
           count={icp?.data.length ?? 0}
           isEmpty={!isLoading && (icp?.data.length ?? 0) === 0}

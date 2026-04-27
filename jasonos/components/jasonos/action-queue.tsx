@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActionCardItem } from "./action-card";
-import { MOCK_CARDS } from "@/lib/mock/data";
+import { EmptyState } from "./empty-state";
 import { TRACK_META, TRACKS, type Track } from "@/lib/types";
+import type { ActionCard } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -14,11 +15,35 @@ export function ActionQueue({
   trackFilter: Track | null;
   onTrackFilter: (t: Track | null) => void;
 }) {
+  const [cards, setCards] = useState<ActionCard[]>([]);
+  const [configured, setConfigured] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const params = trackFilter ? `?track=${trackFilter}` : "";
+    fetch(`/api/dashboard/action-queue${params}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { cards?: ActionCard[]; configured?: boolean } | null) => {
+        if (cancelled) return;
+        setCards(json?.cards ?? []);
+        setConfigured(Boolean(json?.configured));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCards([]);
+        setConfigured(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trackFilter]);
+
   const filtered = useMemo(() => {
-    return MOCK_CARDS.filter((c) => c.state === "open")
+    return cards
       .filter((c) => (trackFilter ? c.track === trackFilter : true))
       .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0));
-  }, [trackFilter]);
+  }, [cards, trackFilter]);
 
   const grouped = useMemo(() => {
     const map = new Map<Track, typeof filtered>();
@@ -84,9 +109,16 @@ export function ActionQueue({
           </div>
         ))}
         {filtered.length === 0 ? (
-          <div className="col-span-full py-10 text-center text-xs text-muted-foreground">
-            Inbox zero across this filter. Take a breath.
-          </div>
+          <EmptyState
+            title="No action cards yet"
+            hint={
+              configured
+                ? "They'll appear as integrations write events here. Connect HubSpot, Gmail, or Granola in settings to populate."
+                : "Connect Supabase to load action cards."
+            }
+            action={{ label: "Open settings", href: "/settings" }}
+            className="col-span-full"
+          />
         ) : null}
       </div>
     </section>

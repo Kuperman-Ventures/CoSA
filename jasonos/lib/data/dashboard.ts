@@ -1,33 +1,38 @@
 // Server-side data layer for the dashboard.
-// Stitches live integration data (Stripe, Lemon Squeezy) into the existing
-// MOCK_TILES / hero / KPI shape so the UI can stay shape-stable as more
-// integrations come online.
+// Every rendered value here is either live or explicitly marked empty.
 
 import "server-only";
-import { MOCK_TILES } from "@/lib/mock/data";
 import type { MonitoringTile, Track } from "@/lib/types";
 import { getStripeRevenue } from "@/lib/integrations/stripe";
 import { getLemonSqueezyMetrics } from "@/lib/integrations/lemon-squeezy";
+import { getTodaysCalendar } from "@/lib/integrations/google-calendar";
+import { createServiceRoleClient } from "@/lib/supabase/server";
 
 // ---------- Hero strip ---------------------------------------------------
 
 export interface HeroDatum {
   track: Track;
   metric: string;
-  value: string;
+  value: string | null;
   secondary?: string;
   delta: number;
   series: number[];
-  source: "live" | "mock";
+  source: "live" | "empty";
+  empty?: boolean;
+  hint?: string;
+  cta?: { label: string; href: string };
 }
 
 export interface CrossKpi {
   label: string;
-  value: string;
+  value: string | null;
   delta?: number;
   alarm?: boolean;
   sourceNote?: string;
-  source: "live" | "mock";
+  source: "live" | "empty";
+  empty?: boolean;
+  hint?: string;
+  cta?: { label: string; href: string };
 }
 
 export interface DashboardData {
@@ -51,19 +56,12 @@ const fmtUsdShort = (n: number) => {
   return fmtUsd(n);
 };
 
-// Synthetic-ish flat sparkline ending at `value` with mild noise.
-// Used as a placeholder until we have historical snapshots stored in Supabase.
-function flatSeries(value: number, n = 30, jitter = 0.02): number[] {
-  return Array.from({ length: n }, (_, i) => {
-    const wave = Math.sin(i * 0.6) * jitter * value;
-    return Math.max(0, +(value + wave).toFixed(2));
-  });
-}
-
 export async function getDashboardData(): Promise<DashboardData> {
-  const [stripe, ls] = await Promise.all([
+  const [stripe, ls, counts, calendar] = await Promise.all([
     getStripeRevenue(),
     getLemonSqueezyMetrics(),
+    getDashboardCounts(),
+    getTodaysCalendar(),
   ]);
 
   // ---- Hero ------------------------------------------------------------
@@ -74,50 +72,42 @@ export async function getDashboardData(): Promise<DashboardData> {
         value: fmtUsd(ls.mrr),
         secondary: `${ls.activeSubscribers} active · ${ls.trialingSubscribers} trialing`,
         delta: 0,
-        series: ls.series30d,
+        series: latestOnlySeries(ls.mrr),
         source: "live",
       }
     : {
         track: "venture",
         metric: "MRR · gtmtools.io",
-        value: "$3,840",
-        secondary: "23 active testers · encoreOS",
-        delta: 0.18,
-        series: [
-          2.7, 2.8, 2.9, 2.95, 3.0, 3.1, 3.2, 3.25, 3.3, 3.4, 3.5, 3.55, 3.6,
-          3.7, 3.8, 3.84,
-        ],
-        source: "mock",
+        value: null,
+        secondary: "Connect Lemon Squeezy",
+        delta: 0,
+        series: [],
+        source: "empty",
+        empty: true,
+        hint: "Connect Lemon Squeezy in settings to show venture MRR.",
+        cta: { label: "Open settings", href: "/settings" },
       };
 
   const hero: HeroDatum[] = [
     heroVenture,
-    {
-      track: "advisors",
-      metric: "Weighted pipeline",
-      value: "$184k",
-      secondary: "3 active Sprints",
-      delta: 0.09,
-      series: [110, 118, 122, 130, 138, 142, 150, 155, 160, 165, 170, 175, 178, 182, 184],
-      source: "mock",
-    },
+    emptyHero("advisors", "Weighted pipeline", "No active Sprint pipeline", "Add Sprint deals in HubSpot to populate this metric."),
     {
       track: "job_search",
       metric: "Active conversations",
-      value: "14",
-      secondary: "4d since last forward motion",
-      delta: 0.0,
-      series: [9, 10, 10, 11, 12, 12, 13, 13, 14, 14, 14, 14, 14, 14, 14],
-      source: "mock",
+      value: String(counts.activeReconnectCards),
+      secondary: counts.activeReconnectCards === 1 ? "open reconnect card" : "open reconnect cards",
+      delta: 0,
+      series: latestOnlySeries(counts.activeReconnectCards),
+      source: "live",
     },
     {
       track: "personal",
       metric: "Open personal to-dos",
-      value: "6",
-      secondary: "2 due this week",
-      delta: -0.25,
-      series: [10, 10, 9, 9, 8, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6],
-      source: "mock",
+      value: String(counts.openPersonalTodos),
+      secondary: counts.openPersonalTodos === 1 ? "open personal to-do" : "open personal to-dos",
+      delta: 0,
+      series: latestOnlySeries(counts.openPersonalTodos),
+      source: "live",
     },
   ];
 
@@ -139,7 +129,7 @@ export async function getDashboardData(): Promise<DashboardData> {
           source: "live",
           sourceNote: "Stripe MTD + Lemon Squeezy 30d",
         }
-      : { label: "Revenue MTD", value: "$11,420", delta: 0.42, source: "mock" },
+      : emptyKpi("Revenue MTD", "Connect Stripe or Lemon Squeezy."),
     stripe.configured
       ? {
           label: "Outstanding invoices",
@@ -148,43 +138,66 @@ export async function getDashboardData(): Promise<DashboardData> {
           source: "live",
           sourceNote: "Stripe · open invoices",
         }
-      : { label: "Outstanding invoices", value: "$4,300", delta: -0.1, source: "mock" },
-    { label: "Meetings this week", value: "11", delta: 0.0, source: "mock" },
-    { label: "Live errors", value: "1", alarm: true, source: "mock" },
+      : emptyKpi("Outstanding invoices", "Connect Stripe to show open invoices."),
+    calendar.configured
+      ? {
+          label: "Meetings today",
+          value: String(calendar.data.length),
+          delta: undefined,
+          source: "live",
+          sourceNote: "Google Calendar · today",
+        }
+      : emptyKpi("Meetings today", "Connect Google Calendar."),
+    {
+      label: "Live errors",
+      value: String(counts.openCriticalAlerts),
+      alarm: counts.openCriticalAlerts > 0,
+      source: "live",
+      sourceNote: "JasonOS alerts · open critical",
+    },
   ];
 
   // ---- Monitoring tiles ------------------------------------------------
-  const tiles = MOCK_TILES.map<MonitoringTile>((t) => {
-    if (t.id === "t-rev-mtd" && stripe.configured) {
-      return {
-        ...t,
-        label: "Revenue MTD (Stripe)",
-        value: fmtUsd(stripe.mtd),
-        delta: stripe.delta,
-        deltaLabel: "vs same days last month",
-        series: stripe.series30d,
-        refreshedAt: new Date().toISOString(),
-        source: "Stripe (live)",
-      };
-    }
-    if (t.id === "t-ls-mrr" && ls.configured) {
-      return {
-        ...t,
+  const tiles: MonitoringTile[] = [];
+  const refreshedAt = new Date().toISOString();
+
+  if (stripe.configured) {
+    tiles.push({
+      id: "stripe-rev-mtd",
+      track: "advisors",
+      group: "pipeline_revenue",
+      label: "Revenue MTD (Stripe)",
+      value: fmtUsd(stripe.mtd),
+      delta: stripe.delta,
+      deltaLabel: "vs same days last month",
+      series: stripe.series30d,
+      cadence: "daily",
+      refreshedAt,
+      source: "Stripe (live)",
+      pinned: true,
+    });
+  }
+
+  if (ls.configured) {
+    tiles.push(
+      {
+        id: "ls-mrr",
+        track: "venture",
+        group: "venture_health",
         label: "gtmtools.io MRR",
         value: fmtUsd(ls.mrr),
-        delta: 0,
+        delta: undefined,
         deltaLabel: `${ls.activeSubscribers} active`,
-        series: ls.series30d.length ? ls.series30d : flatSeries(ls.mrr),
-        refreshedAt: new Date().toISOString(),
+        series: latestOnlySeries(ls.mrr),
+        cadence: "real-time",
+        refreshedAt,
         source: "Lemon Squeezy (live)",
-      };
-    }
-    if (t.id === "t-ls-trial" && ls.configured) {
-      // We don't have trial→paid conversion live yet — but we can show count of
-      // trials currently active and how many expire in 48h, which is more useful
-      // than a stale percentage.
-      return {
-        ...t,
+        pinned: true,
+      },
+      {
+        id: "ls-trials",
+        track: "venture",
+        group: "venture_health",
         label: "gtmtools.io trials",
         value: `${ls.trialingSubscribers}`,
         delta: undefined,
@@ -192,8 +205,9 @@ export async function getDashboardData(): Promise<DashboardData> {
           ls.trialsExpiring48h > 0
             ? `${ls.trialsExpiring48h} expiring in 48h`
             : "no trials expiring soon",
-        series: flatSeries(ls.trialingSubscribers || 0.0001),
-        refreshedAt: new Date().toISOString(),
+        series: latestOnlySeries(ls.trialingSubscribers),
+        cadence: "real-time",
+        refreshedAt,
         source: "Lemon Squeezy (live)",
         alert:
           ls.trialsExpiring48h > 0
@@ -203,10 +217,87 @@ export async function getDashboardData(): Promise<DashboardData> {
                 verb: "Send conversion nudge",
               }
             : undefined,
-      };
-    }
-    return t;
-  });
+      }
+    );
+  }
 
   return { hero, kpis, tiles };
+}
+
+function latestOnlySeries(value: number): number[] {
+  return [value];
+}
+
+function emptyHero(
+  track: Track,
+  metric: string,
+  secondary: string,
+  hint: string
+): HeroDatum {
+  return {
+    track,
+    metric,
+    value: null,
+    secondary,
+    delta: 0,
+    series: [],
+    source: "empty",
+    empty: true,
+    hint,
+    cta: { label: "Open settings", href: "/settings" },
+  };
+}
+
+function emptyKpi(label: string, hint: string): CrossKpi {
+  return {
+    label,
+    value: null,
+    source: "empty",
+    empty: true,
+    hint,
+    cta: { label: "Open settings", href: "/settings" },
+  };
+}
+
+async function getDashboardCounts() {
+  const empty = {
+    activeReconnectCards: 0,
+    openPersonalTodos: 0,
+    openCriticalAlerts: 0,
+  };
+
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return empty;
+  }
+
+  try {
+    const sb = createServiceRoleClient();
+    const [reconnect, personalTodos, criticalAlerts] = await Promise.all([
+      sb
+        .from("cards")
+        .select("id", { count: "exact", head: true })
+        .eq("module", "reconnect")
+        .eq("state", "open"),
+      sb
+        .from("todos")
+        .select("id", { count: "exact", head: true })
+        .eq("track", "personal")
+        .eq("state", "open"),
+      sb
+        .from("alerts")
+        .select("id", { count: "exact", head: true })
+        .eq("category", "error")
+        .eq("severity", "critical")
+        .eq("state", "open"),
+    ]);
+
+    return {
+      activeReconnectCards: reconnect.count ?? 0,
+      openPersonalTodos: personalTodos.count ?? 0,
+      openCriticalAlerts: criticalAlerts.count ?? 0,
+    };
+  } catch (error) {
+    console.error("[dashboard] Supabase count query failed", error);
+    return empty;
+  }
 }

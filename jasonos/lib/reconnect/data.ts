@@ -4,7 +4,6 @@ import {
   createPublicServiceRoleClient,
   createServiceRoleClient,
 } from "@/lib/supabase/server";
-import { MOCK_RECONNECT_CONTACTS } from "./mock-data";
 import type {
   ReconnectIntent,
   ReconnectContact,
@@ -113,7 +112,7 @@ export async function getReconnectTypeCounts(): Promise<ReconnectTypeCounts> {
 }
 
 async function getReconnectContacts(): Promise<ReconnectContact[]> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return MOCK_RECONNECT_CONTACTS;
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return [];
 
   try {
     const sb = createPublicServiceRoleClient();
@@ -133,7 +132,10 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
       ]);
 
     if (recruitersError || statesError || !recruiters?.length) {
-      return MOCK_RECONNECT_CONTACTS;
+      if (recruitersError || statesError) {
+        console.error("[reconnect] Supabase query failed", recruitersError ?? statesError);
+      }
+      return [];
     }
 
     const ids = recruiters.map((r) => r.id as string);
@@ -161,8 +163,9 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
       triageByContact,
       reconnectMeta
     );
-  } catch {
-    return MOCK_RECONNECT_CONTACTS;
+  } catch (error) {
+    console.error("[reconnect] Supabase query failed", error);
+    return [];
   }
 }
 

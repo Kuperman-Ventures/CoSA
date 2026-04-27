@@ -112,8 +112,11 @@ export function Plan90Roadmap() {
   const [today] = useState<Date>(() => new Date());
 
   useEffect(() => {
-    setState(load());
-    setHydrated(true);
+    const id = window.setTimeout(() => {
+      setState(load());
+      setHydrated(true);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, []);
 
   const currentWeek = useMemo(() => getDisplayWeek(today), [today]);

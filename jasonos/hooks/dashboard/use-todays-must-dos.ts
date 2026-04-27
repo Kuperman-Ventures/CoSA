@@ -1,10 +1,6 @@
-// Source-of-truth hook for the day's Must-Dos. Backed by the in-repo mock
-// today; swap the inner `fetcher` to /api/bna once the engine is online.
-
 "use client";
 
-import { useMemo } from "react";
-import { MOCK_BNA, MOCK_CARDS } from "@/lib/mock/data";
+import { useEffect, useState } from "react";
 import type { ActionCard, BestNextActionItem } from "@/lib/types";
 
 export interface MustDoItem extends BestNextActionItem {
@@ -12,11 +8,28 @@ export interface MustDoItem extends BestNextActionItem {
 }
 
 export function useTodaysMustDos(): { items: MustDoItem[]; configured: boolean } {
-  const items = useMemo<MustDoItem[]>(() => {
-    return MOCK_BNA.map((b) => {
-      const card = MOCK_CARDS.find((c) => c.id === b.card_id);
-      return card ? { ...b, card } : null;
-    }).filter(Boolean) as MustDoItem[];
+  const [items, setItems] = useState<MustDoItem[]>([]);
+  const [configured, setConfigured] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/dashboard/must-dos")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { items?: MustDoItem[]; configured?: boolean } | null) => {
+        if (cancelled) return;
+        setItems(json?.items ?? []);
+        setConfigured(Boolean(json?.configured));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setItems([]);
+        setConfigured(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
-  return { items, configured: false };
+
+  return { items, configured };
 }

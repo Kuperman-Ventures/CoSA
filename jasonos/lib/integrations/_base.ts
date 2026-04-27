@@ -1,6 +1,6 @@
 // Shared scaffolding for integration adapters.
 // Every adapter follows the same shape: configured boolean, cached fetch,
-// graceful failure that returns mock-able empty state. Callers should never
+// graceful failure that returns an explicit empty state. Callers should never
 // see an exception from an integration call.
 
 import "server-only";

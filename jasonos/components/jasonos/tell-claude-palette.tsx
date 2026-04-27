@@ -16,7 +16,7 @@ import { toast } from "sonner";
 const SUGGESTIONS = [
   { icon: Clock,       label: "What should I do for the next hour?",            kind: "ask" },
   { icon: Sparkles,    label: "Re-rank Today's Must-Dos by VIP weighting",      kind: "edit" },
-  { icon: Zap,         label: "Draft a Friday wrap email for Helio",            kind: "draft" },
+  { icon: Zap,         label: "Draft a Friday wrap email for my active client", kind: "draft" },
   { icon: ListChecks,  label: "Make a to-do for: review encoreOS funnel",       kind: "todo" },
   { icon: Calendar,    label: "Block 45 min tomorrow for Anthropic prep",       kind: "schedule" },
 ];

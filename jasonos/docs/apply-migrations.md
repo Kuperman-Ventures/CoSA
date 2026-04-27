@@ -21,7 +21,7 @@ Until both are applied:
   `persisted: false, note: "supabase service role missing"` even after
   you set `SUPABASE_SERVICE_ROLE_KEY`, because the table doesn't exist.
 - `/api/monitoring/health-summary` returns synthetic-empty data.
-- `/api/action-queue/add` echoes a `mock-` card without persisting.
+- `/api/action-queue/add` returns `503` without persisting until Supabase is configured.
 
 ## Apply via Dashboard (fastest)
 

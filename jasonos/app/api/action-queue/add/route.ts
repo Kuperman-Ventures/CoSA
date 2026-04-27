@@ -39,26 +39,14 @@ export async function POST(req: Request) {
   }
   const p = parsed.data;
 
-  // No Supabase service role configured locally? Echo back the would-be card so
-  // the UI's optimistic flow still gets a stable id.
   const sbConfigured =
     !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!sbConfigured) {
     return NextResponse.json({
-      ok: true,
+      ok: false,
       persisted: false,
-      card: {
-        id: `mock-${Date.now()}`,
-        track: p.track,
-        title: p.title,
-        subtitle: p.subtitle,
-        why_now: p.whyNow,
-        module: p.module,
-        state: "open",
-        created_at: new Date().toISOString(),
-      },
-      note: "Supabase service role missing — card not persisted. Configure SUPABASE_SERVICE_ROLE_KEY to enable.",
-    });
+      error: "Supabase service role missing. Configure SUPABASE_SERVICE_ROLE_KEY to persist action cards.",
+    }, { status: 503 });
   }
 
   try {

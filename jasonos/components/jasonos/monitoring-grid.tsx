@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { MonitoringTileCard } from "./monitoring-tile";
+import { EmptyState } from "./empty-state";
 import type { MonitoringTile, Track } from "@/lib/types";
 
 const GROUP_LABEL: Record<string, string> = {
@@ -13,6 +14,25 @@ const GROUP_LABEL: Record<string, string> = {
   job_search: "Job search",
   personal_ops: "Personal ops",
 };
+
+const EMPTY_TILES = [
+  {
+    title: "Configure Stripe",
+    hint: "Connect Stripe to see revenue and outstanding invoices here.",
+  },
+  {
+    title: "Configure Lemon Squeezy",
+    hint: "Connect Lemon Squeezy to see MRR, subscribers, and trials.",
+  },
+  {
+    title: "Configure HubSpot",
+    hint: "Connect HubSpot to see Sprint pipeline and lifecycle health.",
+  },
+  {
+    title: "Configure Vercel or analytics",
+    hint: "Connect production telemetry to monitor traffic, errors, and conversions.",
+  },
+];
 
 export function MonitoringGrid({
   tiles: allTiles,
@@ -57,8 +77,16 @@ export function MonitoringGrid({
           </div>
         ))}
         {tiles.length === 0 ? (
-          <div className="py-10 text-center text-xs text-muted-foreground">
-            No tiles for this filter.
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {EMPTY_TILES.map((tile) => (
+              <EmptyState
+                key={tile.title}
+                title={tile.title}
+                hint={tile.hint}
+                action={{ label: "Open settings", href: "/settings" }}
+                size="sm"
+              />
+            ))}
           </div>
         ) : null}
       </div>

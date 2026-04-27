@@ -67,9 +67,14 @@ export function ProductHealth() {
   }, []);
 
   useEffect(() => {
-    void load();
+    const timeoutId = window.setTimeout(() => {
+      void load();
+    }, 0);
     const id = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    return () => {
+      window.clearTimeout(timeoutId);
+      clearInterval(id);
+    };
   }, [load]);
 
   const entries = useMemo(() => {
@@ -104,7 +109,7 @@ export function ProductHealth() {
         </span>
         {payload && !payload.configured ? (
           <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[9px] uppercase tracking-wider text-amber-300">
-            mock — supabase pending
+            Supabase pending
           </span>
         ) : null}
         {error ? (

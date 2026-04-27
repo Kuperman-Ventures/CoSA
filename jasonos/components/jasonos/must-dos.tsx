@@ -1,6 +1,7 @@
 "use client";
 
 import { ActionCardItem } from "./action-card";
+import { EmptyState } from "./empty-state";
 import { Button } from "@/components/ui/button";
 import { Pin, RefreshCw, Sparkles } from "lucide-react";
 import { useTodaysMustDos } from "@/hooks/dashboard/use-todays-must-dos";
@@ -20,7 +21,7 @@ export function MustDos({
   className,
   showHeader = true,
 }: MustDosProps) {
-  const { items: all } = useTodaysMustDos();
+  const { items: all, configured } = useTodaysMustDos();
   const compact = variant === "compact";
   const items = limit ? all.slice(0, limit) : all;
 
@@ -41,10 +42,7 @@ export function MustDos({
               variant="ghost"
               className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
               onClick={() =>
-                toast.info("BNA re-run queued", {
-                  description:
-                    "Wired to /api/bna once Supabase + integrations land. Currently mock.",
-                })
+                toast.info("Run Tell Claude to generate today's prioritized list.")
               }
             >
               <RefreshCw className="h-3 w-3" />
@@ -55,6 +53,18 @@ export function MustDos({
       ) : null}
 
       <div className={cn("space-y-2", compact ? "p-2" : "p-3")}>
+        {items.length === 0 ? (
+          <EmptyState
+            title="No must-dos yet"
+            hint={
+              configured
+                ? "Run Tell Claude to generate today's prioritized list."
+                : "Connect Supabase to load Best Next Action runs."
+            }
+            action={{ label: "Tell Claude", href: "/" }}
+            size={compact ? "sm" : "md"}
+          />
+        ) : null}
         {items.map((it) => (
           <div key={it.card.id} className="relative">
             {it.pinned ? (

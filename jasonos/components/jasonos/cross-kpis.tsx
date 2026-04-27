@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { Delta } from "./track-pill";
+import { EmptyState } from "./empty-state";
 import type { CrossKpi } from "@/lib/data/dashboard";
 
 export function CrossTrackKpis({
@@ -24,17 +25,21 @@ export function CrossTrackKpis({
               <span className="inline-block h-1 w-1 rounded-full bg-emerald-400" />
             ) : null}
           </div>
-          <div className="mt-1 flex items-baseline justify-between gap-2">
-            <div
-              className={cn(
-                "num-mono text-lg font-semibold tracking-tight",
-                k.alarm && "text-rose-400"
-              )}
-            >
-              {k.value}
+          {k.empty ? (
+            <EmptyState title="No data yet" hint={k.hint} action={k.cta} size="sm" className="mt-2" />
+          ) : (
+            <div className="mt-1 flex items-baseline justify-between gap-2">
+              <div
+                className={cn(
+                  "num-mono text-lg font-semibold tracking-tight",
+                  k.alarm && "text-rose-400"
+                )}
+              >
+                {k.value}
+              </div>
+              <Delta value={k.delta} />
             </div>
-            <Delta value={k.delta} />
-          </div>
+          )}
         </div>
       ))}
     </section>

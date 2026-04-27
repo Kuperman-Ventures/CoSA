@@ -1,5 +1,6 @@
 import { Sparkline } from "./sparkline";
 import { Delta } from "./track-pill";
+import { EmptyState } from "./empty-state";
 import { TRACK_META, type Track } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { HeroDatum } from "@/lib/data/dashboard";
@@ -53,7 +54,16 @@ export function HeroStrip({
               <Delta value={h.delta} />
             </div>
             <div className="mt-3 flex items-end justify-between gap-3">
-              <div>
+              {h.empty ? (
+                <EmptyState
+                  title={h.secondary ?? "No data yet"}
+                  hint={h.hint}
+                  action={h.cta}
+                  size="sm"
+                  className="w-full"
+                />
+              ) : (
+                <div>
                 <div className="num-mono text-[28px] font-semibold leading-none tracking-tight">
                   {h.value}
                 </div>
@@ -62,13 +72,21 @@ export function HeroStrip({
                     {h.secondary}
                   </div>
                 ) : null}
+                {h.series.length < 7 ? (
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    first snapshot - sparkline starts after 7d
+                  </div>
+                ) : null}
               </div>
-              <Sparkline
-                data={h.series}
-                width={120}
-                height={36}
-                className={meta.accent}
-              />
+              )}
+              {!h.empty && h.series.length >= 7 ? (
+                <Sparkline
+                  data={h.series}
+                  width={120}
+                  height={36}
+                  className={meta.accent}
+                />
+              ) : null}
             </div>
           </button>
         );

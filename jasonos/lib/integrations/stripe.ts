@@ -143,7 +143,7 @@ const cachedFetch = unstable_cache(
 /**
  * Returns Stripe revenue MTD, prior-period MTD, a 30-day daily series (sparkline),
  * and outstanding invoices total. Cached 5 minutes. Returns zeros + configured:false
- * if STRIPE_SECRET_KEY is missing — callers should fall back to mock in that case.
+ * if STRIPE_SECRET_KEY is missing; callers should render an empty state.
  */
 export async function getStripeRevenue(): Promise<StripeRevenue> {
   try {

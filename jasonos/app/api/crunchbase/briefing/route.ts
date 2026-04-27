@@ -1,7 +1,6 @@
 // GET /api/crunchbase/briefing
 // Returns the top ICP-passing funded companies for the Morning Brief.
-// Currently powered by mock data (see lib/integrations/crunchbase.ts) — wire
-// to the IMAP / Crunchbase Daily API ingestion when ready.
+// Returns empty until the Crunchbase Daily email/API ingestion is configured.
 
 import { NextResponse } from "next/server";
 import { getOvernightHits } from "@/lib/integrations/crunchbase";
@@ -14,7 +13,7 @@ export async function GET() {
   return NextResponse.json({
     hits: result.data,
     configured: result.configured,
-    source: result.configured ? "crunchbase" : "mock",
+    source: "crunchbase",
     lastSyncAt: result.lastSyncAt,
   });
 }

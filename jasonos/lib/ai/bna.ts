@@ -1,6 +1,5 @@
 // Best-Next-Action engine (spec §5)
-// Stub: wired to the heavy model with a structured-output schema.
-// Swap `mockBnaRun` for `runBna` once the data plumbing is in.
+// Wired to the heavy model with a structured-output schema.
 
 import { generateObject } from "ai";
 import { z } from "zod";

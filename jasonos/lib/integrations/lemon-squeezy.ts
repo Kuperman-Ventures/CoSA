@@ -177,8 +177,8 @@ const cachedFetch = unstable_cache(
 
 /**
  * Returns Lemon Squeezy metrics for the gtmtools.io store. Cached 5 minutes.
- * Returns zeros + configured:false if env vars are missing — callers should
- * fall back to mock data in that case.
+ * Returns zeros + configured:false if env vars are missing; callers should
+ * render an empty state in that case.
  */
 export async function getLemonSqueezyMetrics(): Promise<LemonSqueezyMetrics> {
   try {

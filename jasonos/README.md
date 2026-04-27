@@ -35,8 +35,8 @@ jasonos/
 ├── lib/
 │   ├── types.ts                 every entity from spec §4
 │   ├── supabase/                browser + server clients (jasonos schema)
-│   ├── ai/                      BNA engine + Tell Claude stubs
-│   └── mock/data.ts             realistic seed data so the UI feels real
+│   ├── ai/                      BNA engine + Tell Claude
+│   └── mock/data.ts             intentionally empty; no runtime demo data
 ├── supabase/migrations/
 │   └── 0001_init_jasonos_schema.sql
 ├── vercel.ts                    typed Vercel config (separate project)
@@ -53,10 +53,9 @@ npm run dev
 # open http://localhost:3000
 ```
 
-The dashboard renders against `lib/mock/data.ts` immediately, so you'll see a
-fully populated JasonOS without configuring anything. The Tell Claude command
-palette (`⌘K`) needs `AI_GATEWAY_API_KEY` to actually respond; without it,
-clicking it just shows a "needs configuration" toast.
+The dashboard only renders live values or explicit empty states. The Tell Claude
+command palette (`⌘K`) needs `AI_GATEWAY_API_KEY` to respond; without it,
+clicking it shows a "needs configuration" toast.
 
 ## Supabase setup
 
@@ -81,13 +80,12 @@ See the chat for the click-by-click walkthrough. Short version:
 
 ## Wiring real data, module by module
 
-Each module in `lib/mock/data.ts` is annotated with what produces it. To swap
-mock → live:
+To wire each module to live data:
 
 1. Pick a module (e.g. Crunchbase Daily — see spec §3.1).
 2. Add an adapter under `lib/integrations/<source>.ts`.
-3. Replace the relevant export in `lib/mock/data.ts` with a Server Component
-   data fetch using `lib/supabase/server.ts` (or a direct API call).
+3. Add a Server Component, Route Handler, or server action data fetch using
+   `lib/supabase/server.ts` (or a direct API call).
 4. Cards write to `jasonos.cards`; dispositions write to `jasonos.dispositions`.
 
 The UI is intentionally agnostic — every component reads typed objects from

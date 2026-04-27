@@ -2,7 +2,7 @@
 // Bundles every section of the Morning Brief into a single fetch so the UI
 // can render in one render-pass with one network hop. Each integration's
 // configured-state is preserved alongside its data so the UI can label
-// "live" vs "mock" inline.
+// live sources and explicit empty states inline.
 
 import { NextResponse } from "next/server";
 import { getOvernightReplies } from "@/lib/integrations/gmail";
