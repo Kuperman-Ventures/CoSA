@@ -1,7 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Copy, ExternalLink, Inbox, MessageSquareText, RefreshCcw, XCircle } from "lucide-react";
+import {
+  Copy,
+  ExternalLink,
+  Inbox,
+  MessageSquareText,
+  RefreshCcw,
+  Sparkles,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Sheet,
@@ -17,6 +25,10 @@ import { Separator } from "@/components/ui/separator";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { addReconnectNote, setReconnectStatus } from "@/app/actions/reconnect";
 import { sendContactToTriage, setContactTriage } from "@/lib/server-actions/triage";
+import {
+  generateDraftFromHistory,
+  type DraftSource,
+} from "@/lib/server-actions/draft-from-history";
 import { INTENTS, INTENT_LABELS, type Intent } from "@/lib/triage/types";
 import { extractFirstName, generateDraft } from "@/lib/triage/draft-templates";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
@@ -44,6 +56,12 @@ export function ReconnectDetailDrawer({
 }) {
   const [note, setNote] = useState("");
   const [draftState, setDraftState] = useState({ key: "", text: "", base: "" });
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [sourceState, setSourceState] = useState<{
+    key: string;
+    sources: DraftSource[];
+    rationale: string;
+  }>({ key: "", sources: [], rationale: "" });
   const [isPending, startTransition] = useTransition();
 
   if (!contact) return null;
@@ -69,6 +87,8 @@ export function ReconnectDetailDrawer({
   const draftText = draftState.key === draftKey ? draftState.text : initialDraft;
   const draftBase = draftState.key === draftKey ? draftState.base : initialDraft;
   const draftDirty = Boolean(draftKey && draftText !== draftBase);
+  const sources = sourceState.key === draftKey ? sourceState.sources : [];
+  const draftRationale = sourceState.key === draftKey ? sourceState.rationale : "";
 
   const firmMatches = contacts
     .filter(
@@ -151,7 +171,42 @@ export function ReconnectDetailDrawer({
 
   const regenerateDraft = () => {
     setDraftState({ key: draftKey, text: initialDraft, base: initialDraft });
+    setSourceState({ key: "", sources: [], rationale: "" });
     toast.success("Draft regenerated");
+  };
+
+  const generateAiDraft = () => {
+    if (!contact.intent) return;
+    setIsGenerating(true);
+    startTransition(async () => {
+      const result = await generateDraftFromHistory({ contactId: contact.id });
+      if (result.ok) {
+        setDraftState({ key: draftKey, text: result.draft, base: result.draft });
+        setSourceState({
+          key: draftKey,
+          sources: result.sources,
+          rationale: result.rationale,
+        });
+        toast.success("Draft generated from history");
+      } else {
+        if (result.fallbackDraft) {
+          setDraftState({
+            key: draftKey,
+            text: result.fallbackDraft,
+            base: result.fallbackDraft,
+          });
+          setSourceState({
+            key: draftKey,
+            sources: [{ source: "template_fallback", found: true, summary: result.error }],
+            rationale: "AI draft failed, so the template fallback was used.",
+          });
+          toast.warning(`AI draft failed, using template: ${result.error}`);
+        } else {
+          toast.error(result.error);
+        }
+      }
+      setIsGenerating(false);
+    });
   };
 
   const copyDraftToClipboard = async () => {
@@ -332,11 +387,26 @@ export function ReconnectDetailDrawer({
             <section className="rounded-xl border bg-background/30 p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold tracking-tight">Draft outreach</h3>
-                <Button size="sm" variant="ghost" onClick={regenerateDraft}>
-                  <RefreshCcw className="mr-1 h-3 w-3" />
-                  Regenerate
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={generateAiDraft}
+                    disabled={isGenerating || !contact.intent}
+                  >
+                    <Sparkles className="mr-1 h-3 w-3" />
+                    {isGenerating ? "Reading history..." : "Draft from history"}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={regenerateDraft}>
+                    <RefreshCcw className="mr-1 h-3 w-3" />
+                    Template
+                  </Button>
+                </div>
               </div>
+
+              {sources.length ? (
+                <DraftSourcesStrip sources={sources} rationale={draftRationale} />
+              ) : null}
 
               <Textarea
                 value={draftText}
@@ -481,6 +551,37 @@ function ContextBlock({ label, body }: { label: string; body?: string }) {
       <p className="mt-1 text-sm leading-relaxed text-foreground/85">
         {body || "No context captured yet."}
       </p>
+    </div>
+  );
+}
+
+function DraftSourcesStrip({
+  sources,
+  rationale,
+}: {
+  sources: DraftSource[];
+  rationale?: string;
+}) {
+  const labels: Record<DraftSource["source"], string> = {
+    hubspot: "HubSpot",
+    gmail: "Gmail",
+    granola: "Granola",
+    fireflies: "Fireflies",
+    rr_recruiter: "Recruiter notes",
+    template_fallback: "Template",
+  };
+
+  return (
+    <div className="mb-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+      <div className="flex flex-wrap gap-x-2 gap-y-1">
+        <span className="font-medium text-foreground/80">Sources used:</span>
+        {sources.map((source) => (
+          <span key={source.source} title={source.summary}>
+            {source.found ? "✓" : "-"} {labels[source.source]}
+          </span>
+        ))}
+      </div>
+      {rationale ? <div className="mt-1 leading-relaxed">{rationale}</div> : null}
     </div>
   );
 }

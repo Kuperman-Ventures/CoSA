@@ -18,6 +18,28 @@ export interface GmailReply {
   labelIds?: string[];
 }
 
+export interface GmailThread {
+  id: string;
+  snippet?: string;
+  historyId?: string;
+}
+
+export interface GmailThreadMessage {
+  id: string;
+  threadId: string;
+  from?: string;
+  to?: string;
+  subject?: string;
+  date?: string;
+  snippet?: string;
+  plaintextBody?: string;
+}
+
+export interface GmailThreadFull {
+  id: string;
+  messages: GmailThreadMessage[];
+}
+
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1";
 
 interface GoogleTokenRow {
@@ -89,13 +111,28 @@ async function gmailFetch<T>(path: string, accessToken: string): Promise<T> {
 interface GmailListResp {
   messages?: { id: string; threadId: string }[];
 }
+interface GmailThreadsListResp {
+  threads?: GmailThread[];
+}
 interface GmailMsgResp {
   id: string;
   threadId: string;
   snippet?: string;
   internalDate?: string;
   labelIds?: string[];
-  payload?: { headers?: { name: string; value: string }[] };
+  payload?: GmailPayload;
+}
+
+interface GmailThreadResp {
+  id: string;
+  messages?: GmailMsgResp[];
+}
+
+interface GmailPayload {
+  headers?: { name: string; value: string }[];
+  mimeType?: string;
+  body?: { data?: string };
+  parts?: GmailPayload[];
 }
 
 function parseFrom(value: string | undefined): { email: string; name?: string } {
@@ -151,4 +188,79 @@ export async function getOvernightReplies(opts?: {
     console.error("[gmail] overnight fetch failed:", err);
     return emptyResult([], true, err instanceof Error ? err.message : String(err));
   }
+}
+
+export async function searchGmailThreads({
+  query,
+  pageSize = 5,
+}: {
+  query: string;
+  pageSize?: number;
+}): Promise<GmailThread[]> {
+  const access = await getAccessToken();
+  if (!access) return [];
+
+  try {
+    const q = encodeURIComponent(query);
+    const list = await gmailFetch<GmailThreadsListResp>(
+      `/users/me/threads?maxResults=${pageSize}&q=${q}`,
+      access
+    );
+    return list.threads ?? [];
+  } catch (err) {
+    console.error("[gmail] thread search failed:", err);
+    return [];
+  }
+}
+
+export async function getGmailThread(threadId: string): Promise<GmailThreadFull | null> {
+  const access = await getAccessToken();
+  if (!access) return null;
+
+  try {
+    const thread = await gmailFetch<GmailThreadResp>(
+      `/users/me/threads/${threadId}?format=full`,
+      access
+    );
+    return {
+      id: thread.id,
+      messages: (thread.messages ?? []).map(mapGmailMessage),
+    };
+  } catch (err) {
+    console.error("[gmail] thread fetch failed:", err);
+    return null;
+  }
+}
+
+function mapGmailMessage(message: GmailMsgResp): GmailThreadMessage {
+  const headers = message.payload?.headers ?? [];
+  const get = (name: string) =>
+    headers.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value;
+
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    from: get("From"),
+    to: get("To"),
+    subject: get("Subject"),
+    date: get("Date"),
+    snippet: message.snippet,
+    plaintextBody: extractPlainText(message.payload),
+  };
+}
+
+function extractPlainText(payload: GmailPayload | undefined): string {
+  if (!payload) return "";
+  if (payload.mimeType === "text/plain" && payload.body?.data) {
+    return decodeBase64Url(payload.body.data);
+  }
+  for (const part of payload.parts ?? []) {
+    const text = extractPlainText(part);
+    if (text) return text;
+  }
+  return "";
+}
+
+function decodeBase64Url(value: string) {
+  return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }

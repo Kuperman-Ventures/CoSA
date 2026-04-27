@@ -5,6 +5,7 @@
 // On Vercel deploys an OIDC token is auto-injected and AI_GATEWAY_API_KEY
 // is not needed; for local dev set AI_GATEWAY_API_KEY in .env.local.
 import { gateway } from "@ai-sdk/gateway";
+import { generateText } from "ai";
 
 // Heavy reasoning — used by the Best-Next-Action engine once per morning.
 export const heavyModel = gateway("anthropic/claude-opus-4-7");
@@ -12,3 +13,18 @@ export const heavyModel = gateway("anthropic/claude-opus-4-7");
 // Fast / cheap — used by the always-on "Tell Claude" command bar and
 // Goal→Plan refinements.
 export const fastModel = gateway("anthropic/claude-sonnet-4-6");
+
+export async function callClaude(input: {
+  model: string;
+  maxTokens: number;
+  system: string;
+  messages: { role: "user" | "assistant"; content: string }[];
+}): Promise<string> {
+  const { text } = await generateText({
+    model: gateway(`anthropic/${input.model}`),
+    maxOutputTokens: input.maxTokens,
+    system: input.system,
+    messages: input.messages,
+  });
+  return text;
+}
