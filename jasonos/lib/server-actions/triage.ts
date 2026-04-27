@@ -74,7 +74,8 @@ export async function getNextUntriagedCard(
   );
   if (error) {
     console.error("[triage] getNextUntriagedCard error", error);
-    return null;
+    const fallbackCount = await getOpenReconnectCardCount(supabase, track);
+    return getNextUntriagedCardAfterSkips(skipped, fallbackCount, track);
   }
 
   const rpcCard = normalizeCard(Array.isArray(data) ? data[0] : data);
@@ -95,11 +96,11 @@ export async function getUntriagedReconnectCount(
   );
   if (error) {
     console.error("[triage] getUntriagedReconnectCount error", error);
-    return 0;
+    return getOpenReconnectCardCount(supabase, track);
   }
 
   const row = Array.isArray(data) ? data[0] : data;
-  return Number(row?.remaining_count ?? 0);
+  return Number(row?.remaining_count ?? 0) || getOpenReconnectCardCount(supabase, track);
 }
 
 export async function getUntriagedReconnectCountsByTrack(): Promise<TriageTrackCounts> {
@@ -110,7 +111,7 @@ export async function getUntriagedReconnectCountsByTrack(): Promise<TriageTrackC
   const { data, error } = await supabase.rpc("untriaged_reconnect_counts_by_track");
   if (error) {
     console.error("[triage] getUntriagedReconnectCountsByTrack error", error);
-    return empty;
+    return getOpenReconnectCountsByTrack(supabase);
   }
 
   const counts = emptyTrackCounts();
@@ -119,7 +120,7 @@ export async function getUntriagedReconnectCountsByTrack(): Promise<TriageTrackC
     counts.by_track[row.track] = Number(row.untriaged_count ?? 0);
   }
   counts.total = TRACKS.reduce((sum, t) => sum + counts.by_track[t], 0);
-  return counts;
+  return counts.total > 0 ? counts : getOpenReconnectCountsByTrack(supabase);
 }
 
 export async function sendContactToTriage(input: {
@@ -295,6 +296,48 @@ function resolveCardTrack(inputTrack: Track | undefined, contactTracks: unknown)
     if (firstTrack) return firstTrack;
   }
   return "advisors";
+}
+
+async function getOpenReconnectCardCount(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  track: TrackFilter
+) {
+  let query = supabase
+    .from("cards")
+    .select("id", { count: "exact", head: true })
+    .eq("module", "reconnect")
+    .eq("state", "open");
+
+  if (track) query = query.eq("track", track);
+  const { count, error } = await query;
+  if (error) {
+    console.error("[triage] getOpenReconnectCardCount fallback error", error);
+    return 0;
+  }
+  return count ?? 0;
+}
+
+async function getOpenReconnectCountsByTrack(
+  supabase: ReturnType<typeof createServiceRoleClient>
+): Promise<TriageTrackCounts> {
+  const counts = emptyTrackCounts();
+  const { data, error } = await supabase
+    .from("cards")
+    .select("track")
+    .eq("module", "reconnect")
+    .eq("state", "open");
+
+  if (error) {
+    console.error("[triage] getOpenReconnectCountsByTrack fallback error", error);
+    return counts;
+  }
+
+  for (const row of (data ?? []) as Array<{ track: Track | null }>) {
+    if (!row.track || !TRACKS.includes(row.track)) continue;
+    counts.by_track[row.track] += 1;
+    counts.total += 1;
+  }
+  return counts;
 }
 
 function getLinkedContactId(value: unknown) {
