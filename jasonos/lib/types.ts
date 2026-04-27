@@ -149,6 +149,7 @@ export interface Contact {
   linkedin_url?: string;
   title?: string;
   company_id?: string;
+  company?: Pick<Company, "id" | "name"> | null;
   vip: boolean;
   tracks: Track[];
   tags: string[]; // see migration 0005 — supports 'alumni:tbwa', 'conference:cannes-2024', etc.

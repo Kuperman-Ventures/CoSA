@@ -902,6 +902,17 @@ function ContactRow({
         {rc.contact.title ? (
           <div className="text-[11px] text-muted-foreground">{rc.contact.title}</div>
         ) : null}
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          {rc.contact.company?.name ? (
+            <span className="text-[11px] text-muted-foreground">
+              {rc.contact.company.name}
+            </span>
+          ) : (
+            <Badge variant="destructive" className="h-4 rounded-full px-1.5 text-[10px]">
+              Missing company
+            </Badge>
+          )}
+        </div>
       </td>
       <td className="px-2 py-2 align-top">
         <Badge variant="outline" className={cn("rounded-full text-[10px]", clusterCls)}>

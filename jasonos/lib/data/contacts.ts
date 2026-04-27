@@ -37,6 +37,9 @@ export async function listContactsWithScores(): Promise<RankableContact[]> {
       `
       id, name, emails, linkedin_url, title, company_id, vip, tracks, tags,
       source_ids, last_touch_date, last_touch_channel, objective_result, notes,
+      company:companies (
+        id, name
+      ),
       contact_scores (
         id, contact_id, recency, seniority, fit, scored_by, notes,
         created_at, updated_at
