@@ -16,7 +16,15 @@ interface Props {
 }
 
 export function RecruiterOutreachCard({ stats }: Props) {
-  if (stats.total === 0) {
+  const safeStats = {
+    total: stats?.total ?? 0,
+    sent: stats?.sent ?? 0,
+    replied: stats?.replied ?? 0,
+    queueRemaining: stats?.queueRemaining ?? 0,
+    nextThreeNames: Array.isArray(stats?.nextThreeNames) ? stats.nextThreeNames : [],
+  };
+
+  if (safeStats.total === 0) {
     return (
       <Card size="sm" className="border-dashed">
         <CardContent>
@@ -44,17 +52,17 @@ export function RecruiterOutreachCard({ stats }: Props) {
         </div>
 
         <div className="text-sm">
-          <span className="font-semibold">{stats.sent}</span> sent ·{" "}
-          <span className="font-semibold">{stats.replied}</span> replied ·{" "}
-          <span className="font-semibold">{stats.queueRemaining}</span> in queue
+          <span className="font-semibold">{safeStats.sent}</span> sent ·{" "}
+          <span className="font-semibold">{safeStats.replied}</span> replied ·{" "}
+          <span className="font-semibold">{safeStats.queueRemaining}</span> in queue
         </div>
 
-        {stats.nextThreeNames.length > 0 ? (
+        {safeStats.nextThreeNames.length > 0 ? (
           <div className="rounded-md border bg-background/30 p-2 text-xs">
             <div className="mb-1 uppercase tracking-wider text-muted-foreground">
               Send today:
             </div>
-            {stats.nextThreeNames.map((name) => (
+            {safeStats.nextThreeNames.map((name) => (
               <div key={name}>{name}</div>
             ))}
           </div>
