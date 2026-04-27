@@ -8,7 +8,12 @@ import { ReconnectClient } from "@/components/jasonos/reconnect/reconnect-client
 export const metadata = { title: "Reconnect · JasonOS" };
 export const dynamic = "force-dynamic";
 
-export default async function ReconnectPage() {
+export default async function ReconnectPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ intent?: string }>;
+}) {
+  const params = await searchParams;
   const [data, triageCount, typeCounts] = await Promise.all([
     getReconnectDashboardData(),
     getUntriagedReconnectCount(),
@@ -20,6 +25,7 @@ export default async function ReconnectPage() {
       data={data}
       triageCount={triageCount}
       typeCounts={typeCounts}
+      initialIntentFilter={params?.intent === "triaged_ready" ? "triaged_ready" : null}
     />
   );
 }

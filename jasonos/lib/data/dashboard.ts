@@ -7,6 +7,8 @@ import { getStripeRevenue } from "@/lib/integrations/stripe";
 import { getLemonSqueezyMetrics } from "@/lib/integrations/lemon-squeezy";
 import { getTodaysCalendar } from "@/lib/integrations/google-calendar";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { getReconnectDashboardData } from "@/lib/reconnect/data";
+import { computePriorityFunnel } from "@/lib/reconnect/priority";
 
 // ---------- Hero strip ---------------------------------------------------
 
@@ -39,6 +41,15 @@ export interface DashboardData {
   hero: HeroDatum[];
   kpis: CrossKpi[];
   tiles: MonitoringTile[];
+  recruiterOutreach: RecruiterOutreachStats;
+}
+
+export interface RecruiterOutreachStats {
+  total: number;
+  sent: number;
+  replied: number;
+  queueRemaining: number;
+  nextThreeNames: string[];
 }
 
 const fmtUsd = (n: number, opts?: Intl.NumberFormatOptions) =>
@@ -57,12 +68,14 @@ const fmtUsdShort = (n: number) => {
 };
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const [stripe, ls, counts, calendar] = await Promise.all([
+  const [stripe, ls, counts, calendar, reconnect] = await Promise.all([
     getStripeRevenue(),
     getLemonSqueezyMetrics(),
     getDashboardCounts(),
     getTodaysCalendar(),
+    getReconnectDashboardData(),
   ]);
+  const funnel = computePriorityFunnel(reconnect.contacts);
 
   // ---- Hero ------------------------------------------------------------
   const heroVenture: HeroDatum = ls.configured
@@ -221,7 +234,18 @@ export async function getDashboardData(): Promise<DashboardData> {
     );
   }
 
-  return { hero, kpis, tiles };
+  return {
+    hero,
+    kpis,
+    tiles,
+    recruiterOutreach: {
+      total: funnel.total,
+      sent: funnel.byStage.contacted,
+      replied: funnel.byStage.replied,
+      queueRemaining: funnel.byStage.not_contacted,
+      nextThreeNames: funnel.notContactedContacts.slice(0, 3).map((contact) => contact.name),
+    },
+  };
 }
 
 function latestOnlySeries(value: number): number[] {

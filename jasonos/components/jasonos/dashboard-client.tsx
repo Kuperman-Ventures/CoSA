@@ -6,6 +6,7 @@ import { CrossTrackKpis } from "@/components/jasonos/cross-kpis";
 import { MustDos } from "@/components/jasonos/must-dos";
 import { ActionQueue } from "@/components/jasonos/action-queue";
 import { MonitoringGrid } from "@/components/jasonos/monitoring-grid";
+import { RecruiterOutreachCard } from "@/components/jasonos/recruiter-outreach-card";
 import { DailyWrap } from "@/components/jasonos/daily-wrap";
 import { ThisWeekCard } from "@/components/jasonos/this-week-card";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
@@ -43,6 +44,7 @@ export function DashboardClient({ data }: { data: DashboardData }) {
           <ActionQueue trackFilter={trackFilter} onTrackFilter={setTrackFilter} />
         </div>
         <div className="space-y-4">
+          <RecruiterOutreachCard stats={data.recruiterOutreach} />
           <MonitoringGrid tiles={data.tiles} trackFilter={trackFilter} />
         </div>
       </div>

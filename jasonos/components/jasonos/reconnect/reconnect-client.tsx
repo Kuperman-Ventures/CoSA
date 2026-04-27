@@ -15,10 +15,11 @@ import type {
   ReconnectTypeCounts,
   RecruiterStatus,
 } from "@/lib/reconnect/types";
-import { ReconnectStatsStrip } from "./stats-strip";
+import { getFunnelStage, type FunnelStage } from "@/lib/reconnect/priority";
 import { ReconnectQueueCard } from "./queue-card";
 import { ReconnectDetailDrawer } from "./detail-drawer";
 import { AddColdTargetDialog } from "./add-cold-target-dialog";
+import { PriorityOutreachStrip } from "./priority-outreach-strip";
 import type { FirstContactState } from "@/lib/first-contact/types";
 
 type IntentFilter = null | "triaged" | "untriaged" | "triaged_ready" | Intent;
@@ -43,16 +44,19 @@ export function ReconnectClient({
   data,
   triageCount,
   typeCounts,
+  initialIntentFilter = null,
 }: {
   data: ReconnectDashboardData;
   triageCount: number;
   typeCounts: ReconnectTypeCounts;
+  initialIntentFilter?: IntentFilter;
 }) {
   const [contacts, setContacts] = useState(data.contacts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [includeTier3, setIncludeTier3] = useState(false);
   const [selectedType, setSelectedType] = useState<ReconnectObjectType>("all");
-  const [intentFilter, setIntentFilter] = useState<IntentFilter>(null);
+  const [intentFilter, setIntentFilter] = useState<IntentFilter>(initialIntentFilter);
+  const [funnelFilter, setFunnelFilter] = useState<FunnelStage | null>(null);
   const [addColdOpen, setAddColdOpen] = useState(false);
 
   const stats = useMemo(() => computeStats(contacts), [contacts]);
@@ -69,12 +73,12 @@ export function ReconnectClient({
     [sortedContacts, selectedType]
   );
   const filteredContacts = useMemo(
-    () => filterByIntent(typeFilteredContacts, intentFilter),
-    [typeFilteredContacts, intentFilter]
+    () => filterByFunnel(filterByIntent(typeFilteredContacts, intentFilter), funnelFilter),
+    [typeFilteredContacts, intentFilter, funnelFilter]
   );
-  const queue = useMemo(
-    () => getQueue(filteredContacts, includeTier3),
-    [filteredContacts, includeTier3]
+  const displayedContacts = useMemo(
+    () => (funnelFilter ? filteredContacts : getQueue(filteredContacts, includeTier3)),
+    [filteredContacts, funnelFilter, includeTier3]
   );
   const selected = selectedId ? contacts.find((c) => c.id === selectedId) ?? null : null;
   const selectedEmptyHint = getTypeEmptyHint(selectedType);
@@ -260,14 +264,13 @@ export function ReconnectClient({
         onSelect={setIntentFilter}
       />
 
-      <ReconnectStatsStrip
-        stats={stats}
-        triagedReadyActive={intentFilter === "triaged_ready"}
-        onTriagedReadyClick={() =>
-          setIntentFilter((current) =>
-            current === "triaged_ready" ? null : "triaged_ready"
-          )
+      <PriorityOutreachStrip
+        contacts={contacts}
+        selectedStage={funnelFilter}
+        onSelectStage={(stage) =>
+          setFunnelFilter((current) => (current === stage ? null : stage))
         }
+        onSelectContact={setSelectedId}
       />
 
       <TypeTabs
@@ -303,9 +306,9 @@ export function ReconnectClient({
               {selectedType !== "all" ? selectedEmptyHint : "Clear the triage filter to see the full queue."}
             </p>
           </div>
-        ) : queue.length ? (
+        ) : displayedContacts.length ? (
           <div className="space-y-3 p-3">
-            {queue.map((contact) => (
+            {displayedContacts.map((contact) => (
               <ReconnectQueueCard
                 key={contact.id}
                 contact={contact}
@@ -321,12 +324,15 @@ export function ReconnectClient({
               You&rsquo;re caught up.
             </h3>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              No Tier 1 or Tier 2 recruiter touches are due today. Pull Tier 3
-              forward if you want to widen the field.
+              {funnelFilter
+                ? "No priority contacts match this funnel stage."
+                : "No Tier 1 or Tier 2 recruiter touches are due today. Pull Tier 3 forward if you want to widen the field."}
             </p>
-            <Button className="mt-4" onClick={() => setIncludeTier3(true)}>
-              Surface TIER 3 contacts
-            </Button>
+            {!funnelFilter ? (
+              <Button className="mt-4" onClick={() => setIncludeTier3(true)}>
+                Surface TIER 3 contacts
+              </Button>
+            ) : null}
           </div>
         )}
       </section>
@@ -567,6 +573,11 @@ function filterByIntent(contacts: ReconnectContact[], filter: IntentFilter) {
     return contacts.filter((contact) => !!contact.intent && contact.state.status === "queue");
   }
   return contacts.filter((contact) => contact.intent === filter);
+}
+
+function filterByFunnel(contacts: ReconnectContact[], filter: FunnelStage | null) {
+  if (!filter) return contacts;
+  return contacts.filter((contact) => getFunnelStage(contact) === filter);
 }
 
 function compareReconnectContacts(a: ReconnectContact, b: ReconnectContact) {
