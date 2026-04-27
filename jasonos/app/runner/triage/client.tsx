@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { TriageRunner } from "@/components/jasonos/runners/triage-runner";
 import type {
@@ -30,6 +31,7 @@ export function TriageRunnerWrapper({
   counts: TriageTrackCounts;
 }) {
   const router = useRouter();
+  const [triagedThisSession, setTriagedThisSession] = useState(0);
   const trackLabel = currentTrack
     ? TRACK_TABS.find((tab) => tab.track === currentTrack)?.label ?? currentTrack
     : null;
@@ -40,6 +42,7 @@ export function TriageRunnerWrapper({
 
       {initial ? (
         <TriageRunner
+          key={initial.card_id}
           cardId={initial.card_id}
           contactId={initial.contact_id}
           contactName={initial.contact_name}
@@ -48,10 +51,13 @@ export function TriageRunnerWrapper({
           companyMissing={initial.company_missing}
           contactTags={initial.contact_tags ?? []}
           cardSubtitle={initial.subtitle}
-          cardBodyHints={initial.body ?? {}}
+          cardBody={initial.body}
+          daysSinceContact={initial.days_since_contact}
           initialIntent={initial.current_intent}
           initialGoal={initial.current_goal}
           remainingCount={initial.remaining_count}
+          triagedThisSession={triagedThisSession}
+          onTriaged={() => setTriagedThisSession((count) => count + 1)}
           onAdvance={() => router.refresh()}
           onSkip={(contactId) => {
             const skipped = [...new Set([...skippedContactIds, contactId])];

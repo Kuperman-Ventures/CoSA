@@ -22,7 +22,6 @@ export default async function TriagePage({
 
   return (
     <TriageRunnerWrapper
-      key={next?.card_id ?? track ?? "all"}
       initial={next}
       skippedContactIds={skippedContactIds}
       currentTrack={track}

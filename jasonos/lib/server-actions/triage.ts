@@ -5,6 +5,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { Track, Verb } from "@/lib/types";
 import type {
   Intent,
+  ReconnectCardBody,
   TrackFilter,
   TriageTrackCounts,
   UntriagedReconnectCard,
@@ -238,7 +239,7 @@ async function getNextUntriagedCardAfterSkips(
 
   const { data: contacts, error: contactsError } = await supabase
     .from("contacts")
-    .select("id,name,title,tags,intent,personal_goal,company:companies(id,name)")
+    .select("id,name,title,tags,intent,personal_goal,last_touch_date,company:companies(id,name)")
     .in("id", contactIds)
     .is("intent", null);
 
@@ -266,6 +267,7 @@ async function getNextUntriagedCardAfterSkips(
     contact_track: card.track,
     current_intent: contact?.intent,
     current_goal: contact?.personal_goal,
+    days_since_contact: getDaysSinceContact(contact?.last_touch_date),
     remaining_count: Math.max(totalRemaining - skipped.size, 1),
   });
 }
@@ -367,10 +369,7 @@ function normalizeCard(row: unknown): UntriagedReconnectCard | null {
     contact_id: contactId,
     title: typeof value.title === "string" ? value.title : contactName,
     subtitle: typeof value.subtitle === "string" ? value.subtitle : null,
-    body:
-      value.body && typeof value.body === "object"
-        ? (value.body as Record<string, unknown>)
-        : null,
+    body: normalizeReconnectCardBody(value.body),
     priority_score:
       typeof value.priority_score === "number" ? value.priority_score : null,
     contact_name: contactName,
@@ -382,12 +381,33 @@ function normalizeCard(row: unknown): UntriagedReconnectCard | null {
         : getFirmFromTags(value.contact_tags),
     company_missing: typeof value.contact_company !== "string",
     contact_tags: getStringArray(value.contact_tags),
-    contact_track: isTrack(value.contact_track) ? value.contact_track : "advisors",
+    contact_track: isTrack(value.contact_track) ? value.contact_track : null,
     current_intent: isIntent(value.current_intent) ? value.current_intent : null,
     current_goal: typeof value.current_goal === "string" ? value.current_goal : null,
+    days_since_contact:
+      typeof value.days_since_contact === "number" ? value.days_since_contact : null,
     remaining_count:
       typeof value.remaining_count === "number" ? value.remaining_count : 0,
   };
+}
+
+function normalizeReconnectCardBody(value: unknown): ReconnectCardBody | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as ReconnectCardBody;
+}
+
+function getDaysSinceContact(value: unknown) {
+  if (typeof value !== "string") return null;
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return null;
+  const now = new Date();
+  const then = new Date(timestamp);
+  return Math.max(
+    0,
+    Math.floor((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) -
+      Date.UTC(then.getFullYear(), then.getMonth(), then.getDate())) /
+      86_400_000)
+  );
 }
 
 function getCompanyName(value: unknown) {
