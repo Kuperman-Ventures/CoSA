@@ -238,7 +238,7 @@ async function getNextUntriagedCardAfterSkips(
 
   const { data: contacts, error: contactsError } = await supabase
     .from("contacts")
-    .select("id,name,title,tags,intent,personal_goal")
+    .select("id,name,title,tags,intent,personal_goal,company:companies(id,name)")
     .in("id", contactIds)
     .is("intent", null);
 
@@ -261,6 +261,7 @@ async function getNextUntriagedCardAfterSkips(
     priority_score: card.priority_score,
     contact_name: contact?.name,
     contact_title: contact?.title,
+    contact_company: getCompanyName(contact?.company),
     contact_tags: contact?.tags,
     contact_track: card.track,
     current_intent: contact?.intent,
@@ -375,15 +376,39 @@ function normalizeCard(row: unknown): UntriagedReconnectCard | null {
     contact_name: contactName,
     contact_title:
       typeof value.contact_title === "string" ? value.contact_title : null,
-    contact_tags: Array.isArray(value.contact_tags)
-      ? value.contact_tags.filter((tag): tag is string => typeof tag === "string")
-      : [],
+    contact_company:
+      typeof value.contact_company === "string"
+        ? value.contact_company
+        : getFirmFromTags(value.contact_tags),
+    company_missing: typeof value.contact_company !== "string",
+    contact_tags: getStringArray(value.contact_tags),
     contact_track: isTrack(value.contact_track) ? value.contact_track : "advisors",
     current_intent: isIntent(value.current_intent) ? value.current_intent : null,
     current_goal: typeof value.current_goal === "string" ? value.current_goal : null,
     remaining_count:
       typeof value.remaining_count === "number" ? value.remaining_count : 0,
   };
+}
+
+function getCompanyName(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const name = (value as { name?: unknown }).name;
+  return typeof name === "string" && name.trim() ? name : null;
+}
+
+function getStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function getFirmFromTags(value: unknown) {
+  const firmTag = getStringArray(value).find((tag) =>
+    tag.trim().toLowerCase().startsWith("firm:")
+  );
+  if (!firmTag) return null;
+  const firm = firmTag.slice(firmTag.indexOf(":") + 1).trim();
+  return firm || null;
 }
 
 function isTrack(value: unknown): value is Track {

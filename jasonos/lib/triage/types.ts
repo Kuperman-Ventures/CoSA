@@ -33,6 +33,8 @@ export interface UntriagedReconnectCard {
   priority_score: number | null;
   contact_name: string;
   contact_title: string | null;
+  contact_company: string | null;
+  company_missing: boolean;
   contact_tags: string[];
   contact_track: Track;
   current_intent: Intent | null;

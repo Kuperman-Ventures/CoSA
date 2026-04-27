@@ -13,6 +13,8 @@ interface TriageRunnerProps {
   contactId: string;
   contactName: string;
   contactTitle: string | null;
+  contactCompany: string | null;
+  companyMissing: boolean;
   contactTags: string[];
   cardSubtitle: string | null;
   cardBodyHints?: {
@@ -65,6 +67,19 @@ export function TriageRunner(props: TriageRunnerProps) {
       {props.contactTitle ? (
         <p className="text-sm text-muted-foreground">{props.contactTitle}</p>
       ) : null}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Company:</span>
+        {props.contactCompany ? (
+          <span className="font-medium">{props.contactCompany}</span>
+        ) : (
+          <span className="font-medium text-destructive">Unknown</span>
+        )}
+        {props.companyMissing ? (
+          <Badge variant="destructive" className="h-5 rounded-full text-[10px]">
+            Missing company record
+          </Badge>
+        ) : null}
+      </div>
       {props.cardSubtitle ? (
         <p className="text-sm text-muted-foreground">{props.cardSubtitle}</p>
       ) : null}

@@ -44,6 +44,8 @@ export function TriageRunnerWrapper({
           contactId={initial.contact_id}
           contactName={initial.contact_name}
           contactTitle={initial.contact_title}
+          contactCompany={initial.contact_company}
+          companyMissing={initial.company_missing}
           contactTags={initial.contact_tags ?? []}
           cardSubtitle={initial.subtitle}
           cardBodyHints={initial.body ?? {}}
