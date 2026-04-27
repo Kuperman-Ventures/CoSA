@@ -74,9 +74,14 @@ export function TriageRunner(props: TriageRunnerProps) {
         ) : (
           <span className="font-medium text-destructive">Unknown</span>
         )}
-        {props.companyMissing ? (
+        {props.companyMissing && props.contactCompany ? (
+          <Badge variant="outline" className="h-5 rounded-full text-[10px]">
+            Inferred from firm tag
+          </Badge>
+        ) : null}
+        {props.companyMissing && !props.contactCompany ? (
           <Badge variant="destructive" className="h-5 rounded-full text-[10px]">
-            Missing company record
+            Missing company
           </Badge>
         ) : null}
       </div>
