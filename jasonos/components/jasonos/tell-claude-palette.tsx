@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/command";
 import { ArrowRight, Calendar, Clock, ListChecks, Sparkles, Zap } from "lucide-react";
 import { toast } from "sonner";
+import type { TellClaudeContext } from "@/lib/ai/tell-claude";
 
 const SUGGESTIONS = [
   { icon: Clock,       label: "What should I do for the next hour?",            kind: "ask" },
@@ -24,6 +25,8 @@ const SUGGESTIONS = [
 export function TellClaudePalette() {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [value, setValue] = useState("");
+  const [context, setContext] = useState<TellClaudeContext>({ scope: "global" });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -32,7 +35,15 @@ export function TellClaudePalette() {
         setOpen((o) => !o);
       }
     };
-    const onOpen = () => setOpen(true);
+    const onOpen = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        context?: TellClaudeContext;
+        instruction?: string;
+      }>).detail;
+      setContext(detail?.context ?? { scope: "global" });
+      if (detail?.instruction) setValue(detail.instruction);
+      setOpen(true);
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("jasonos:open-tell-claude", onOpen);
     return () => {
@@ -41,15 +52,18 @@ export function TellClaudePalette() {
     };
   }, []);
 
-  const ask = async (instruction: string) => {
+  const ask = async (instruction: string, inputContext = context) => {
+    const trimmed = instruction.trim();
+    if (!trimmed || pending) return;
+
     setPending(true);
     try {
       const res = await fetch("/api/tell-claude", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          instruction,
-          context: { scope: "global" },
+          instruction: trimmed,
+          context: inputContext,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -58,6 +72,7 @@ export function TellClaudePalette() {
         description: text.slice(0, 220) + (text.length > 220 ? "…" : ""),
         duration: 8000,
       });
+      setValue("");
     } catch {
       toast.error("Tell Claude needs configuration", {
         description:
@@ -72,6 +87,14 @@ export function TellClaudePalette() {
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
       <CommandInput
+        value={value}
+        onValueChange={setValue}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && value.trim()) {
+            event.preventDefault();
+            void ask(value);
+          }
+        }}
         placeholder={pending ? "Asking Claude…" : "Tell Claude anything…"}
         autoFocus
       />
@@ -79,6 +102,16 @@ export function TellClaudePalette() {
         <CommandEmpty>
           Press <kbd className="rounded border bg-muted px-1 text-[10px]">Enter</kbd> to send your instruction.
         </CommandEmpty>
+
+        {value.trim() ? (
+          <CommandGroup heading="Send">
+            <CommandItem onSelect={() => ask(value)} className="gap-3">
+              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+              <span className="flex-1">Ask: {value.trim()}</span>
+              <ArrowRight className="h-3 w-3 opacity-40" />
+            </CommandItem>
+          </CommandGroup>
+        ) : null}
 
         <CommandGroup heading="Quick asks">
           {SUGGESTIONS.map((s) => (
@@ -98,8 +131,7 @@ export function TellClaudePalette() {
 
         <CommandGroup heading="Tip">
           <div className="px-3 py-2 text-xs text-muted-foreground">
-            Tell Claude is wired through the Vercel AI Gateway. Quick asks land in
-            a toast; per-card asks (coming next) will edit the card inline.
+            Tell Claude is wired through the Vercel AI Gateway. Quick asks and typed prompts use the current page or card context when available.
           </div>
         </CommandGroup>
       </CommandList>

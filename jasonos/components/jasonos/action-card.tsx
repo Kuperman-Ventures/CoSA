@@ -55,7 +55,25 @@ export function ActionCardItem({
 
   const fire = (verb: Verb) =>
     verb === "tell_claude"
-      ? window.dispatchEvent(new CustomEvent("jasonos:open-tell-claude"))
+      ? window.dispatchEvent(
+          new CustomEvent("jasonos:open-tell-claude", {
+            detail: {
+              context: {
+                scope: "card",
+                payload: {
+                  id: card.id,
+                  track: card.track,
+                  module: card.module,
+                  title: card.title,
+                  subtitle: card.subtitle,
+                  why_now: why,
+                  body: card.body,
+                },
+              },
+              instruction: `Help me with this card: ${card.title}`,
+            },
+          })
+        )
       : toast.success(`${VERB_LABEL[verb]} → ${card.title}`, {
           description: "Stub action — wire to integration in v1 module work.",
         });

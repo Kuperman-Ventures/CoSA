@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -23,6 +25,29 @@ export function EmptyState({
   size = "md",
   className,
 }: EmptyStateProps) {
+  const actionButton = action?.href === "#tell-claude" ? (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      className="mt-3"
+      onClick={() =>
+        window.dispatchEvent(new CustomEvent("jasonos:open-tell-claude"))
+      }
+    >
+      {action.label}
+    </Button>
+  ) : action ? (
+    <Button
+      size="sm"
+      variant="outline"
+      className="mt-3"
+      render={<Link href={action.href} />}
+    >
+      {action.label}
+    </Button>
+  ) : null;
+
   return (
     <div
       className={cn(
@@ -33,16 +58,7 @@ export function EmptyState({
     >
       <div className="font-medium text-foreground/80">{title}</div>
       {hint ? <p className="mx-auto mt-1 max-w-md leading-relaxed">{hint}</p> : null}
-      {action ? (
-        <Button
-          size="sm"
-          variant="outline"
-          className="mt-3"
-          render={<Link href={action.href} />}
-        >
-          {action.label}
-        </Button>
-      ) : null}
+      {actionButton}
     </div>
   );
 }

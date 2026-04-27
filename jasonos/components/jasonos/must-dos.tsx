@@ -61,7 +61,7 @@ export function MustDos({
                 ? "Run Tell Claude to generate today's prioritized list."
                 : "Connect Supabase to load Best Next Action runs."
             }
-            action={{ label: "Tell Claude", href: "/" }}
+            action={{ label: "Tell Claude", href: "#tell-claude" }}
             size={compact ? "sm" : "md"}
           />
         ) : null}

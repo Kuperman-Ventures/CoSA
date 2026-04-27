@@ -58,7 +58,7 @@ export default async function ProjectsPage() {
                 ? "Create a project from a goal or let Tell Claude decompose a plan."
                 : "Connect Supabase to load projects."
             }
-            action={{ label: "Tell Claude", href: "/" }}
+            action={{ label: "Tell Claude", href: "#tell-claude" }}
             className="md:col-span-2"
           />
         ) : null}
