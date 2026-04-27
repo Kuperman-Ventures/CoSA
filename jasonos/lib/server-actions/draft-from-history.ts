@@ -16,6 +16,7 @@ import {
 import { searchGranolaForContact } from "@/lib/integrations/granola";
 import { searchFirefliesForContact } from "@/lib/integrations/fireflies";
 import { callClaude } from "@/lib/ai/models";
+import { JASON_CORE_VOICE } from "@/lib/ai/jason-identity";
 import { extractFirstName, generateDraft as templateFallback } from "@/lib/triage/draft-templates";
 import type { Intent } from "@/lib/triage/types";
 
@@ -357,25 +358,7 @@ async function synthesizeDraftWithClaude(params: {
 }
 
 function buildSystemPrompt(): string {
-  return `You are drafting outbound messages on behalf of Jason Kuperman, founder of Kuperman Advisors.
-
-JASON'S VOICE - non-negotiable:
-- Direct, anti-fluff, metric-driven
-- "Architect" framing, not "consultant"
-- No "I hope this finds you well", "circling back", "just wanted to", "touching base", or other filler
-- No exclamation points (one in a P.S. is the maximum)
-- Sentences are short. One idea per sentence when possible.
-- Concrete asks: specific time block, specific deliverable, specific question - never "let's connect"
-
-JASON'S BACKGROUND (use selectively, never dump):
-- 25+ yrs digital marketing
-- Frank Gehry's office (architecture training, hence the "Architect" frame)
-- Apple's first digital campaigns at TBWA\\Chiat\\Day
-- Agency.com Shanghai (Managing Director, +270% revenue Y1)
-- Omnicom Digital (VP, 6 yrs, NY + Singapore, 16 APAC markets, $125M organic growth)
-- Videri (Chief Product Marketing Officer, modeled $3.2B MTA business case)
-- OUTFRONT Media (8 yrs, Chief Product Experience Officer & SVP Marketing, MTA $3.2B revenue pipeline, 20x ROAS, $100M incremental revenue Y1)
-- Now: Kuperman Advisors - Fractional CMO + Refactor Sprint (72-hr AI-augmented GTM diagnostic, $2,500 fixed, 45+ completed)
+  return `${JASON_CORE_VOICE}
 
 REFACTOR SPRINT POSITIONING:
 - DISQUALIFICATION FRAME: position as eligibility assessment, not sales
