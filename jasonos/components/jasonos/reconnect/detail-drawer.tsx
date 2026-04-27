@@ -32,10 +32,12 @@ import {
 import { INTENTS, INTENT_LABELS, type Intent } from "@/lib/triage/types";
 import { extractFirstName, generateDraft } from "@/lib/triage/draft-templates";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
+import type { FirstContactState } from "@/lib/first-contact/types";
 import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
 import { TierBadge } from "./tier-badge";
 import { ScoreChip } from "./score-chip";
 import { NotesTimeline } from "./notes-timeline";
+import { FirstContactSequence } from "./first-contact-sequence";
 
 export function ReconnectDetailDrawer({
   contact,
@@ -45,6 +47,7 @@ export function ReconnectDetailDrawer({
   onLocalNote,
   onLocalTriage,
   onLocalReconnectCardSent,
+  onLocalFirstContact,
 }: {
   contact: ReconnectContact | null;
   contacts: ReconnectContact[];
@@ -53,6 +56,7 @@ export function ReconnectDetailDrawer({
   onLocalNote: (id: string, body: string) => void;
   onLocalTriage: (id: string, intent: Intent | null, personalGoal: string | null) => void;
   onLocalReconnectCardSent?: (id: string) => void;
+  onLocalFirstContact?: (id: string, state: FirstContactState) => void;
 }) {
   const [note, setNote] = useState("");
   const [draftState, setDraftState] = useState({ key: "", text: "", base: "" });
@@ -383,7 +387,16 @@ export function ReconnectDetailDrawer({
             </div>
           </section>
 
-          {contact.intent ? (
+          {contact.first_contact ? (
+            <FirstContactSequence
+              contactId={contact.id}
+              contactName={contact.name}
+              state={contact.first_contact}
+              onAdvance={(newState) => onLocalFirstContact?.(contact.id, newState)}
+            />
+          ) : null}
+
+          {contact.intent && !contact.first_contact ? (
             <section className="rounded-xl border bg-background/30 p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold tracking-tight">Draft outreach</h3>

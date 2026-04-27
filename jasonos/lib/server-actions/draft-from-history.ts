@@ -42,7 +42,7 @@ export interface DraftError {
 
 type DraftChannel = DraftResult["channel"];
 
-interface ContactContext {
+export interface ContactContext {
   id: string;
   name: string;
   emails: string[];
@@ -66,7 +66,7 @@ interface ContactContext {
   primaryEmail: string | null;
 }
 
-interface GmailHistory {
+export interface GmailHistory {
   found: boolean;
   summary?: string;
   threadId?: string;
@@ -76,7 +76,7 @@ interface GmailHistory {
   fullMostRecentBody?: string;
 }
 
-interface HubSpotHistory {
+export interface HubSpotHistory {
   found: boolean;
   summary?: string;
   contactUrl?: string;
@@ -84,7 +84,7 @@ interface HubSpotHistory {
   leadStatus?: string | null;
 }
 
-interface SearchHistory {
+export interface SearchHistory {
   found: boolean;
   summary?: string;
   url?: string;
@@ -152,7 +152,7 @@ export async function generateDraftFromHistory(input: {
   }
 }
 
-async function loadContactContext(contactId: string): Promise<ContactContext | null> {
+export async function loadContactContext(contactId: string): Promise<ContactContext | null> {
   const sb = createServiceRoleClient();
   const { data: contact, error } = await sb
     .from("contacts")
@@ -251,7 +251,7 @@ async function getRecruiterPipelineIdFromCard(contactId: string) {
   return linked ? getString(linked.recruiter_pipeline_id) : null;
 }
 
-async function gatherGmailHistory(ctx: ContactContext): Promise<GmailHistory> {
+export async function gatherGmailHistory(ctx: ContactContext): Promise<GmailHistory> {
   if (!ctx.primaryEmail) return { found: false };
 
   const threads = dedupeThreads(
@@ -277,7 +277,7 @@ async function gatherGmailHistory(ctx: ContactContext): Promise<GmailHistory> {
   };
 }
 
-async function gatherHubSpotHistory(ctx: ContactContext): Promise<HubSpotHistory> {
+export async function gatherHubSpotHistory(ctx: ContactContext): Promise<HubSpotHistory> {
   if (!ctx.hubspotContactId && !ctx.primaryEmail) return { found: false };
 
   const contact = ctx.hubspotContactId
@@ -296,7 +296,7 @@ async function gatherHubSpotHistory(ctx: ContactContext): Promise<HubSpotHistory
   };
 }
 
-async function gatherGranolaHistory(ctx: ContactContext): Promise<SearchHistory> {
+export async function gatherGranolaHistory(ctx: ContactContext): Promise<SearchHistory> {
   const result = await searchGranolaForContact({
     contactName: ctx.name,
     email: ctx.primaryEmail,
@@ -308,7 +308,7 @@ async function gatherGranolaHistory(ctx: ContactContext): Promise<SearchHistory>
   };
 }
 
-async function gatherFirefliesHistory(ctx: ContactContext): Promise<SearchHistory> {
+export async function gatherFirefliesHistory(ctx: ContactContext): Promise<SearchHistory> {
   const result = await searchFirefliesForContact({ contactName: ctx.name });
   return {
     found: result.found,

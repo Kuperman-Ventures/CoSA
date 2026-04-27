@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ArrowRight, CheckCircle2, Radar } from "lucide-react";
+import { ArrowRight, CheckCircle2, Plus, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
@@ -18,6 +18,8 @@ import type {
 import { ReconnectStatsStrip } from "./stats-strip";
 import { ReconnectQueueCard } from "./queue-card";
 import { ReconnectDetailDrawer } from "./detail-drawer";
+import { AddColdTargetDialog } from "./add-cold-target-dialog";
+import type { FirstContactState } from "@/lib/first-contact/types";
 
 type IntentFilter = null | "triaged" | "untriaged" | "triaged_ready" | Intent;
 
@@ -51,6 +53,7 @@ export function ReconnectClient({
   const [includeTier3, setIncludeTier3] = useState(false);
   const [selectedType, setSelectedType] = useState<ReconnectObjectType>("all");
   const [intentFilter, setIntentFilter] = useState<IntentFilter>(null);
+  const [addColdOpen, setAddColdOpen] = useState(false);
 
   const stats = useMemo(() => computeStats(contacts), [contacts]);
   const intentCounts = useMemo(() => computeIntentCounts(contacts), [contacts]);
@@ -176,6 +179,37 @@ export function ReconnectClient({
     );
   };
 
+  const setLocalFirstContact = (id: string, firstContact: FirstContactState) => {
+    setContacts((current) =>
+      current.map((contact) =>
+        contact.id === id
+          ? {
+              ...contact,
+              first_contact: firstContact,
+              state: {
+                ...contact.state,
+                status: statusFromFirstContact(firstContact.stage),
+                updated_at:
+                  firstContact.history[firstContact.history.length - 1]?.at ??
+                  new Date().toISOString(),
+              },
+            }
+          : contact
+      )
+    );
+  };
+
+  const addLocalColdTarget = (contact: ReconnectContact) => {
+    setContacts((current) => [contact, ...current.filter((item) => item.id !== contact.id)]);
+    setSelectedId(contact.id);
+    setSelectedType("cold_target");
+    setTimeout(() => {
+      document
+        .getElementById("first-contact-sequence")
+        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 100);
+  };
+
   return (
     <div className="mx-auto max-w-[1500px] space-y-4 px-4 py-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -193,6 +227,10 @@ export function ReconnectClient({
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setAddColdOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add cold target
+          </Button>
           <Button variant="default" render={<Link href="/runner/triage" />}>
             Triage queue
             <Badge variant="secondary" className="ml-1 h-5">
@@ -301,6 +339,12 @@ export function ReconnectClient({
         onLocalNote={addLocalNote}
         onLocalTriage={setLocalTriage}
         onLocalReconnectCardSent={setLocalReconnectCardSent}
+        onLocalFirstContact={setLocalFirstContact}
+      />
+      <AddColdTargetDialog
+        open={addColdOpen}
+        onOpenChange={setAddColdOpen}
+        onCreated={addLocalColdTarget}
       />
     </div>
   );
@@ -389,6 +433,7 @@ function TypeTabs({
     { type: "recruiter", label: "Recruiters", count: counts.by_type.recruiter ?? 0 },
     { type: "tier1_contact", label: "Tier 1", count: counts.by_type.tier1_contact ?? 0 },
     { type: "manual", label: "Manual", count: counts.by_type.manual ?? 0 },
+    { type: "cold_target", label: "Cold targets", count: counts.by_type.cold_target ?? 0 },
   ];
 
   return (
@@ -417,10 +462,32 @@ function getTypeEmptyHint(type: ReconnectObjectType) {
       return "Run the Tier 1 Ranker on /contacts to populate this list.";
     case "manual":
       return "Click 'Send to Triage' on any contact to add them here.";
+    case "cold_target":
+      return "Click '+ Add cold target' to start a First Contact sequence.";
     case "recruiter":
       return "Recruiter cards will appear here when they are open in Reconnect.";
     case "all":
       return "Reconnect cards will appear here when they are open.";
+  }
+}
+
+function statusFromFirstContact(stage: FirstContactState["stage"]): RecruiterStatus {
+  switch (stage) {
+    case "connect_sent":
+    case "dm_sent":
+    case "email_sent":
+      return "sent";
+    case "dm_replied":
+    case "email_replied":
+      return "replied";
+    case "meeting_scheduled":
+      return "in_conversation";
+    case "completed":
+      return "closed";
+    case "closed_no_response":
+      return "archived";
+    default:
+      return "queue";
   }
 }
 

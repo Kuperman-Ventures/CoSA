@@ -16,6 +16,7 @@ import type {
   RecruiterTier,
   RecruiterTouch,
 } from "./types";
+import type { FirstContactStage, FirstContactState } from "@/lib/first-contact/types";
 
 const QUEUE_TIERS: RecruiterTier[] = ["TIER 1", "TIER 2"];
 
@@ -116,6 +117,7 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
 
   try {
     const sb = createPublicServiceRoleClient();
+    const coldTargetsPromise = getColdTargetContacts();
     const [{ data: recruiters, error: recruitersError }, { data: states, error: statesError }] =
       await Promise.all([
         sb
@@ -135,7 +137,7 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
       if (recruitersError || statesError) {
         console.error("[reconnect] Supabase query failed", recruitersError ?? statesError);
       }
-      return [];
+      return coldTargetsPromise;
     }
 
     const ids = recruiters.map((r) => r.id as string);
@@ -155,7 +157,7 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
         getReconnectCardMetaByContactId(ids),
       ]);
 
-    return mapReconnectRows(
+    const recruiterContacts = mapReconnectRows(
       recruiters as PublicRecruiterRow[],
       (states ?? []) as PublicContactStateRow[],
       (notes ?? []) as PublicNoteRow[],
@@ -163,8 +165,139 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
       triageByContact,
       reconnectMeta
     );
+    return [...recruiterContacts, ...(await coldTargetsPromise)];
   } catch (error) {
     console.error("[reconnect] Supabase query failed", error);
+    return getColdTargetContacts();
+  }
+}
+
+type ColdTargetCardRow = {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  body: {
+    firm?: string | null;
+    specialty?: string | null;
+    why_target?: string | null;
+    first_contact?: FirstContactState;
+  } | null;
+  linked_object_ids: { contact_id?: string } | null;
+  priority_score: number | null;
+  state: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ColdTargetContactRow = {
+  id: string;
+  name: string;
+  emails: string[] | null;
+  linkedin_url: string | null;
+  title: string | null;
+  intent: ReconnectIntent | null;
+  personal_goal: string | null;
+  last_touch_date: string | null;
+  tags: string[] | null;
+};
+
+async function getColdTargetContacts(): Promise<ReconnectContact[]> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return [];
+
+  try {
+    const sb = createServiceRoleClient();
+    const { data: cards, error } = await sb
+      .from("cards")
+      .select("id,title,subtitle,body,linked_object_ids,priority_score,state,created_at,updated_at")
+      .eq("module", "reconnect")
+      .eq("object_type", "cold_target")
+      .neq("state", "archived")
+      .order("created_at", { ascending: false });
+
+    if (error || !cards?.length) return [];
+
+    const cardRows = cards as ColdTargetCardRow[];
+    const contactIds = cardRows
+      .map((card) => card.linked_object_ids?.contact_id)
+      .filter((id): id is string => Boolean(id));
+    if (!contactIds.length) return [];
+
+    const { data: contacts } = await sb
+      .from("contacts")
+      .select("id,name,emails,linkedin_url,title,intent,personal_goal,last_touch_date,tags")
+      .in("id", contactIds);
+    const byId = new Map((contacts ?? []).map((contact) => [contact.id as string, contact as ColdTargetContactRow]));
+
+    return cardRows.flatMap((card) => {
+      const contactId = card.linked_object_ids?.contact_id;
+      const contact = contactId ? byId.get(contactId) : null;
+      if (!contactId || !contact) return [];
+
+      const firstContact = normalizeFirstContactState(card.body?.first_contact);
+      const firm = card.body?.firm ?? firmFromTags(contact.tags) ?? "Unknown firm";
+      const lastEvent = firstContact.history[firstContact.history.length - 1];
+
+      return [
+        {
+          id: contact.id,
+          name: contact.name,
+          firm,
+          firm_normalized: normalizeFirm(firm),
+          title: contact.title ?? card.subtitle ?? undefined,
+          specialty: card.body?.specialty ?? undefined,
+          source: "LeadDelta",
+          tier: "TIER 1",
+          strategic_score: card.priority_score ?? 0,
+          firm_fit_score: 0,
+          practice_match_score: 0,
+          recency_score: 0,
+          signal_score: 0,
+          strategic_recommended_approach:
+            card.body?.why_target ??
+            "Cold target added manually. Use First Contact Sequence for staged outreach.",
+          summary_of_prior_comms: undefined,
+          outlook_history: undefined,
+          linkedin_url: contact.linkedin_url ?? undefined,
+          last_contact_date: contact.last_touch_date ?? lastEvent?.at,
+          other_contacts_at_firm: undefined,
+          state: {
+            recruiter_id: contact.id,
+            status: statusFromFirstContact(firstContact.stage),
+            starred: false,
+            updated_at: lastEvent?.at ?? card.updated_at ?? card.created_at,
+          },
+          notes: card.body?.why_target
+            ? [
+                {
+                  id: `${card.id}-why`,
+                  recruiter_id: contact.id,
+                  body: card.body.why_target,
+                  created_at: card.created_at,
+                },
+              ]
+            : [],
+          touches: firstContact.history
+            .filter((event) => event.draft)
+            .map((event, index) => ({
+              id: `${card.id}-${index}`,
+              recruiter_id: contact.id,
+              channel: event.stage.startsWith("email") ? "email" : "linkedin",
+              direction: "outbound",
+              body: event.draft ?? "",
+              created_at: event.at,
+            })),
+          intent: contact.intent,
+          personal_goal: contact.personal_goal,
+          reconnect_object_type: "cold_target",
+          has_open_reconnect_card: card.state === "open",
+          first_contact: firstContact,
+          first_contact_card_id: card.id,
+          why_target: card.body?.why_target ?? null,
+        } satisfies ReconnectContact,
+      ];
+    });
+  } catch (error) {
+    console.error("[reconnect] cold target query failed", error);
     return [];
   }
 }
@@ -368,6 +501,57 @@ function groupBy<T>(items: T[], key: (item: T) => string) {
     map.set(k, [...(map.get(k) ?? []), item]);
   }
   return map;
+}
+
+function normalizeFirstContactState(value: unknown): FirstContactState {
+  const maybe = value as Partial<FirstContactState> | undefined;
+  return {
+    stage: isFirstContactStage(maybe?.stage) ? maybe.stage : "identified",
+    history: Array.isArray(maybe?.history) ? maybe.history : [],
+  };
+}
+
+function isFirstContactStage(value: unknown): value is FirstContactStage {
+  return (
+    typeof value === "string" &&
+    [
+      "identified",
+      "connect_sent",
+      "connect_accepted",
+      "dm_sent",
+      "dm_replied",
+      "email_sent",
+      "email_replied",
+      "meeting_scheduled",
+      "completed",
+      "closed_no_response",
+    ].includes(value)
+  );
+}
+
+function statusFromFirstContact(stage: FirstContactStage): RecruiterContactState["status"] {
+  switch (stage) {
+    case "connect_sent":
+    case "dm_sent":
+    case "email_sent":
+      return "sent";
+    case "dm_replied":
+    case "email_replied":
+      return "replied";
+    case "meeting_scheduled":
+      return "in_conversation";
+    case "completed":
+      return "closed";
+    case "closed_no_response":
+      return "archived";
+    default:
+      return "queue";
+  }
+}
+
+function firmFromTags(tags: string[] | null) {
+  const tag = tags?.find((item) => item.startsWith("firm:"));
+  return tag ? tag.replace(/^firm:/, "").replace(/-/g, " ") : null;
 }
 
 function normalizeTier(value: string | null): RecruiterTier {

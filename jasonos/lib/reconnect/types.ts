@@ -1,3 +1,5 @@
+import type { FirstContactState } from "@/lib/first-contact/types";
+
 export type RecruiterTier = "TIER 1" | "TIER 2" | "TIER 3" | "TIER 4";
 
 export type RecruiterStatus =
@@ -23,7 +25,7 @@ export type ReconnectIntent =
   | "pipeline"
   | "role_inquiry";
 
-export type ReconnectObjectType = "all" | "recruiter" | "tier1_contact" | "manual";
+export type ReconnectObjectType = "all" | "recruiter" | "tier1_contact" | "manual" | "cold_target";
 
 export interface ReconnectTypeCounts {
   total: number;
@@ -86,6 +88,9 @@ export interface ReconnectContact extends Recruiter {
   personal_goal?: string | null;
   reconnect_object_type?: string | null;
   has_open_reconnect_card?: boolean;
+  first_contact?: FirstContactState | null;
+  first_contact_card_id?: string | null;
+  why_target?: string | null;
 }
 
 export interface ReconnectStats {
