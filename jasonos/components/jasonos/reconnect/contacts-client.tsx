@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Search } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Intent } from "@/lib/triage/types";
@@ -52,6 +52,8 @@ export function ReconnectContactsClient({
   const [statuses, setStatuses] = useState<RecruiterStatus[]>(initialStatus);
   const [sources, setSources] = useState<RecruiterSource[]>(initialSource);
   const [query, setQuery] = useState(initialQ);
+  const [recruitersOpen, setRecruitersOpen] = useState(true);
+  const [contactsOpen, setContactsOpen] = useState(true);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -91,6 +93,14 @@ export function ReconnectContactsClient({
   }, [contacts, tiers, statuses, sources, query]);
 
   const selected = selectedId ? contacts.find((c) => c.id === selectedId) ?? null : null;
+  const recruiters = useMemo(
+    () => filtered.filter((contact) => contact.reconnect_object_type === "recruiter"),
+    [filtered]
+  );
+  const otherContacts = useMemo(
+    () => filtered.filter((contact) => contact.reconnect_object_type !== "recruiter"),
+    [filtered]
+  );
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-4 px-4 py-6">
@@ -132,53 +142,25 @@ export function ReconnectContactsClient({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-xl border bg-card">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
-            <thead className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2">Tier</th>
-                <th className="px-3 py-2">Score</th>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Firm</th>
-                <th className="px-3 py-2">Specialty</th>
-                <th className="px-3 py-2">Last Contact</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {filtered.map((contact) => (
-                <tr
-                  key={contact.id}
-                  onClick={() => setSelectedId(contact.id)}
-                  className="cursor-pointer hover:bg-muted/30"
-                >
-                  <td className="px-3 py-2"><TierBadge tier={contact.tier} /></td>
-                  <td className="px-3 py-2"><ScoreChip score={contact.strategic_score} /></td>
-                  <td className="px-3 py-2 font-medium">{contact.name}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{contact.firm}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{contact.specialty}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {contact.last_contact_date
-                      ? formatDistanceToNow(new Date(contact.last_contact_date), { addSuffix: true })
-                      : "No contact yet"}
-                  </td>
-                  <td className="px-3 py-2">{RECRUITER_STATUS_LABELS[contact.state.status]}</td>
-                  <td className="px-3 py-2">
-                    <Button size="sm" variant="outline" onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedId(contact.id);
-                    }}>
-                      Open
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <ContactSection
+        title="Recruiters"
+        description="Executive search and recruiter relationships."
+        contacts={recruiters}
+        open={recruitersOpen}
+        onToggle={() => setRecruitersOpen((value) => !value)}
+        onOpenContact={setSelectedId}
+        emptyMessage="No recruiters match the current filters."
+      />
+
+      <ContactSection
+        title="Contacts"
+        description="Tier 1, manual, and future non-recruiter reconnect contacts."
+        contacts={otherContacts}
+        open={contactsOpen}
+        onToggle={() => setContactsOpen((value) => !value)}
+        onOpenContact={setSelectedId}
+        emptyMessage="No non-recruiter contacts match the current filters yet."
+      />
 
       <ReconnectDetailDrawer
         contact={selected}
@@ -255,6 +237,149 @@ export function ReconnectContactsClient({
         }
       />
     </div>
+  );
+}
+
+function ContactSection({
+  title,
+  description,
+  contacts,
+  open,
+  onToggle,
+  onOpenContact,
+  emptyMessage,
+}: {
+  title: string;
+  description: string;
+  contacts: ReconnectContact[];
+  open: boolean;
+  onToggle: () => void;
+  onOpenContact: (id: string) => void;
+  emptyMessage: string;
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border bg-card">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3 text-left transition-colors hover:bg-muted/35"
+        aria-expanded={open}
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {open ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+            <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+            <span className="num-mono rounded-full border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+              {contacts.length}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        </div>
+      </button>
+
+      {open ? (
+        <ContactTable
+          contacts={contacts}
+          onOpenContact={onOpenContact}
+          emptyMessage={emptyMessage}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function ContactTable({
+  contacts,
+  onOpenContact,
+  emptyMessage,
+}: {
+  contacts: ReconnectContact[];
+  onOpenContact: (id: string) => void;
+  emptyMessage: string;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[980px] text-sm">
+        <thead className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Tier</th>
+            <th className="px-3 py-2">Score</th>
+            <th className="px-3 py-2">Name</th>
+            <th className="px-3 py-2">Firm</th>
+            <th className="px-3 py-2">Specialty</th>
+            <th className="px-3 py-2">Last Contact</th>
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {contacts.length ? (
+            contacts.map((contact) => (
+              <ContactRow
+                key={contact.id}
+                contact={contact}
+                onOpenContact={onOpenContact}
+              />
+            ))
+          ) : (
+            <tr>
+              <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                {emptyMessage}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ContactRow({
+  contact,
+  onOpenContact,
+}: {
+  contact: ReconnectContact;
+  onOpenContact: (id: string) => void;
+}) {
+  return (
+    <tr
+      onClick={() => onOpenContact(contact.id)}
+      className="cursor-pointer hover:bg-muted/30"
+    >
+      <td className="px-3 py-2">
+        <TierBadge tier={contact.tier} />
+      </td>
+      <td className="px-3 py-2">
+        <ScoreChip score={contact.strategic_score} />
+      </td>
+      <td className="px-3 py-2 font-medium">{contact.name}</td>
+      <td className="px-3 py-2 text-muted-foreground">{contact.firm}</td>
+      <td className="px-3 py-2 text-muted-foreground">{contact.specialty}</td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {contact.last_contact_date
+          ? formatDistanceToNow(new Date(contact.last_contact_date), {
+              addSuffix: true,
+            })
+          : "No contact yet"}
+      </td>
+      <td className="px-3 py-2">{RECRUITER_STATUS_LABELS[contact.state.status]}</td>
+      <td className="px-3 py-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenContact(contact.id);
+          }}
+        >
+          Open
+        </Button>
+      </td>
+    </tr>
   );
 }
 
