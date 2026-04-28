@@ -12,7 +12,7 @@ import {
   Clock,
   HelpCircle,
   LayoutGrid,
-  Linkedin,
+  Link2,
   List,
   Mail,
   MessageSquare,
@@ -316,7 +316,7 @@ const URGENCY_ORDER: Urgency[] = ["today", "this_week", "next_week", "needs_sche
 const SORT_OPTIONS = ["Last contact", "Relationship tier", "Company", "Priority score"];
 
 const CHANNEL_ICONS: Record<Channel, React.ReactNode> = {
-  linkedin: <Linkedin className="h-3.5 w-3.5" />,
+  linkedin: <Link2 className="h-3.5 w-3.5" />,
   email: <Mail className="h-3.5 w-3.5" />,
   phone: <Phone className="h-3.5 w-3.5" />,
   meeting: <Video className="h-3.5 w-3.5" />,
