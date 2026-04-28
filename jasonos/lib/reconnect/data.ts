@@ -434,27 +434,27 @@ function mapReconnectRows(
   });
 }
 
-async function getContactTriageById(ids: string[]) {
-  if (!ids.length) return new Map<string, ContactTriageRow>();
+async function getContactTriageById(rrIds: string[]) {
+  if (!rrIds.length) return new Map<string, ContactTriageRow>();
 
   try {
     const sb = createServiceRoleClient();
     const { data, error } = await sb
       .from("contacts")
-      .select("id,intent,personal_goal")
-      .in("id", ids);
+      .select("id,intent,personal_goal,source_ids")
+      .not("intent", "is", null);
 
     if (error || !data) return new Map<string, ContactTriageRow>();
-    return new Map(
-      (data as ContactTriageRow[]).map((row) => [
-        row.id,
-        {
-          id: row.id,
-          intent: row.intent,
-          personal_goal: row.personal_goal,
-        },
-      ])
-    );
+
+    const rrIdSet = new Set(rrIds);
+    const map = new Map<string, ContactTriageRow>();
+    for (const row of data as Array<ContactTriageRow & { source_ids: Record<string, unknown> | null }>) {
+      const rrId = (row.source_ids as { recruiter_pipeline_id?: string } | null)?.recruiter_pipeline_id;
+      if (rrId && rrIdSet.has(rrId)) {
+        map.set(rrId, { id: row.id, intent: row.intent, personal_goal: row.personal_goal });
+      }
+    }
+    return map;
   } catch {
     return new Map<string, ContactTriageRow>();
   }
