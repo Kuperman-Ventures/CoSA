@@ -49,6 +49,7 @@ const URGENCY_ORDER: CommUrgency[] = [
   "sent_today",
   "due_today",
   "this_week",
+  "scheduled",
   "needs_scheduling",
 ];
 
@@ -82,6 +83,13 @@ const URGENCY_CONFIG: Record<
     icon: <Clock className="h-4 w-4" />,
     textColor: "text-amber-300",
     headerBg: "bg-amber-600/70",
+  },
+  scheduled: {
+    label: "Scheduled",
+    helper: "Next touch set — coming up after this week",
+    icon: <Calendar className="h-4 w-4" />,
+    textColor: "text-sky-300",
+    headerBg: "bg-sky-800/50",
   },
   needs_scheduling: {
     label: "Needs Scheduling",
@@ -665,6 +673,8 @@ function ContactDetailPanel({
 // Urgency section
 // ---------------------------------------------------------------------------
 
+const ROW_URGENCIES: CommUrgency[] = ["scheduled", "needs_scheduling"];
+
 function UrgencySection({
   urgency,
   contacts,
@@ -678,6 +688,7 @@ function UrgencySection({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const cfg = URGENCY_CONFIG[urgency];
+  const useRows = ROW_URGENCIES.includes(urgency);
 
   return (
     <div>
@@ -710,24 +721,84 @@ function UrgencySection({
       </button>
 
       {!collapsed ? (
-        <div className="flex gap-3 overflow-x-auto px-4 py-3 bg-card/20">
-          {contacts.length ? (
-            contacts.map((contact) => (
-              <ContactCard
-                key={contact.id}
-                contact={contact}
-                selected={selectedId === contact.id}
-                onSelect={onSelect}
-              />
-            ))
-          ) : (
-            <div className="text-xs text-muted-foreground py-2 italic">
-              No contacts in this bucket
-            </div>
-          )}
-        </div>
+        useRows ? (
+          <div className="max-h-48 overflow-y-auto bg-card/10 divide-y divide-border/30">
+            {contacts.length ? (
+              contacts.map((contact) => (
+                <ContactRow
+                  key={contact.id}
+                  contact={contact}
+                  selected={selectedId === contact.id}
+                  onSelect={onSelect}
+                />
+              ))
+            ) : (
+              <div className="px-4 py-3 text-xs text-muted-foreground italic">
+                No contacts in this bucket
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex gap-3 overflow-x-auto px-4 py-3 bg-card/20">
+            {contacts.length ? (
+              contacts.map((contact) => (
+                <ContactCard
+                  key={contact.id}
+                  contact={contact}
+                  selected={selectedId === contact.id}
+                  onSelect={onSelect}
+                />
+              ))
+            ) : (
+              <div className="text-xs text-muted-foreground py-2 italic">
+                No contacts in this bucket
+              </div>
+            )}
+          </div>
+        )
       ) : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Compact contact row (used for Scheduled + Needs Scheduling)
+// ---------------------------------------------------------------------------
+
+function ContactRow({
+  contact,
+  selected,
+  onSelect,
+}: {
+  contact: CommunicationsContact;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(contact.id)}
+      className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-muted/30 ${
+        selected ? "bg-muted/40 border-l-2 border-foreground/50" : "border-l-2 border-transparent"
+      }`}
+    >
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-medium truncate">{contact.name}</span>
+        {contact.firm ? (
+          <span className="text-[10px] text-muted-foreground ml-1.5">· {contact.firm}</span>
+        ) : null}
+      </div>
+      <div className="shrink-0 flex items-center gap-2">
+        {contact.nextActionDueDate ? (
+          <span className="text-[10px] text-sky-400">{fmtDate(contact.nextActionDueDate)}</span>
+        ) : contact.lastTouch ? (
+          <span className="text-[10px] text-muted-foreground">
+            {CHANNEL_LABELS[contact.lastTouch.channel]} · {fmtDate(contact.lastTouch.touched_at)}
+          </span>
+        ) : null}
+        <StrengthDots strength={contact.strength} />
+      </div>
+    </button>
   );
 }
 

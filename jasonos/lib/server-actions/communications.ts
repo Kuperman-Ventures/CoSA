@@ -9,7 +9,7 @@ import { createPublicServiceRoleClient } from "@/lib/supabase/server";
 // ---------------------------------------------------------------------------
 
 export type CommChannel = "email" | "linkedin" | "phone" | "meeting" | "other";
-export type CommUrgency = "sent_today" | "due_today" | "this_week" | "needs_scheduling";
+export type CommUrgency = "sent_today" | "due_today" | "this_week" | "scheduled" | "needs_scheduling";
 
 export interface CommTouch {
   id: string;
@@ -92,7 +92,7 @@ function computeUrgency(
 
   if (diffDays <= 0) return "due_today";
   if (diffDays <= 7) return "this_week";
-  return "needs_scheduling";
+  return "scheduled";
 }
 
 // ---------------------------------------------------------------------------
