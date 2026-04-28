@@ -56,6 +56,7 @@ export function TriageRunnerWrapper({
           initialIntent={initial.current_intent}
           initialGoal={initial.current_goal}
           remainingCount={initial.remaining_count}
+          firmContext={initial.firm_context}
           triagedThisSession={triagedThisSession}
           onTriaged={() => setTriagedThisSession((count) => count + 1)}
           onAdvance={() => router.refresh()}

@@ -13,13 +13,14 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { setContactTriage } from "@/lib/server-actions/triage";
+import { setContactTriage, type FirmContext } from "@/lib/server-actions/triage";
 import {
   INTENTS,
   INTENT_LABELS,
   type Intent,
   type ReconnectCardBody,
 } from "@/lib/triage/types";
+import { FirmContextPanel } from "./firm-context-panel";
 import { TierBadge } from "@/components/jasonos/reconnect/tier-badge";
 import type { RecruiterTier } from "@/lib/reconnect/types";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +41,7 @@ interface TriageRunnerProps {
   initialIntent: Intent | null;
   initialGoal: string | null;
   remainingCount: number;
+  firmContext: FirmContext | null;
   triagedThisSession: number;
   onTriaged: () => void;
   onAdvance: () => void;
@@ -247,6 +249,12 @@ export function TriageRunner(props: TriageRunnerProps) {
             </p>
           )}
         </section>
+
+        {props.firmContext ? (
+          <section className="border-b px-5 py-5">
+            <FirmContextPanel context={props.firmContext} />
+          </section>
+        ) : null}
 
         <section className="space-y-4 px-5 py-5">
           <SectionKicker>What I Want</SectionKicker>

@@ -1,4 +1,5 @@
 import type { Track } from "@/lib/types";
+import type { FirmContext } from "@/lib/server-actions/triage";
 
 export type Intent = "warm" | "intel" | "door" | "pipeline" | "role_inquiry";
 export type TrackFilter = Track | null;
@@ -41,6 +42,7 @@ export interface UntriagedReconnectCard {
   current_goal: string | null;
   days_since_contact: number | null;
   remaining_count: number;
+  firm_context: FirmContext | null;
 }
 
 export interface ReconnectCardBody {

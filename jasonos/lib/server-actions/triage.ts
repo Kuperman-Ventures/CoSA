@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import {
+  createPublicServiceRoleClient,
+  createServiceRoleClient,
+} from "@/lib/supabase/server";
 import type { Track, Verb } from "@/lib/types";
 import type {
   Intent,
@@ -80,9 +83,12 @@ export async function getNextUntriagedCard(
   }
 
   const rpcCard = normalizeCard(Array.isArray(data) ? data[0] : data);
-  if (!rpcCard || !skipped.has(rpcCard.contact_id)) return rpcCard;
-
-  return getNextUntriagedCardAfterSkips(skipped, rpcCard.remaining_count, track);
+  if (!rpcCard) return null;
+  if (skipped.has(rpcCard.contact_id)) {
+    return getNextUntriagedCardAfterSkips(skipped, rpcCard.remaining_count, track);
+  }
+  const firmContext = await getFirmContextForContact(rpcCard.contact_id);
+  return { ...rpcCard, firm_context: firmContext };
 }
 
 export async function getUntriagedReconnectCount(
@@ -253,7 +259,7 @@ async function getNextUntriagedCardAfterSkips(
   if (!card) return null;
 
   const contact = contactsById.get(card.contact_id);
-  return normalizeCard({
+  const normalized = normalizeCard({
     card_id: card.id,
     contact_id: card.contact_id,
     title: card.title,
@@ -270,7 +276,202 @@ async function getNextUntriagedCardAfterSkips(
     days_since_contact: getDaysSinceContact(contact?.last_touch_date),
     remaining_count: Math.max(totalRemaining - skipped.size, 1),
   });
+  if (!normalized) return null;
+  const firmContext = await getFirmContextForContact(normalized.contact_id);
+  return { ...normalized, firm_context: firmContext };
 }
+
+// ---------------------------------------------------------------------------
+// Firm context
+// ---------------------------------------------------------------------------
+
+export interface FirmContext {
+  firm_name: string;
+  total_at_firm: number;
+  current_contact_practice: string | null;
+  already_engaged: Array<{
+    name: string;
+    practice: string;
+    status: string;
+    last_action: string | null;
+  }>;
+  triaged_not_sent: Array<{
+    name: string;
+    practice: string;
+    intent: string;
+  }>;
+  untriaged_count: number;
+  practices_at_firm: string[];
+  practices_already_covered: string[];
+  strategic_hint: string;
+}
+
+export async function getFirmContextForContact(
+  contactId: string
+): Promise<FirmContext | null> {
+  if (!hasSupabaseConfig()) return null;
+
+  const sb = createServiceRoleClient();
+  const sbPublic = createPublicServiceRoleClient();
+
+  const { data: contact } = await sb
+    .from("contacts")
+    .select("source_ids,intent")
+    .eq("id", contactId)
+    .single();
+  if (!contact) return null;
+
+  const recruiterId = (contact.source_ids as Record<string, unknown> | null)
+    ?.recruiter_pipeline_id;
+  if (typeof recruiterId !== "string") return null;
+
+  const { data: currentRr } = await sbPublic
+    .from("rr_recruiters")
+    .select("firm,firm_normalized,specialty")
+    .eq("id", recruiterId)
+    .single();
+  if (!currentRr?.firm_normalized) return null;
+
+  const firmNormalized = currentRr.firm_normalized as string;
+  const currentPractice = (currentRr.specialty as string | null) ?? null;
+
+  const { data: peers } = await sbPublic
+    .from("rr_recruiters")
+    .select("id,name,specialty,strategic_score")
+    .eq("firm_normalized", firmNormalized)
+    .neq("id", recruiterId)
+    .order("strategic_score", { ascending: false, nullsFirst: false });
+
+  if (!peers?.length) {
+    return {
+      firm_name: (currentRr.firm as string) ?? firmNormalized,
+      total_at_firm: 1,
+      current_contact_practice: currentPractice,
+      already_engaged: [],
+      triaged_not_sent: [],
+      untriaged_count: 0,
+      practices_at_firm: currentPractice ? [currentPractice] : [],
+      practices_already_covered: [],
+      strategic_hint:
+        "Only contact at this firm in your pipeline — standalone decision.",
+    };
+  }
+
+  const peerIds = peers.map((p) => p.id as string);
+
+  const [statesRes, intentsRes] = await Promise.all([
+    sbPublic
+      .from("rr_contact_state")
+      .select("contact_id,status,status_updated_at")
+      .in("contact_id", peerIds),
+    sb
+      .from("contacts")
+      .select("source_ids,intent")
+      .not("intent", "is", null),
+  ]);
+
+  const statusByRrId = new Map<
+    string,
+    { status: string; updated_at: string | null }
+  >();
+  for (const s of statesRes.data ?? []) {
+    statusByRrId.set(s.contact_id as string, {
+      status: (s.status as string) ?? "queue",
+      updated_at: (s.status_updated_at as string | null) ?? null,
+    });
+  }
+
+  const intentByRrId = new Map<string, string>();
+  for (const c of intentsRes.data ?? []) {
+    const rrId = (c.source_ids as Record<string, unknown> | null)
+      ?.recruiter_pipeline_id;
+    if (typeof rrId === "string" && c.intent)
+      intentByRrId.set(rrId, c.intent as string);
+  }
+
+  const alreadyEngaged: FirmContext["already_engaged"] = [];
+  const triagedNotSent: FirmContext["triaged_not_sent"] = [];
+  let untriagedCount = 0;
+  const practicesAlreadyCovered = new Set<string>();
+  const practicesAtFirm = new Set<string>();
+
+  for (const peer of peers) {
+    const id = peer.id as string;
+    const name = (peer.name as string) ?? "Unknown";
+    const practice = (peer.specialty as string | null) ?? "Unknown practice";
+    const intent = intentByRrId.get(id);
+    const stateInfo = statusByRrId.get(id);
+    const status = stateInfo?.status ?? "queue";
+
+    practicesAtFirm.add(practice);
+
+    if (
+      status === "sent" ||
+      status === "replied" ||
+      status === "in_conversation" ||
+      status === "live_role"
+    ) {
+      alreadyEngaged.push({
+        name,
+        practice,
+        status,
+        last_action: stateInfo?.updated_at ?? null,
+      });
+      practicesAlreadyCovered.add(practice);
+    } else if (intent) {
+      triagedNotSent.push({ name, practice, intent });
+    } else {
+      untriagedCount += 1;
+    }
+  }
+
+  if (currentPractice) practicesAtFirm.add(currentPractice);
+
+  const hint = buildStrategicHint({
+    currentPractice,
+    practicesAlreadyCovered: [...practicesAlreadyCovered],
+    alreadyEngagedCount: alreadyEngaged.length,
+    triagedNotSentCount: triagedNotSent.length,
+  });
+
+  return {
+    firm_name: (currentRr.firm as string) ?? firmNormalized,
+    total_at_firm: peers.length + 1,
+    current_contact_practice: currentPractice,
+    already_engaged: alreadyEngaged,
+    triaged_not_sent: triagedNotSent,
+    untriaged_count: untriagedCount,
+    practices_at_firm: [...practicesAtFirm],
+    practices_already_covered: [...practicesAlreadyCovered],
+    strategic_hint: hint,
+  };
+}
+
+function buildStrategicHint(input: {
+  currentPractice: string | null;
+  practicesAlreadyCovered: string[];
+  alreadyEngagedCount: number;
+  triagedNotSentCount: number;
+}): string {
+  const { currentPractice, practicesAlreadyCovered, alreadyEngagedCount } =
+    input;
+
+  if (alreadyEngagedCount === 0) {
+    return "No engaged peers at this firm — first entry point. Decide based on individual fit.";
+  }
+  if (
+    currentPractice &&
+    practicesAlreadyCovered.includes(currentPractice)
+  ) {
+    return `Practice "${currentPractice}" already covered by an engaged peer. Adding may signal scattershot — consider holding unless this person is materially better.`;
+  }
+  if (currentPractice) {
+    return `New practice angle (${currentPractice}). Doesn't compete with engaged peers — recommend triage if individual fit is strong.`;
+  }
+  return `${alreadyEngagedCount} engaged peer${alreadyEngagedCount > 1 ? "s" : ""} at this firm. Practice unclear — judge on individual fit.`;
+}
+
+// ---------------------------------------------------------------------------
 
 function hasSupabaseConfig() {
   return Boolean(
@@ -388,6 +589,7 @@ function normalizeCard(row: unknown): UntriagedReconnectCard | null {
       typeof value.days_since_contact === "number" ? value.days_since_contact : null,
     remaining_count:
       typeof value.remaining_count === "number" ? value.remaining_count : 0,
+    firm_context: null,
   };
 }
 
