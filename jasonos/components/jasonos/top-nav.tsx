@@ -13,6 +13,7 @@ import { Command, Sparkles } from "lucide-react";
 const NAV = [
   { href: "/", label: "Home" },
   { href: "/reconnect", label: "Reconnect" },
+  { href: "/communications", label: "Communications" },
   { href: "/projects", label: "Projects" },
   { href: "/todos", label: "To-Dos" },
   { href: "/contacts", label: "Contacts" },
