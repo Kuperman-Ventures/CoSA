@@ -29,7 +29,7 @@ export function FocusBadge({ rank }: { rank: number | null | undefined }) {
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
+      <TooltipTrigger className="cursor-default">
         <Badge variant="outline" className={`text-[10px] uppercase ${STYLE_MAP[label]}`}>
           {text}
         </Badge>
