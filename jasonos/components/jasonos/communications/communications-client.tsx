@@ -601,6 +601,9 @@ function ContactDetailPanel({
       </div>
 
       <div className="flex flex-col gap-5 p-4">
+        {/* Timeline */}
+        <ContactTimeline contact={contact} />
+
         {/* Last contact */}
         <section className="space-y-1.5">
           <SectionLabel>Last Contact</SectionLabel>
@@ -1088,6 +1091,128 @@ function StrengthDots({ strength }: { strength: number }) {
         />
       ))}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Contact timeline
+// ---------------------------------------------------------------------------
+
+function startOfThisWeek(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay()); // Sunday
+  return d;
+}
+
+function endOfThisWeek(): Date {
+  const d = startOfThisWeek();
+  d.setDate(d.getDate() + 6);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function ContactTimeline({ contact }: { contact: CommunicationsContact }) {
+  const now = new Date();
+  const weekStart = startOfThisWeek();
+  const weekEnd = endOfThisWeek();
+
+  // Find the most recent touch this week (if any)
+  const thisWeekTouch = contact.recentTouches.find((t) => {
+    const d = new Date(t.touched_at);
+    return d >= weekStart && d <= weekEnd;
+  }) ?? null;
+
+  // Last touch before this week
+  const lastTouch = contact.recentTouches.find((t) => {
+    return new Date(t.touched_at) < weekStart;
+  }) ?? contact.lastTouch;
+
+  // Next scheduled
+  const nextDue = contact.nextActionDueDate ?? null;
+  const nextDueDate = nextDue ? new Date(nextDue) : null;
+  const nextIsFuture = nextDueDate ? nextDueDate > now : false;
+
+  const nodes: Array<{
+    key: string;
+    label: string;
+    detail: string | null;
+    status: "done" | "upcoming" | "empty";
+    isToday?: boolean;
+  }> = [
+    {
+      key: "last",
+      label: "Last connect",
+      detail: lastTouch ? `${CHANNEL_LABELS[lastTouch.channel]} · ${fmtDate(lastTouch.touched_at)}` : null,
+      status: lastTouch ? "done" : "empty",
+    },
+    {
+      key: "week",
+      label: "This week",
+      detail: thisWeekTouch
+        ? `${CHANNEL_LABELS[thisWeekTouch.channel]} · ${fmtDate(thisWeekTouch.touched_at)}`
+        : nextDueDate && nextDueDate >= weekStart && nextDueDate <= weekEnd
+        ? `Scheduled ${fmtDate(nextDue!)}`
+        : null,
+      status: thisWeekTouch
+        ? "done"
+        : nextDueDate && nextDueDate >= weekStart && nextDueDate <= weekEnd
+        ? "upcoming"
+        : "empty",
+    },
+    {
+      key: "next",
+      label: "Next scheduled",
+      detail: nextDue && nextIsFuture ? fmtDate(nextDue) : null,
+      status: nextDue && nextIsFuture ? "upcoming" : "empty",
+    },
+  ];
+
+  return (
+    <section>
+      <SectionLabel>Timeline</SectionLabel>
+      <div className="relative mt-2 pl-4">
+        {/* Vertical line */}
+        <div className="absolute left-[7px] top-2 bottom-2 w-px bg-border/60" />
+
+        <div className="space-y-3">
+          {nodes.map((node) => (
+            <div key={node.key} className="relative flex items-start gap-2.5">
+              {/* Dot */}
+              <div
+                className={`relative z-10 mt-[3px] h-3 w-3 shrink-0 rounded-full border-2 ${
+                  node.status === "done"
+                    ? "border-emerald-400 bg-emerald-400/30"
+                    : node.status === "upcoming"
+                    ? "border-sky-400 bg-sky-400/20"
+                    : "border-border bg-background"
+                }`}
+              />
+              <div className="min-w-0 pb-0.5">
+                <div
+                  className={`text-[11px] font-semibold uppercase tracking-wider ${
+                    node.status === "done"
+                      ? "text-emerald-400/80"
+                      : node.status === "upcoming"
+                      ? "text-sky-400/80"
+                      : "text-muted-foreground/50"
+                  }`}
+                >
+                  {node.label}
+                </div>
+                {node.detail ? (
+                  <div className="mt-0.5 text-xs text-foreground/75">{node.detail}</div>
+                ) : (
+                  <div className="mt-0.5 text-xs text-muted-foreground/40 italic">
+                    {node.key === "last" ? "No contact yet" : node.key === "week" ? "Nothing this week" : "Not scheduled"}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
