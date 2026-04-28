@@ -323,16 +323,22 @@ export function CommunicationsClient({
         </div>
 
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Needs Scheduling — top, collapsible */}
+          {filteredForList.length === 0 && (
+            <div className="py-12 text-center text-xs text-muted-foreground">
+              No contacts found
+            </div>
+          )}
+
+          {/* Needs Scheduling — takes remaining space, scrolls within */}
           {(() => {
             const bucket = filteredForList.filter((c) => c.urgency === "needs_scheduling");
             if (!bucket.length) return null;
             return (
-              <div className="shrink-0 border-b">
+              <div className="flex flex-col min-h-0 border-b" style={{ flex: needsSchedOpen ? "1 1 0" : "0 0 auto" }}>
                 <button
                   type="button"
                   onClick={() => setNeedsSchedOpen((v) => !v)}
-                  className="w-full flex items-center justify-between px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors shrink-0"
                 >
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Needs Scheduling · {bucket.length}
@@ -342,7 +348,7 @@ export function CommunicationsClient({
                     : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
                 </button>
                 {needsSchedOpen && (
-                  <div className="max-h-52 overflow-y-auto divide-y divide-border/40">
+                  <div className="flex-1 overflow-y-auto divide-y divide-border/40 min-h-0">
                     {bucket.map((contact) => (
                       <LeftListRow
                         key={contact.id}
@@ -357,31 +363,28 @@ export function CommunicationsClient({
             );
           })()}
 
-          {/* Active contacts — middle, scrollable */}
-          <div className="flex-1 overflow-y-auto divide-y divide-border/50 min-h-0">
-            {filteredForList.length === 0 ? (
-              <div className="py-12 text-center text-xs text-muted-foreground">
-                No contacts found
-              </div>
-            ) : filteredForList.filter((c) => c.urgency === "sent_today").length === 0 ? (
-              <div className="py-8 text-center text-xs text-muted-foreground italic">
-                No emails sent today yet · hit Sync
-              </div>
-            ) : (
-              filteredForList
-                .filter((c) => c.urgency === "sent_today")
-                .map((contact) => (
+          {/* Sent Today — compact, only shown when there are items */}
+          {(() => {
+            const bucket = filteredForList.filter((c) => c.urgency === "sent_today");
+            if (!bucket.length) return null;
+            return (
+              <div className="shrink-0 border-b divide-y divide-border/40">
+                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">
+                  Sent Today · {bucket.length}
+                </div>
+                {bucket.map((contact) => (
                   <LeftListRow
                     key={contact.id}
                     contact={contact}
                     selected={selectedId === contact.id}
                     onSelect={handleSelect}
                   />
-                ))
-            )}
-          </div>
+                ))}
+              </div>
+            );
+          })()}
 
-          {/* Scheduled — bottom, collapsible (includes due_today + this_week + scheduled) */}
+          {/* Scheduled — bottom, collapsible (due_today + this_week + scheduled) */}
           {(() => {
             const bucket = filteredForList.filter(
               (c) => c.urgency === "due_today" || c.urgency === "this_week" || c.urgency === "scheduled"
@@ -402,7 +405,7 @@ export function CommunicationsClient({
                     : <ChevronDown className="h-3.5 w-3.5 text-sky-400/60" />}
                 </button>
                 {scheduledOpen && (
-                  <div className="max-h-52 overflow-y-auto divide-y divide-border/40">
+                  <div className="max-h-64 overflow-y-auto divide-y divide-border/40">
                     {bucket.map((contact) => (
                       <LeftListRow
                         key={contact.id}
