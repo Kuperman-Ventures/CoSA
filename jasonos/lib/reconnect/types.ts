@@ -53,6 +53,7 @@ export interface Recruiter {
   hubspot_url?: string;
   last_contact_date?: string;
   other_contacts_at_firm?: string;
+  firm_focus_rank?: number | null; // 1=anchor, 2=secondary, 3=tertiary, >3=bench
 }
 
 export interface RecruiterContactState {

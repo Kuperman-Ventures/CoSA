@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function ReconnectPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ intent?: string }>;
+  searchParams?: Promise<{ intent?: string; focus?: string }>;
 }) {
   const params = await searchParams;
   const [data, triageCount, typeCounts] = await Promise.all([
@@ -20,12 +20,19 @@ export default async function ReconnectPage({
     getReconnectTypeCounts(),
   ]);
 
+  const initialIntentFilter =
+    params?.focus === "anchors"
+      ? "anchors_only"
+      : params?.intent === "triaged_ready"
+      ? "triaged_ready"
+      : null;
+
   return (
     <ReconnectClient
       data={data}
       triageCount={triageCount}
       typeCounts={typeCounts}
-      initialIntentFilter={params?.intent === "triaged_ready" ? "triaged_ready" : null}
+      initialIntentFilter={initialIntentFilter}
     />
   );
 }

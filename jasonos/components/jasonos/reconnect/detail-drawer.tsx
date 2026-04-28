@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { addReconnectNote, setReconnectStatus } from "@/app/actions/reconnect";
+import { getFirmmates, type Firmmate } from "@/lib/server-actions/firmmates";
 import {
   getFirmContextForContact,
   sendContactToTriage,
@@ -43,6 +44,7 @@ import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
 import { SCORE_MAX } from "@/lib/reconnect/score-constants";
 import { TierBadge } from "./tier-badge";
 import { ScoreChip } from "./score-chip";
+import { FocusBadge } from "./focus-badge";
 import { NotesTimeline } from "./notes-timeline";
 import { FirstContactSequence } from "./first-contact-sequence";
 
@@ -68,14 +70,19 @@ export function ReconnectDetailDrawer({
   const [note, setNote] = useState("");
   const [draftState, setDraftState] = useState({ key: "", text: "", base: "" });
   const [firmContext, setFirmContext] = useState<FirmContext | null>(null);
+  const [firmmates, setFirmmates] = useState<Firmmate[]>([]);
 
   useEffect(() => {
     if (!contact?.id) return;
     let active = true;
     setFirmContext(null);
+    setFirmmates([]);
     getFirmContextForContact(contact.id)
       .then((data) => { if (active) setFirmContext(data ?? null); })
       .catch(() => { if (active) setFirmContext(null); });
+    getFirmmates(contact.id)
+      .then((data) => { if (active) setFirmmates(data); })
+      .catch(() => { if (active) setFirmmates([]); });
     return () => { active = false; };
   }, [contact?.id]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -270,8 +277,9 @@ export function ReconnectDetailDrawer({
         <SheetHeader className="border-b p-5">
           <div className="flex flex-wrap items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <TierBadge tier={contact.tier} />
+                <FocusBadge rank={contact.firm_focus_rank} />
                 <ScoreChip score={contact.strategic_score} />
               </div>
               <SheetTitle className="mt-3 text-2xl">{contact.name}</SheetTitle>
@@ -535,16 +543,58 @@ export function ReconnectDetailDrawer({
             <NotesTimeline notes={contact.notes} touches={contact.touches} />
           </section>
 
-          <section className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold tracking-tight">
-                Who Else You Know At {contact.firm}
-              </h3>
-              <span className="num-mono text-xs text-muted-foreground">
-                {firmMatches.length}
-              </span>
-            </div>
-            {firmMatches.length ? (
+          {firmmates.length > 0 ? (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold tracking-tight">
+                  Other contacts at {contact.firm}
+                </h3>
+                <span className="num-mono text-xs text-muted-foreground">
+                  {firmmates.length}
+                </span>
+              </div>
+              <ul className="space-y-1.5">
+                {firmmates.map((m) => {
+                  const benched = (m.firm_focus_rank ?? 0) > 3;
+                  return (
+                    <li
+                      key={m.contact_id}
+                      className={`flex items-center justify-between rounded-md border bg-background/40 px-2.5 py-2 text-sm ${benched ? "opacity-60" : ""}`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FocusBadge rank={m.firm_focus_rank} />
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{m.name}</div>
+                          {m.title ? (
+                            <div className="text-xs text-muted-foreground truncate">{m.title}</div>
+                          ) : null}
+                        </div>
+                      </div>
+                      {m.strategic_score != null ? (
+                        <span className="num-mono shrink-0 text-xs text-muted-foreground">
+                          {m.strategic_score}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              {firmmates.some((m) => (m.firm_focus_rank ?? 0) > 3) ? (
+                <p className="text-xs text-amber-300/80">
+                  Don&rsquo;t reach the bench independently — search firms log all touches in shared CRMs (Invenias, Clockwork, Thrive). Let the anchor loop them in.
+                </p>
+              ) : null}
+            </section>
+          ) : firmMatches.length > 0 ? (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold tracking-tight">
+                  Who Else You Know At {contact.firm}
+                </h3>
+                <span className="num-mono text-xs text-muted-foreground">
+                  {firmMatches.length}
+                </span>
+              </div>
               <div className="space-y-2">
                 {firmMatches.map((match) => (
                   <div key={match.id} className="rounded-lg border bg-background/40 p-3 text-sm">
@@ -562,23 +612,20 @@ export function ReconnectDetailDrawer({
                         </span>
                       </div>
                     </div>
-                    {match.summary_of_prior_comms ? (
-                      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                        {match.summary_of_prior_comms}
-                      </p>
-                    ) : null}
                   </div>
                 ))}
               </div>
-            ) : (
+            </section>
+          ) : contact.other_contacts_at_firm ? (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold tracking-tight">
+                Other contacts at {contact.firm}
+              </h3>
               <div className="rounded-lg border p-3 text-xs text-muted-foreground">
-                No other seeded contacts found at this firm.
-                {contact.other_contacts_at_firm ? (
-                  <div className="mt-2">{contact.other_contacts_at_firm}</div>
-                ) : null}
+                {contact.other_contacts_at_firm}
               </div>
-            )}
-          </section>
+            </section>
+          ) : null}
 
           <Button variant="ghost" size="sm" onClick={onClose} className="gap-2">
             <XCircle className="h-4 w-4" />

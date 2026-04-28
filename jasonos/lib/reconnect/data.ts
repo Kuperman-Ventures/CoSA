@@ -123,7 +123,7 @@ async function getReconnectContacts(): Promise<ReconnectContact[]> {
         sb
           .from("rr_recruiters")
           .select(
-            "id,name,linkedin_url,firm,firm_normalized,title,specialty,firm_fit_score,practice_match_score,recency_score,signal_score,strategic_score,strategic_priority,last_contact_date,summary_of_prior_comms,outlook_history,other_contacts_at_firm,source,hubspot_url,strategic_recommended_approach"
+            "id,name,linkedin_url,firm,firm_normalized,title,specialty,firm_fit_score,practice_match_score,recency_score,signal_score,strategic_score,strategic_priority,last_contact_date,summary_of_prior_comms,outlook_history,other_contacts_at_firm,source,hubspot_url,strategic_recommended_approach,firm_focus_rank"
           )
           .order("strategic_score", { ascending: false }),
         sb
@@ -323,6 +323,7 @@ type PublicRecruiterRow = {
   source: string | null;
   hubspot_url: string | null;
   strategic_recommended_approach: string | null;
+  firm_focus_rank: number | null;
 };
 
 type PublicContactStateRow = {
@@ -400,6 +401,7 @@ function mapReconnectRows(
       hubspot_url: row.hubspot_url ?? undefined,
       last_contact_date: row.last_contact_date ?? undefined,
       other_contacts_at_firm: row.other_contacts_at_firm ?? undefined,
+      firm_focus_rank: row.firm_focus_rank ?? null,
     };
 
     return {

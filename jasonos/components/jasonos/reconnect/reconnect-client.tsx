@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowRight, CheckCircle2, Plus, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,7 @@ import type {
   RecruiterStatus,
 } from "@/lib/reconnect/types";
 import { getFunnelStage, type FunnelStage } from "@/lib/reconnect/priority";
+import { isBench } from "@/lib/reconnect/firm-focus";
 import { ReconnectQueueCard } from "./queue-card";
 import { ReconnectDetailDrawer } from "./detail-drawer";
 import { AddColdTargetDialog } from "./add-cold-target-dialog";
@@ -23,7 +25,7 @@ import { PriorityOutreachStrip } from "./priority-outreach-strip";
 import { ReconnectStatsStrip } from "./stats-strip";
 import type { FirstContactState } from "@/lib/first-contact/types";
 
-type IntentFilter = null | "triaged" | "untriaged" | "triaged_ready" | Intent;
+type IntentFilter = null | "triaged" | "untriaged" | "triaged_ready" | "anchors_only" | Intent;
 
 const INTENT_PRIORITY: Record<Intent, number> = {
   pipeline: 0,
@@ -52,6 +54,7 @@ export function ReconnectClient({
   typeCounts: ReconnectTypeCounts;
   initialIntentFilter?: IntentFilter;
 }) {
+  const router = useRouter();
   const [contacts, setContacts] = useState(data.contacts);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [includeTier3, setIncludeTier3] = useState(false);
@@ -59,6 +62,13 @@ export function ReconnectClient({
   const [intentFilter, setIntentFilter] = useState<IntentFilter>(initialIntentFilter);
   const [funnelFilter, setFunnelFilter] = useState<FunnelStage | null>(null);
   const [addColdOpen, setAddColdOpen] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (intentFilter === "anchors_only") params.set("focus", "anchors");
+    else if (intentFilter === "triaged_ready") params.set("intent", "triaged_ready");
+    router.replace(`/reconnect${params.size ? `?${params}` : ""}`, { scroll: false });
+  }, [intentFilter, router]);
 
   const stats = useMemo(() => computeStats(contacts), [contacts]);
   const intentCounts = useMemo(() => computeIntentCounts(contacts), [contacts]);
@@ -376,6 +386,7 @@ function IntentFilterChips({
 }) {
   const baseChips: Array<{ filter: IntentFilter; label: string; count: number }> = [
     { filter: null, label: "All", count: counts.total },
+    { filter: "anchors_only", label: "Anchors only", count: counts.anchors },
     { filter: "triaged", label: "Triaged", count: counts.triaged },
     { filter: "untriaged", label: "Untriaged", count: counts.untriaged },
   ];
@@ -532,6 +543,7 @@ function computeStats(contacts: ReconnectContact[]): ReconnectStats {
 function getQueue(contacts: ReconnectContact[], includeTier3: boolean) {
   return contacts
     .filter((contact) => {
+      if (isBench(contact)) return false; // bench never appears in daily queue
       const tierMatch =
         contact.tier === "TIER 1" ||
         contact.tier === "TIER 2" ||
@@ -543,6 +555,7 @@ function getQueue(contacts: ReconnectContact[], includeTier3: boolean) {
 
 interface IntentCounts {
   total: number;
+  anchors: number;
   triaged: number;
   untriaged: number;
   byIntent: Record<Intent, number>;
@@ -551,6 +564,7 @@ interface IntentCounts {
 function computeIntentCounts(contacts: ReconnectContact[]): IntentCounts {
   const counts: IntentCounts = {
     total: contacts.length,
+    anchors: contacts.filter((c) => c.firm_focus_rank === 1).length,
     triaged: 0,
     untriaged: 0,
     byIntent: {
@@ -576,6 +590,7 @@ function computeIntentCounts(contacts: ReconnectContact[]): IntentCounts {
 
 function filterByIntent(contacts: ReconnectContact[], filter: IntentFilter) {
   if (!filter) return contacts;
+  if (filter === "anchors_only") return contacts.filter((c) => c.firm_focus_rank === 1);
   if (filter === "triaged") return contacts.filter((contact) => !!contact.intent);
   if (filter === "untriaged") return contacts.filter((contact) => !contact.intent);
   if (filter === "triaged_ready") {

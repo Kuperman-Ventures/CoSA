@@ -18,6 +18,8 @@ import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
 import { TierBadge } from "./tier-badge";
 import { ScoreChip } from "./score-chip";
 import { IntentBadge } from "./intent-badge";
+import { FocusBadge } from "./focus-badge";
+import { isBench } from "@/lib/reconnect/firm-focus";
 import { ReconnectDetailDrawer } from "./detail-drawer";
 
 const TIERS: RecruiterTier[] = ["TIER 1", "TIER 2", "TIER 3", "TIER 4"];
@@ -308,6 +310,7 @@ function ContactTable({
         <thead className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
           <tr>
             <th className="px-3 py-2">Tier</th>
+            <th className="px-3 py-2">Focus</th>
             <th className="px-3 py-2">Score</th>
             <th className="px-3 py-2">Name</th>
             <th className="px-3 py-2">Firm</th>
@@ -328,7 +331,7 @@ function ContactTable({
             ))
           ) : (
             <tr>
-              <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {emptyMessage}
               </td>
             </tr>
@@ -346,16 +349,20 @@ function ContactRow({
   contact: ReconnectContact;
   onOpenContact: (id: string) => void;
 }) {
+  const benched = isBench(contact);
   return (
     <tr
       onClick={() => onOpenContact(contact.id)}
-      className="cursor-pointer hover:bg-muted/30"
+      className={`cursor-pointer hover:bg-muted/30 ${benched ? "opacity-50 hover:opacity-100" : ""}`}
     >
       <td className="px-3 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <TierBadge tier={contact.tier} />
           <IntentBadge intent={contact.intent} personalGoal={contact.personal_goal} />
         </div>
+      </td>
+      <td className="px-3 py-2">
+        <FocusBadge rank={contact.firm_focus_rank} />
       </td>
       <td className="px-3 py-2">
         <ScoreChip score={contact.strategic_score} />

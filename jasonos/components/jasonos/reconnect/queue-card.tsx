@@ -11,6 +11,7 @@ import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import { TierBadge } from "./tier-badge";
 import { ScoreChip } from "./score-chip";
 import { IntentBadge } from "./intent-badge";
+import { FocusBadge } from "./focus-badge";
 
 export function ReconnectQueueCard({
   contact,
@@ -52,6 +53,7 @@ export function ReconnectQueueCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <TierBadge tier={contact.tier} />
+            <FocusBadge rank={contact.firm_focus_rank} />
             <IntentBadge intent={contact.intent} personalGoal={contact.personal_goal} />
             <ScoreChip score={contact.strategic_score} />
             {contact.specialty ? (
