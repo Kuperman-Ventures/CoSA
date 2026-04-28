@@ -233,9 +233,9 @@ export function TriageRunner(props: TriageRunnerProps) {
 
               {suggestedAngle ? (
                 <ContextBlock
-                  icon={<Lightbulb className="h-4 w-4" />}
+                  icon={<Lightbulb className="h-4 w-4 text-amber-400" />}
                   title="Suggested angle"
-                  muted
+                  accent
                 >
                   {suggestedAngle}
                 </ContextBlock>
@@ -325,28 +325,38 @@ function ContextBlock({
   children,
   emphasis,
   muted,
+  accent,
 }: {
   icon: ReactNode;
   title: ReactNode;
   children: ReactNode;
   emphasis?: boolean;
   muted?: boolean;
+  accent?: boolean;
 }) {
   return (
     <div
       className={`rounded-lg border p-3 text-sm ${
-        emphasis
-          ? "bg-background"
-          : muted
-            ? "bg-muted/25 text-muted-foreground"
-            : "bg-muted/30"
+        accent
+          ? "border-amber-500/40 bg-amber-500/8"
+          : emphasis
+            ? "bg-background"
+            : muted
+              ? "bg-muted/25 text-muted-foreground"
+              : "bg-muted/30"
       }`}
     >
-      <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div
+        className={`mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide ${
+          accent ? "text-amber-400" : "text-muted-foreground"
+        }`}
+      >
         {icon}
         {title}
       </div>
-      <p className={muted ? "text-sm leading-6" : "leading-6"}>{children}</p>
+      <p className={`leading-6 ${accent ? "font-medium text-foreground" : muted ? "text-sm" : ""}`}>
+        {children}
+      </p>
     </div>
   );
 }
