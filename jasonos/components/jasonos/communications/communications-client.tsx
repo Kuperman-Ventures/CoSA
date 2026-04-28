@@ -42,6 +42,10 @@ import {
   syncSentToday,
   getLastContactContents,
 } from "@/lib/server-actions/communications";
+import { getFirmmates } from "@/lib/server-actions/firmmates";
+import type { Firmmate } from "@/lib/server-actions/firmmates";
+import { FocusBadge } from "@/components/jasonos/reconnect/focus-badge";
+import { isBench } from "@/lib/reconnect/firm-focus";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -155,6 +159,11 @@ export function CommunicationsClient({
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Bench toggle — default off, persists in ?bench=1
+  const [showBench, setShowBench] = useState(
+    () => searchParams.get("bench") === "1"
+  );
+
   useEffect(() => {
     if (searchParams.get("google_connected") === "1") {
       toast.success("Gmail connected!", {
@@ -165,6 +174,13 @@ export function CommunicationsClient({
       router.replace(url.pathname + url.search, { scroll: false });
     }
   }, [searchParams, router]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (showBench) url.searchParams.set("bench", "1");
+    else url.searchParams.delete("bench");
+    router.replace(url.pathname + url.search, { scroll: false });
+  }, [showBench, router]);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listView, setListView] = useState<"list" | "grid">("list");
@@ -213,15 +229,25 @@ export function CommunicationsClient({
     [contacts, dismissed]
   );
 
+  const nonAnchorCount = useMemo(
+    () => activeContacts.filter((c) => c.firm_focus_rank !== null && c.firm_focus_rank > 1).length,
+    [activeContacts]
+  );
+
   const filteredForList = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const base = showBench
+      ? activeContacts
+      : activeContacts.filter(
+          (c) => c.firm_focus_rank === null || c.firm_focus_rank === 1
+        );
     const list = q
-      ? activeContacts.filter(
+      ? base.filter(
           (c) =>
             c.name.toLowerCase().includes(q) ||
             (c.firm ?? "").toLowerCase().includes(q)
         )
-      : activeContacts;
+      : base;
 
     return [...list].sort((a, b) => {
       if (sort === "Last contact") {
@@ -258,23 +284,34 @@ export function CommunicationsClient({
         <div className="border-b p-3 space-y-2 shrink-0">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold tracking-tight">Contacts</h2>
-            <div className="flex items-center gap-1">
-              <Button
-                size="icon-xs"
-                variant={listView === "list" ? "secondary" : "ghost"}
-                onClick={() => setListView("list")}
-                aria-label="List view"
-              >
-                <List className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                size="icon-xs"
-                variant={listView === "grid" ? "secondary" : "ghost"}
-                onClick={() => setListView("grid")}
-                aria-label="Grid view"
-              >
-                <LayoutGrid className="h-3.5 w-3.5" />
-              </Button>
+            <div className="flex items-center gap-2">
+              {nonAnchorCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setShowBench((v) => !v)}
+                  className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {showBench ? "Hide bench" : `Show bench (${nonAnchorCount})`}
+                </button>
+              ) : null}
+              <div className="flex items-center gap-1">
+                <Button
+                  size="icon-xs"
+                  variant={listView === "list" ? "secondary" : "ghost"}
+                  onClick={() => setListView("list")}
+                  aria-label="List view"
+                >
+                  <List className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="icon-xs"
+                  variant={listView === "grid" ? "secondary" : "ghost"}
+                  onClick={() => setListView("grid")}
+                  aria-label="Grid view"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -550,6 +587,16 @@ function ContactDetailPanel({
   const [isPending, startTransition] = useTransition();
   const [isDismissPending, startDismissTransition] = useTransition();
   const [scheduled, setScheduled] = useState(false);
+  const [firmmates, setFirmmates] = useState<Firmmate[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    setFirmmates([]);
+    getFirmmates(contact.id)
+      .then((data) => { if (active) setFirmmates(data); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [contact.id]);
 
   const handleSchedule = () => {
     startTransition(async () => {
@@ -653,6 +700,46 @@ function ContactDetailPanel({
 
         {/* Last contact contents */}
         <LastContactContentsSection contactId={contact.id} />
+
+        {/* Other contacts at this firm */}
+        {firmmates.length > 0 ? (
+          <section className="space-y-1.5">
+            <SectionLabel>Other contacts at {contact.firm}</SectionLabel>
+            <ul className="space-y-1">
+              {firmmates.map((m) => {
+                const benched = (m.firm_focus_rank ?? 0) > 3;
+                return (
+                  <li
+                    key={m.contact_id}
+                    className={`flex items-center gap-2 rounded-md border bg-background/40 px-2.5 py-2 ${benched ? "opacity-60" : ""}`}
+                  >
+                    <FocusBadge rank={m.firm_focus_rank} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium truncate">{m.name}</div>
+                      {m.title ? (
+                        <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>
+                      ) : null}
+                    </div>
+                    {m.strategic_score != null ? (
+                      <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                        {m.strategic_score}
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+            {firmmates.some((m) => (m.firm_focus_rank ?? 0) > 1) ? (
+              <p className="text-xs text-amber-300/80">
+                Don&rsquo;t reach bench contacts independently — search firms share notes in their internal CRMs. Let the anchor loop them in.
+              </p>
+            ) : null}
+          </section>
+        ) : contact.firm_focus_rank === 1 ? (
+          <p className="text-xs text-emerald-300/70 italic">
+            Solo anchor — this contact IS the firm relationship.
+          </p>
+        ) : null}
 
         {/* Next touch scheduler */}
         <section className="space-y-2">
@@ -961,17 +1048,21 @@ function LeftListRow({
   onSelect: (id: string) => void;
 }) {
   const urgency = URGENCY_CONFIG[contact.urgency];
+  const benched = isBench(contact);
   return (
     <button
       type="button"
       onClick={() => onSelect(contact.id)}
       className={`w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/40 border-l-2 ${
         selected ? "bg-muted/60 border-foreground/60" : "border-transparent"
-      }`}
+      } ${benched ? "opacity-50 hover:opacity-100" : ""}`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-sm font-medium truncate">{contact.name}</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <FocusBadge rank={contact.firm_focus_rank} />
+            <span className="text-sm font-medium truncate">{contact.name}</span>
+          </div>
           <div className="text-xs text-muted-foreground truncate">{contact.firm ?? "—"}</div>
         </div>
         <div className="shrink-0 flex flex-col items-end gap-1">

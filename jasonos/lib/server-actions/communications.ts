@@ -45,6 +45,8 @@ export interface CommunicationsContact {
   name: string;
   title: string | null;
   firm: string | null;
+  firm_normalized: string | null;
+  firm_focus_rank: number | null;
   strength: number; // 1–4 normalised from strategic_score
   urgency: CommUrgency;
   lastTouch: CommTouch | null;
@@ -122,7 +124,7 @@ export async function getCommunicationsData(): Promise<CommunicationsContact[]> 
     const { data: recruiters, error } = await sb
       .from("rr_recruiters")
       .select(
-        "id,name,firm,title,strategic_score,last_contact_date,summary_of_prior_comms,hubspot_url"
+        "id,name,firm,firm_normalized,title,strategic_score,last_contact_date,summary_of_prior_comms,hubspot_url,firm_focus_rank"
       )
       .order("strategic_score", { ascending: false });
 
@@ -210,6 +212,8 @@ export async function getCommunicationsData(): Promise<CommunicationsContact[]> 
           name: r.name as string,
           title: (r.title as string) ?? null,
           firm: (r.firm as string) ?? null,
+          firm_normalized: (r.firm_normalized as string) ?? null,
+          firm_focus_rank: (r.firm_focus_rank as number) ?? null,
           strength: normalizeStrength(r.strategic_score as number | null),
           urgency: computeUrgency(
             (state?.next_action_due_date as string) ?? null,
