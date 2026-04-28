@@ -9,6 +9,7 @@ import {
 import {
   searchGmailThreads,
   getGmailThread,
+  isGmailConnected,
 } from "@/lib/integrations/gmail";
 import {
   getHubSpotContactActivities,
@@ -447,6 +448,19 @@ export async function syncSentToday(): Promise<SyncSentTodayResult> {
   const sbPublic = createPublicServiceRoleClient();
   const today = startOfToday();
   const todayEpoch = Math.floor(today.getTime() / 1000);
+
+  // Quick check: is a Google token stored?
+  const gmailOk = await isGmailConnected();
+  if (!gmailOk) {
+    return {
+      ok: false,
+      written: 0,
+      gmail: 0,
+      hubspot: 0,
+      skippedUnmatched: 0,
+      error: "gmail_not_connected",
+    };
+  }
 
   const triaged = await getActiveTriagedRecruitersWithEmail();
   if (!triaged.length) {

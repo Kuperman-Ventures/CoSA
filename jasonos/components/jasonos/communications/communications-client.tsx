@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useMemo, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Building2,
@@ -153,12 +153,25 @@ export function CommunicationsClient({
   contacts: CommunicationsContact[];
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get("google_connected") === "1") {
+      toast.success("Gmail connected!", {
+        description: "Hit 'Sync today' to pull your sent emails.",
+      });
+      const url = new URL(window.location.href);
+      url.searchParams.delete("google_connected");
+      router.replace(url.pathname + url.search, { scroll: false });
+    }
+  }, [searchParams, router]);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listView, setListView] = useState<"list" | "grid">("list");
   const [sort, setSort] = useState<SortOption>("Priority score");
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [gmailNotConnected, setGmailNotConnected] = useState(false);
   const [needsSchedOpen, setNeedsSchedOpen] = useState(true);
   const [scheduledOpen, setScheduledOpen] = useState(false);
 
@@ -169,10 +182,20 @@ export function CommunicationsClient({
     setIsSyncing(true);
     try {
       const result = await syncSentToday();
-      if (!result.ok) throw new Error(result.error ?? "Sync failed");
+      if (!result.ok) {
+        if (result.error === "gmail_not_connected") {
+          setGmailNotConnected(true);
+          toast.error("Gmail not connected", {
+            description: "Click 'Connect Gmail' in the banner above to authorise access.",
+          });
+          return;
+        }
+        throw new Error(result.error ?? "Sync failed");
+      }
+      setGmailNotConnected(false);
       toast.success(
         `Synced ${result.written} new touch${result.written === 1 ? "" : "es"}`,
-        { description: `Gmail: ${result.gmail} · HubSpot: ${result.hubspot} · Skipped (unmatched): ${result.skippedUnmatched}` }
+        { description: `Gmail: ${result.gmail} · HubSpot: ${result.hubspot} · Skipped: ${result.skippedUnmatched}` }
       );
       router.refresh();
     } catch (err) {
@@ -336,16 +359,17 @@ export function CommunicationsClient({
 
           {/* Active contacts — middle, scrollable */}
           <div className="flex-1 overflow-y-auto divide-y divide-border/50 min-h-0">
-            {filteredForList.filter(
-              (c) => c.urgency !== "needs_scheduling" && c.urgency !== "scheduled"
-            ).length === 0 &&
-            filteredForList.filter((c) => c.urgency === "needs_scheduling" || c.urgency === "scheduled").length === 0 ? (
+            {filteredForList.length === 0 ? (
               <div className="py-12 text-center text-xs text-muted-foreground">
                 No contacts found
               </div>
+            ) : filteredForList.filter((c) => c.urgency === "sent_today").length === 0 ? (
+              <div className="py-8 text-center text-xs text-muted-foreground italic">
+                No emails sent today yet · hit Sync
+              </div>
             ) : (
               filteredForList
-                .filter((c) => c.urgency !== "needs_scheduling" && c.urgency !== "scheduled")
+                .filter((c) => c.urgency === "sent_today")
                 .map((contact) => (
                   <LeftListRow
                     key={contact.id}
@@ -357,9 +381,11 @@ export function CommunicationsClient({
             )}
           </div>
 
-          {/* Scheduled — bottom, collapsible */}
+          {/* Scheduled — bottom, collapsible (includes due_today + this_week + scheduled) */}
           {(() => {
-            const bucket = filteredForList.filter((c) => c.urgency === "scheduled");
+            const bucket = filteredForList.filter(
+              (c) => c.urgency === "due_today" || c.urgency === "this_week" || c.urgency === "scheduled"
+            );
             if (!bucket.length) return null;
             return (
               <div className="shrink-0 border-t">
@@ -433,6 +459,20 @@ export function CommunicationsClient({
             </Button>
           </div>
         </div>
+
+        {gmailNotConnected ? (
+          <div className="flex items-center justify-between gap-3 border-b bg-amber-500/10 px-4 py-2.5 shrink-0">
+            <div className="text-xs text-amber-300">
+              Gmail not connected — sync returned 0 emails.
+            </div>
+            <a
+              href="/api/auth/google"
+              className="shrink-0 rounded-md border border-amber-400/40 bg-amber-500/20 px-3 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/30 transition-colors"
+            >
+              Connect Gmail →
+            </a>
+          </div>
+        ) : null}
 
         <div className="flex-1 overflow-y-auto min-h-0">
           {URGENCY_ORDER.map((urgency) => {

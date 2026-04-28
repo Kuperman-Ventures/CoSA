@@ -86,6 +86,17 @@ async function refreshAccessToken(refreshToken: string): Promise<string | null> 
   return j.access_token ?? null;
 }
 
+/** Returns true when a valid (or refreshable) Google token is stored. */
+export async function isGmailConnected(): Promise<boolean> {
+  const row = await loadGoogleToken();
+  if (!row) return false;
+  // Has a live access token
+  if (row.access_token && row.expires_at && Date.parse(row.expires_at) - Date.now() > 60_000) return true;
+  // Has a refresh token we can use
+  if (row.refresh_token) return true;
+  return false;
+}
+
 async function getAccessToken(): Promise<string | null> {
   const row = await loadGoogleToken();
   if (!row) return null;
