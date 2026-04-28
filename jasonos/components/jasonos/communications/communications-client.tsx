@@ -173,6 +173,7 @@ export function CommunicationsClient({
   const [isSyncing, setIsSyncing] = useState(false);
   const [gmailNotConnected, setGmailNotConnected] = useState(false);
   const [needsSchedOpen, setNeedsSchedOpen] = useState(true);
+  const [sentTodayOpen, setSentTodayOpen] = useState(true);
   const [scheduledOpen, setScheduledOpen] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
@@ -363,23 +364,36 @@ export function CommunicationsClient({
             );
           })()}
 
-          {/* Sent Today — compact, only shown when there are items */}
+          {/* Sent Today — collapsible, only shown when there are items */}
           {(() => {
             const bucket = filteredForList.filter((c) => c.urgency === "sent_today");
             if (!bucket.length) return null;
             return (
-              <div className="shrink-0 border-b divide-y divide-border/40">
-                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">
-                  Sent Today · {bucket.length}
-                </div>
-                {bucket.map((contact) => (
-                  <LeftListRow
-                    key={contact.id}
-                    contact={contact}
-                    selected={selectedId === contact.id}
-                    onSelect={handleSelect}
-                  />
-                ))}
+              <div className="shrink-0 border-b">
+                <button
+                  type="button"
+                  onClick={() => setSentTodayOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-emerald-900/20 hover:bg-emerald-900/30 transition-colors"
+                >
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/80">
+                    Sent Today · {bucket.length}
+                  </span>
+                  {sentTodayOpen
+                    ? <ChevronUp className="h-3.5 w-3.5 text-emerald-400/60" />
+                    : <ChevronDown className="h-3.5 w-3.5 text-emerald-400/60" />}
+                </button>
+                {sentTodayOpen && (
+                  <div className="divide-y divide-border/40">
+                    {bucket.map((contact) => (
+                      <LeftListRow
+                        key={contact.id}
+                        contact={contact}
+                        selected={selectedId === contact.id}
+                        onSelect={handleSelect}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })()}
