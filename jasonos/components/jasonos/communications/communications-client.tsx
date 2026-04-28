@@ -3,16 +3,25 @@
 import { useState } from "react";
 import {
   AlertCircle,
+  Building2,
   Calendar,
   CalendarClock,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   HelpCircle,
   LayoutGrid,
+  Linkedin,
   List,
+  Mail,
+  MessageSquare,
+  Phone,
+  RefreshCw,
   Search,
   SlidersHorizontal,
+  User,
+  Video,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,53 +31,256 @@ import { Input } from "@/components/ui/input";
 // Static wireframe data — real queries TBD
 // ---------------------------------------------------------------------------
 
-const RELATIONSHIP_GROUPS = [
-  "Inner Circle",
-  "Strong Ties",
-  "Warm Ties",
-  "Weak Ties",
-  "Dormant",
-  "Personal",
-  "Alumni",
-  "Recruiters",
-  "Aspirational",
-  "Content / Vis.",
-];
-
 type Urgency = "today" | "this_week" | "next_week" | "needs_scheduling";
+type Channel = "linkedin" | "email" | "phone" | "meeting" | "other";
+
+interface CompanyPeer {
+  id: string;
+  name: string;
+  title: string;
+}
 
 interface WireContact {
   id: string;
   name: string;
+  title: string;
   company: string;
   strength: number; // 1–4 dots
   urgency: Urgency;
   group: string;
-  lastTouch?: string;
+  lastTouchDate?: string;
+  lastTouchChannel?: Channel;
+  lastTouchSummary?: string;
+  nextContact?: string;
   note?: string;
+  companyPeers?: CompanyPeer[];
 }
 
 const WIRE_CONTACTS: WireContact[] = [
-  { id: "1", name: "Frank Piechota", company: "GroundTruth", strength: 4, urgency: "today", group: "Strong Ties", lastTouch: "32d ago" },
-  { id: "2", name: "Corey Ferengui", company: "Aperiam", strength: 2, urgency: "today", group: "Warm Ties", lastTouch: "28d ago" },
-  { id: "3", name: "Khurrum Malik", company: "Walmart", strength: 2, urgency: "today", group: "Strong Ties", lastTouch: "30d ago" },
-  { id: "4", name: "Seth Dallaire", company: "Walmart", strength: 2, urgency: "today", group: "Warm Ties", lastTouch: "35d ago" },
-  { id: "5", name: "Brent Sudduth", company: "NBCU", strength: 1, urgency: "today", group: "Warm Ties", lastTouch: "40d ago" },
-  { id: "6", name: "Jonathan Nelson", company: "Omnicom", strength: 3, urgency: "next_week", group: "Inner Circle", lastTouch: "18d ago" },
-  { id: "7", name: "Rosie Omeara", company: "GroundTruth", strength: 4, urgency: "next_week", group: "Strong Ties", lastTouch: "22d ago" },
-  { id: "8", name: "Kira Rich", company: "Google", strength: 4, urgency: "needs_scheduling", group: "Warm Ties" },
-  { id: "9", name: "Conrad Tallariti", company: "DoubleVerify", strength: 4, urgency: "needs_scheduling", group: "Strong Ties" },
-  { id: "10", name: "Simon Kahn", company: "Google", strength: 4, urgency: "needs_scheduling", group: "Warm Ties" },
-  { id: "11", name: "Suzanne Dalcourt", company: "Google", strength: 4, urgency: "needs_scheduling", group: "Warm Ties" },
-  { id: "12", name: "Kathy Saporito", company: "NBCU", strength: 4, urgency: "needs_scheduling", group: "Strong Ties" },
-  { id: "13", name: "Lisa Utzschneider", company: "Integral Ad Science", strength: 4, urgency: "needs_scheduling", group: "Strong Ties" },
-  { id: "14", name: "Minna Song", company: "EliseAI", strength: 4, urgency: "needs_scheduling", group: "Warm Ties", note: "⚠ overdue" },
-  { id: "15", name: "Adrienne Lahens", company: "Netflix", strength: 3, urgency: "this_week", group: "Strong Ties", lastTouch: "12d ago" },
-  { id: "16", name: "Chloe Sladden", company: "Andreessen", strength: 3, urgency: "this_week", group: "Warm Ties", lastTouch: "14d ago" },
-  { id: "17", name: "Ian Schafer", company: "Dentsu", strength: 2, urgency: "this_week", group: "Alumni", lastTouch: "10d ago" },
+  {
+    id: "1",
+    name: "Frank Piechota",
+    title: "Chief Revenue Officer",
+    company: "GroundTruth",
+    strength: 4,
+    urgency: "today",
+    group: "Strong Ties",
+    lastTouchDate: "Mar 27, 2026",
+    lastTouchChannel: "linkedin",
+    lastTouchSummary: "Caught up on his new CRO role. He's focused on rebuilding the enterprise sales motion — seemed open to exploring advisory. Said to follow up in a month.",
+    companyPeers: [
+      { id: "7", name: "Rosie Omeara", title: "VP Marketing" },
+    ],
+  },
+  {
+    id: "2",
+    name: "Corey Ferengui",
+    title: "SVP Partnerships",
+    company: "Aperiam",
+    strength: 2,
+    urgency: "today",
+    group: "Warm Ties",
+    lastTouchDate: "Mar 31, 2026",
+    lastTouchChannel: "email",
+    lastTouchSummary: "Brief email exchange about the AdTech landscape. He mentioned a potential new engagement but didn't give details. Worth following up.",
+  },
+  {
+    id: "3",
+    name: "Khurrum Malik",
+    title: "VP Commerce Media",
+    company: "Walmart",
+    strength: 2,
+    urgency: "today",
+    group: "Strong Ties",
+    lastTouchDate: "Mar 29, 2026",
+    lastTouchChannel: "meeting",
+    lastTouchSummary: "30-min virtual coffee. He's building out the Walmart Connect team and flagged a potential fractional CMO need for a sub-brand launch. Said he'd introduce me to the GM.",
+    companyPeers: [
+      { id: "4", name: "Seth Dallaire", title: "Chief Revenue Officer" },
+    ],
+  },
+  {
+    id: "4",
+    name: "Seth Dallaire",
+    title: "Chief Revenue Officer",
+    company: "Walmart",
+    strength: 2,
+    urgency: "today",
+    group: "Warm Ties",
+    lastTouchDate: "Mar 24, 2026",
+    lastTouchChannel: "linkedin",
+    lastTouchSummary: "Commented on his post about retail media. He liked the comment and DM'd briefly. Mentioned he's in NYC next month.",
+    companyPeers: [
+      { id: "3", name: "Khurrum Malik", title: "VP Commerce Media" },
+    ],
+  },
+  {
+    id: "5",
+    name: "Brent Sudduth",
+    title: "SVP Strategy",
+    company: "NBCU",
+    strength: 1,
+    urgency: "today",
+    group: "Warm Ties",
+    lastTouchDate: "Mar 19, 2026",
+    lastTouchChannel: "email",
+    lastTouchSummary: "Cold outreach follow-up. No reply yet — this would be the third touch. Consider changing the angle.",
+    companyPeers: [
+      { id: "12", name: "Kathy Saporito", title: "EVP Partnerships" },
+    ],
+  },
+  {
+    id: "6",
+    name: "Jonathan Nelson",
+    title: "CEO",
+    company: "Omnicom",
+    strength: 3,
+    urgency: "next_week",
+    group: "Inner Circle",
+    lastTouchDate: "Apr 10, 2026",
+    lastTouchChannel: "meeting",
+    lastTouchSummary: "Dinner in NYC. Long conversation about agency evolution and AI. He's thinking about advisory structures. Promised to connect me with two people at Omnicom Digital.",
+  },
+  {
+    id: "7",
+    name: "Rosie Omeara",
+    title: "VP Marketing",
+    company: "GroundTruth",
+    strength: 4,
+    urgency: "next_week",
+    group: "Strong Ties",
+    lastTouchDate: "Apr 7, 2026",
+    lastTouchChannel: "phone",
+    lastTouchSummary: "30-min call. She's being considered for CMO. Asked for advice on how to navigate board expectations. Very engaged — strong relationship.",
+    companyPeers: [
+      { id: "1", name: "Frank Piechota", title: "Chief Revenue Officer" },
+    ],
+  },
+  {
+    id: "8",
+    name: "Kira Rich",
+    title: "Head of Agency Partnerships",
+    company: "Google",
+    strength: 4,
+    urgency: "needs_scheduling",
+    group: "Warm Ties",
+    companyPeers: [
+      { id: "10", name: "Simon Kahn", title: "Managing Director" },
+      { id: "11", name: "Suzanne Dalcourt", title: "Director, Partnerships" },
+    ],
+  },
+  {
+    id: "9",
+    name: "Conrad Tallariti",
+    title: "Chief Marketing Officer",
+    company: "DoubleVerify",
+    strength: 4,
+    urgency: "needs_scheduling",
+    group: "Strong Ties",
+    note: "HP",
+  },
+  {
+    id: "10",
+    name: "Simon Kahn",
+    title: "Managing Director",
+    company: "Google",
+    strength: 4,
+    urgency: "needs_scheduling",
+    group: "Warm Ties",
+    companyPeers: [
+      { id: "8", name: "Kira Rich", title: "Head of Agency Partnerships" },
+      { id: "11", name: "Suzanne Dalcourt", title: "Director, Partnerships" },
+    ],
+  },
+  {
+    id: "11",
+    name: "Suzanne Dalcourt",
+    title: "Director, Partnerships",
+    company: "Google",
+    strength: 4,
+    urgency: "needs_scheduling",
+    group: "Warm Ties",
+    companyPeers: [
+      { id: "8", name: "Kira Rich", title: "Head of Agency Partnerships" },
+      { id: "10", name: "Simon Kahn", title: "Managing Director" },
+    ],
+  },
+  {
+    id: "12",
+    name: "Kathy Saporito",
+    title: "EVP Partnerships",
+    company: "NBCU",
+    strength: 4,
+    urgency: "needs_scheduling",
+    group: "Strong Ties",
+    companyPeers: [
+      { id: "5", name: "Brent Sudduth", title: "SVP Strategy" },
+    ],
+  },
+  {
+    id: "13",
+    name: "Lisa Utzschneider",
+    title: "Chief Executive Officer",
+    company: "Integral Ad Science",
+    strength: 4,
+    urgency: "needs_scheduling",
+    group: "Strong Ties",
+  },
+  {
+    id: "14",
+    name: "Minna Song",
+    title: "Head of Growth",
+    company: "EliseAI",
+    strength: 4,
+    urgency: "needs_scheduling",
+    group: "Warm Ties",
+    note: "⚠ overdue",
+  },
+  {
+    id: "15",
+    name: "Adrienne Lahens",
+    title: "VP Brand Strategy",
+    company: "Netflix",
+    strength: 3,
+    urgency: "this_week",
+    group: "Strong Ties",
+    lastTouchDate: "Apr 16, 2026",
+    lastTouchChannel: "linkedin",
+    lastTouchSummary: "Connected over her content/commerce post. She replied with interest and suggested a call.",
+  },
+  {
+    id: "16",
+    name: "Chloe Sladden",
+    title: "Partner",
+    company: "Andreessen Horowitz",
+    strength: 3,
+    urgency: "this_week",
+    group: "Warm Ties",
+    lastTouchDate: "Apr 14, 2026",
+    lastTouchChannel: "email",
+    lastTouchSummary: "Sent a note about the Refactor Sprint model. She expressed interest in a portfolio company introduction.",
+  },
+  {
+    id: "17",
+    name: "Ian Schafer",
+    title: "Chief Innovation Officer",
+    company: "Dentsu",
+    strength: 2,
+    urgency: "this_week",
+    group: "Alumni",
+    lastTouchDate: "Apr 18, 2026",
+    lastTouchChannel: "meeting",
+    lastTouchSummary: "Coffee in Midtown. Talked about the AI creative services opportunity. He's open to co-creating something together.",
+  },
 ];
 
-const URGENCY_CONFIG: Record<Urgency, { label: string; helper: string; icon: React.ReactNode; color: string; headerBg: string }> = {
+const URGENCY_CONFIG: Record<Urgency, {
+  label: string;
+  helper: string;
+  icon: React.ReactNode;
+  color: string;
+  headerBg: string;
+}> = {
   today: {
     label: "Urgent — Reach Out Today",
     helper: "Past their scheduled next touch",
@@ -103,36 +315,72 @@ const URGENCY_ORDER: Urgency[] = ["today", "this_week", "next_week", "needs_sche
 
 const SORT_OPTIONS = ["Last contact", "Relationship tier", "Company", "Priority score"];
 
+const CHANNEL_ICONS: Record<Channel, React.ReactNode> = {
+  linkedin: <Linkedin className="h-3.5 w-3.5" />,
+  email: <Mail className="h-3.5 w-3.5" />,
+  phone: <Phone className="h-3.5 w-3.5" />,
+  meeting: <Video className="h-3.5 w-3.5" />,
+  other: <MessageSquare className="h-3.5 w-3.5" />,
+};
+
+const CHANNEL_LABELS: Record<Channel, string> = {
+  linkedin: "LinkedIn",
+  email: "Email",
+  phone: "Phone",
+  meeting: "Meeting",
+  other: "Other",
+};
+
+const NEXT_CONTACT_OPTIONS = [
+  { label: "ASAP", value: "asap" },
+  { label: "Next week", value: "next_week" },
+  { label: "2 weeks", value: "2_weeks" },
+  { label: "1 month", value: "1_month" },
+  { label: "3 months", value: "3_months" },
+  { label: "Custom…", value: "custom" },
+];
+
+const CADENCE_OPTIONS = [
+  { label: "No repeat", value: "none" },
+  { label: "Monthly", value: "monthly" },
+  { label: "Quarterly", value: "quarterly" },
+  { label: "Every 6 months", value: "6_months" },
+  { label: "Annually", value: "annually" },
+];
+
 // ---------------------------------------------------------------------------
-// Main layout
+// Main layout — 3 columns
 // ---------------------------------------------------------------------------
 
 export function CommunicationsClient() {
-  const [activeGroup, setActiveGroup] = useState("All");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listView, setListView] = useState<"list" | "grid">("list");
   const [sort, setSort] = useState("Last contact");
 
-  const groups = ["All", ...RELATIONSHIP_GROUPS];
-
-  const filteredForGrid = WIRE_CONTACTS.filter((c) => {
-    if (activeGroup !== "All" && c.group !== activeGroup) return false;
-    return true;
-  });
+  const selectedContact = selectedId
+    ? WIRE_CONTACTS.find((c) => c.id === selectedId) ?? null
+    : null;
 
   const filteredForList = WIRE_CONTACTS.filter((c) => {
     if (!query.trim()) return true;
     const q = query.toLowerCase();
-    return c.name.toLowerCase().includes(q) || c.company.toLowerCase().includes(q);
+    return (
+      c.name.toLowerCase().includes(q) ||
+      c.company.toLowerCase().includes(q)
+    );
   });
+
+  const handleSelect = (id: string) => {
+    setSelectedId((prev) => (prev === id ? null : id));
+  };
 
   return (
     <div className="flex h-[calc(100vh-3rem)] overflow-hidden">
       {/* ------------------------------------------------------------------ */}
       {/* LEFT COLUMN — Contact list                                          */}
       {/* ------------------------------------------------------------------ */}
-      <aside className="flex w-80 shrink-0 flex-col border-r bg-card/50">
+      <aside className="flex w-72 shrink-0 flex-col border-r bg-card/50">
         <div className="border-b p-3 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold tracking-tight">Contacts</h2>
@@ -179,7 +427,6 @@ export function CommunicationsClient() {
             </select>
           </div>
 
-          {/* Wireframe placeholder filters */}
           <div className="flex flex-wrap gap-1">
             {["Urgent", "This week", "Needs cadence"].map((chip) => (
               <button
@@ -196,13 +443,14 @@ export function CommunicationsClient() {
         <div className="flex-1 overflow-y-auto divide-y divide-border/50">
           {filteredForList.map((contact) => {
             const urgency = URGENCY_CONFIG[contact.urgency];
+            const isSelected = selectedId === contact.id;
             return (
               <button
                 key={contact.id}
                 type="button"
-                onClick={() => setSelectedId(contact.id === selectedId ? null : contact.id)}
+                onClick={() => handleSelect(contact.id)}
                 className={`w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/40 ${
-                  selectedId === contact.id ? "bg-muted/60" : ""
+                  isSelected ? "bg-muted/60 border-l-2 border-foreground/60" : "border-l-2 border-transparent"
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -217,14 +465,14 @@ export function CommunicationsClient() {
                   </div>
                   <div className="shrink-0 flex flex-col items-end gap-1">
                     <StrengthDots strength={contact.strength} />
-                    {contact.lastTouch ? (
-                      <span className="text-[10px] text-muted-foreground">{contact.lastTouch}</span>
-                    ) : (
-                      <span className={`text-[10px] ${urgency.color}`}>No cadence</span>
-                    )}
+                    {contact.lastTouchDate ? (
+                      <span className="text-[10px] text-muted-foreground">
+                        {contact.lastTouchChannel ? CHANNEL_LABELS[contact.lastTouchChannel] : ""} · {contact.lastTouchDate}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
-                <div className="mt-1">
+                <div className="mt-0.5">
                   <span className={`text-[10px] font-medium ${urgency.color}`}>
                     {urgency.label}
                   </span>
@@ -240,64 +488,189 @@ export function CommunicationsClient() {
       </aside>
 
       {/* ------------------------------------------------------------------ */}
-      {/* RIGHT COLUMN — Working modules                                      */}
+      {/* MIDDLE COLUMN — Outreach Grid                                       */}
       {/* ------------------------------------------------------------------ */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Module 1: Outreach Grid */}
-        <section className="flex flex-col overflow-hidden border-b">
-          <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-2">
-            <div className="flex items-center gap-2">
-              <CalendarClock className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-semibold tracking-tight">Outreach Grid</span>
-              <Badge variant="outline" className="text-[10px]">Who to reach out to, by relationship group</Badge>
-            </div>
-            <Badge variant="secondary" className="text-[10px]">Wireframe · static data</Badge>
+      <div className={`flex flex-col overflow-hidden border-r transition-all ${selectedContact ? "flex-1" : "flex-1"}`}>
+        <div className="flex items-center justify-between border-b bg-muted/20 px-4 py-2 shrink-0">
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-semibold tracking-tight">Outreach Grid</span>
           </div>
+          <Badge variant="secondary" className="text-[10px]">Wireframe · static data</Badge>
+        </div>
 
-          {/* Group tabs */}
-          <div className="flex overflow-x-auto border-b bg-card/40 px-2 py-1 gap-1 scrollbar-none">
-            {groups.map((group) => (
+        <div className="flex-1 overflow-y-auto">
+          {URGENCY_ORDER.map((urgency) => {
+            const contacts = WIRE_CONTACTS.filter((c) => c.urgency === urgency);
+            return (
+              <UrgencySection
+                key={urgency}
+                urgency={urgency}
+                contacts={contacts}
+                selectedId={selectedId}
+                onSelect={handleSelect}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* RIGHT COLUMN — Contact detail                                       */}
+      {/* ------------------------------------------------------------------ */}
+      {selectedContact ? (
+        <ContactDetailPanel
+          contact={selectedContact}
+          onSelectPeer={handleSelect}
+        />
+      ) : (
+        <div className="hidden w-80 shrink-0 items-center justify-center border-l bg-muted/10 text-xs text-muted-foreground lg:flex">
+          <div className="text-center space-y-1 px-6">
+            <User className="mx-auto h-6 w-6 text-muted-foreground/30" />
+            <div>Select a contact to view details</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Contact detail panel
+// ---------------------------------------------------------------------------
+
+function ContactDetailPanel({
+  contact,
+  onSelectPeer,
+}: {
+  contact: WireContact;
+  onSelectPeer: (id: string) => void;
+}) {
+  const [nextContact, setNextContact] = useState("next_week");
+  const [cadence, setCadence] = useState("quarterly");
+
+  return (
+    <aside className="flex w-80 shrink-0 flex-col border-l bg-card/60 overflow-y-auto">
+      {/* Header */}
+      <div className="border-b p-4 space-y-1">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-base font-semibold tracking-tight leading-tight">{contact.name}</h2>
+            {contact.title ? (
+              <div className="text-xs text-muted-foreground mt-0.5">{contact.title}</div>
+            ) : null}
+          </div>
+          <StrengthDots strength={contact.strength} />
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Building2 className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-medium text-foreground/80">{contact.company}</span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-4 p-4">
+
+        {/* Last contact */}
+        <section className="space-y-1.5">
+          <SectionLabel>Last Contact</SectionLabel>
+          {contact.lastTouchDate ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-sm">
+                {contact.lastTouchChannel ? (
+                  <span className="text-muted-foreground">
+                    {CHANNEL_ICONS[contact.lastTouchChannel]}
+                  </span>
+                ) : null}
+                <span className="font-medium">
+                  {contact.lastTouchChannel
+                    ? CHANNEL_LABELS[contact.lastTouchChannel]
+                    : "Unknown"}
+                </span>
+                <span className="text-muted-foreground">·</span>
+                <span className="text-muted-foreground text-xs">{contact.lastTouchDate}</span>
+              </div>
+              {contact.lastTouchSummary ? (
+                <p className="text-xs leading-relaxed text-foreground/80 rounded-md border bg-muted/30 p-2.5">
+                  {contact.lastTouchSummary}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">No contact recorded yet.</p>
+          )}
+        </section>
+
+        {/* Next contact scheduler */}
+        <section className="space-y-2">
+          <SectionLabel>Schedule Next Touch</SectionLabel>
+          <div className="grid grid-cols-3 gap-1">
+            {NEXT_CONTACT_OPTIONS.map((opt) => (
               <button
-                key={group}
+                key={opt.value}
                 type="button"
-                onClick={() => setActiveGroup(group)}
-                className={`shrink-0 rounded px-2.5 py-1 text-xs transition-colors whitespace-nowrap ${
-                  activeGroup === group
-                    ? "bg-foreground text-background font-medium"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => setNextContact(opt.value)}
+                className={`rounded-md border px-2 py-1.5 text-[11px] font-medium transition-colors ${
+                  nextContact === opt.value
+                    ? "border-foreground/60 bg-foreground text-background"
+                    : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
               >
-                {group}
+                {opt.label}
               </button>
             ))}
           </div>
 
-          {/* Urgency sections */}
-          <div className="flex-1 overflow-y-auto">
-            {URGENCY_ORDER.map((urgency) => {
-              const contacts = filteredForGrid.filter((c) => c.urgency === urgency);
-              return (
-                <UrgencySection
-                  key={urgency}
-                  urgency={urgency}
-                  contacts={contacts}
-                  selectedId={selectedId}
-                  onSelect={setSelectedId}
-                />
-              );
-            })}
+          <div className="flex items-center gap-2">
+            <RefreshCw className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <select
+              value={cadence}
+              onChange={(e) => setCadence(e.target.value)}
+              className="flex-1 bg-transparent text-xs text-muted-foreground border border-border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {CADENCE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </div>
+
+          <Button size="sm" className="w-full">
+            <Calendar className="h-3.5 w-3.5 mr-1.5" />
+            Set Schedule
+          </Button>
         </section>
 
-        {/* Module 2: Placeholder */}
-        <section className="flex flex-1 items-center justify-center bg-muted/10 text-sm text-muted-foreground">
-          <div className="text-center space-y-1">
-            <div className="text-base font-medium text-foreground/50">More modules coming here</div>
-            <div className="text-xs">Message composer · Activity feed · Notes · Analytics</div>
-          </div>
+        {/* Others at company */}
+        {contact.companyPeers?.length ? (
+          <section className="space-y-2">
+            <SectionLabel>
+              Others at {contact.company} ({contact.companyPeers.length})
+            </SectionLabel>
+            <div className="space-y-1">
+              {contact.companyPeers.map((peer) => (
+                <button
+                  key={peer.id}
+                  type="button"
+                  onClick={() => onSelectPeer(peer.id)}
+                  className="w-full flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left transition-colors hover:bg-muted/60 hover:border-foreground/30"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium truncate">{peer.name}</div>
+                    <div className="text-[10px] text-muted-foreground truncate">{peer.title}</div>
+                  </div>
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* Placeholder: more coming */}
+        <section className="rounded-md border border-dashed border-border/50 p-3 text-center text-[11px] text-muted-foreground space-y-0.5">
+          <div className="font-medium text-foreground/50">More coming here</div>
+          <div>Message composer · Activity log · AI draft</div>
         </section>
       </div>
-    </div>
+    </aside>
   );
 }
 
@@ -346,7 +719,7 @@ function UrgencySection({
       </button>
 
       {!collapsed ? (
-        <div className="flex gap-3 overflow-x-auto px-4 py-3 scrollbar-none bg-card/20">
+        <div className="flex gap-3 overflow-x-auto px-4 py-3 bg-card/20">
           {contacts.length ? (
             contacts.map((contact) => (
               <ContactCard
@@ -357,8 +730,7 @@ function UrgencySection({
               />
             ))
           ) : (
-            // Empty slots
-            Array.from({ length: 8 }).map((_, i) => (
+            Array.from({ length: 6 }).map((_, i) => (
               <div
                 key={i}
                 className="h-[80px] w-[130px] shrink-0 rounded-lg border border-dashed border-border/30"
@@ -388,8 +760,10 @@ function ContactCard({
     <button
       type="button"
       onClick={() => onSelect(contact.id)}
-      className={`h-[80px] w-[130px] shrink-0 rounded-lg border bg-card p-2.5 text-left transition-colors hover:border-foreground/40 hover:bg-card/90 ${
-        selected ? "border-foreground/70 ring-1 ring-foreground/30" : "border-border/60"
+      className={`h-[88px] w-[130px] shrink-0 rounded-lg border bg-card p-2.5 text-left transition-colors hover:border-foreground/40 hover:bg-card/90 ${
+        selected
+          ? "border-foreground/70 ring-1 ring-foreground/30"
+          : "border-border/60"
       }`}
     >
       <div className="text-xs font-medium leading-tight line-clamp-2">{contact.name}</div>
@@ -397,7 +771,12 @@ function ContactCard({
       {contact.note ? (
         <div className="mt-1 text-[10px] text-amber-400">{contact.note}</div>
       ) : null}
-      <div className="mt-1.5">
+      {contact.lastTouchChannel ? (
+        <div className="mt-1 flex items-center gap-1 text-muted-foreground">
+          {CHANNEL_ICONS[contact.lastTouchChannel]}
+        </div>
+      ) : null}
+      <div className="mt-1">
         <StrengthDots strength={contact.strength} />
       </div>
     </button>
@@ -405,8 +784,16 @@ function ContactCard({
 }
 
 // ---------------------------------------------------------------------------
-// Strength dots
+// Helpers
 // ---------------------------------------------------------------------------
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {children}
+    </div>
+  );
+}
 
 function StrengthDots({ strength }: { strength: number }) {
   return (
