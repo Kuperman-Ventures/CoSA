@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   Building2,
@@ -18,12 +19,14 @@ import {
   MessageSquare,
   Phone,
   RefreshCw,
+  RotateCcw,
   Search,
   SlidersHorizontal,
   Trash2,
   User,
   Video,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -138,11 +141,47 @@ export function CommunicationsClient({
 }: {
   contacts: CommunicationsContact[];
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listView, setListView] = useState<"list" | "grid">("list");
   const [sort, setSort] = useState<SortOption>("Priority score");
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const today = new Date().toISOString().split("T")[0];
+
+  const requestEmailSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const res = await fetch("/api/dispatch/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestType: "sync_today_emails",
+          sourcePage: "/communications",
+          context: {
+            date: today,
+            instruction:
+              "Fetch all emails sent today from Gmail (Sent folder, after midnight local time). Also pull any HubSpot engagement activity logged today (emails sent, meetings, calls). For each interaction: (1) identify the contact by email address or name, (2) find their row in the rr_recruiters table, (3) upsert a new row into rr_touches with columns: contact_id (rr_recruiters.id), channel ('email'|'linkedin'|'phone'|'meeting'), direction ('outbound'), touched_at (ISO timestamp), brief (1-sentence summary of the interaction). Skip contacts not found in rr_recruiters. Return a markdown summary: how many emails found, how many matched to rr_recruiters contacts, how many rr_touches rows written.",
+            sources: ["gmail_sent", "hubspot_engagements"],
+          },
+        }),
+      });
+      if (!res.ok) throw new Error("Dispatch request failed");
+      toast.success("Email sync requested", {
+        description:
+          "Claude Cowork is fetching Gmail + HubSpot. Check the Dispatch inbox for a summary — then hit Refresh to update the grid.",
+      });
+    } catch {
+      toast.error("Sync request failed", {
+        description: "Could not reach Dispatch. Are you signed in?",
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const activeContacts = useMemo(
     () => contacts.filter((c) => !dismissed.has(c.id)),
@@ -327,10 +366,31 @@ export function CommunicationsClient({
             <span className="text-sm font-semibold tracking-tight">
               Outreach Grid
             </span>
+            <Badge variant="secondary" className="text-[10px]">
+              {activeContacts.length}
+            </Badge>
           </div>
-          <Badge variant="secondary" className="text-[10px]">
-            {activeContacts.length} contacts
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => router.refresh()}
+            >
+              <RotateCcw className="h-3 w-3" />
+              Refresh
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 text-xs border-violet-400/40 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20 hover:border-violet-300/60"
+              onClick={() => void requestEmailSync()}
+              disabled={isSyncing}
+            >
+              <Mail className="h-3 w-3" />
+              {isSyncing ? "Requesting…" : `Sync ${today}`}
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto min-h-0">
