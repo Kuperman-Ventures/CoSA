@@ -37,6 +37,7 @@ import type {
 } from "@/lib/server-actions/communications";
 import {
   dismissCommunicationContact,
+  postDispatchRequest,
   scheduleNextTouch,
 } from "@/lib/server-actions/communications";
 
@@ -155,28 +156,24 @@ export function CommunicationsClient({
     if (isSyncing) return;
     setIsSyncing(true);
     try {
-      const res = await fetch("/api/dispatch/requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestType: "sync_today_emails",
-          sourcePage: "/communications",
-          context: {
-            date: today,
-            instruction:
-              "Fetch all emails sent today from Gmail (Sent folder, after midnight local time). Also pull any HubSpot engagement activity logged today (emails sent, meetings, calls). For each interaction: (1) identify the contact by email address or name, (2) find their row in the rr_recruiters table, (3) upsert a new row into rr_touches with columns: contact_id (rr_recruiters.id), channel ('email'|'linkedin'|'phone'|'meeting'), direction ('outbound'), touched_at (ISO timestamp), brief (1-sentence summary of the interaction). Skip contacts not found in rr_recruiters. Return a markdown summary: how many emails found, how many matched to rr_recruiters contacts, how many rr_touches rows written.",
-            sources: ["gmail_sent", "hubspot_engagements"],
-          },
-        }),
+      const result = await postDispatchRequest({
+        requestType: "sync_today_emails",
+        sourcePage: "/communications",
+        context: {
+          date: today,
+          instruction:
+            "Fetch all emails sent today from Gmail (Sent folder, after midnight local time). Also pull any HubSpot engagement activity logged today (emails sent, meetings, calls). For each interaction: (1) identify the contact by email address or name, (2) find their row in the rr_recruiters table by matching email address or full name, (3) upsert a new row into rr_touches with columns: contact_id (rr_recruiters.id), channel ('email'|'linkedin'|'phone'|'meeting'), direction ('outbound'), touched_at (ISO timestamp of the send), brief (1-sentence summary of the interaction). Skip contacts not found in rr_recruiters. Return a markdown summary: how many interactions found, how many matched to rr_recruiters contacts, how many rr_touches rows written.",
+          sources: ["gmail_sent", "hubspot_engagements"],
+        },
       });
-      if (!res.ok) throw new Error("Dispatch request failed");
+      if (!result.ok) throw new Error(result.error ?? "Dispatch request failed");
       toast.success("Email sync requested", {
         description:
           "Claude Cowork is fetching Gmail + HubSpot. Check the Dispatch inbox for a summary — then hit Refresh to update the grid.",
       });
-    } catch {
+    } catch (err) {
       toast.error("Sync request failed", {
-        description: "Could not reach Dispatch. Are you signed in?",
+        description: err instanceof Error ? err.message : "Unknown error. Check the server logs.",
       });
     } finally {
       setIsSyncing(false);

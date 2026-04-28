@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { createPublicServiceRoleClient } from "@/lib/supabase/server";
 
 // ---------------------------------------------------------------------------
@@ -211,6 +212,54 @@ export async function getCommunicationsData(): Promise<CommunicationsContact[]> 
   } catch (err) {
     console.error("[communications] getCommunicationsData failed", err);
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Post a Dispatch (Claude Cowork) request — service-role bypass so the
+// Communications page works without requiring Supabase auth session.
+// ---------------------------------------------------------------------------
+
+export async function postDispatchRequest(input: {
+  requestType: string;
+  context: Record<string, unknown>;
+  sourcePage: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "supabase_not_configured" };
+  }
+
+  try {
+    // Need the admin client (service role) to both list users and bypass RLS.
+    const admin = createSupabaseAdmin(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false } }
+    );
+
+    // Single-user app: find the first user in auth.users to use as owner_id.
+    const { data: users, error: usersError } = await admin.auth.admin.listUsers({ perPage: 1 });
+    if (usersError || !users?.users?.length) {
+      return { ok: false, error: "no_user_found — make sure at least one user exists in Supabase Auth" };
+    }
+    const ownerId = users.users[0].id;
+
+    const { error } = await admin.from("dispatch_requests").insert({
+      owner_id: ownerId,
+      request_type: input.requestType,
+      context: input.context,
+      source_page: input.sourcePage,
+    });
+
+    if (error) {
+      console.error("[communications] dispatch insert failed", error);
+      return { ok: false, error: error.message };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    console.error("[communications] postDispatchRequest failed", err);
+    return { ok: false, error: String(err) };
   }
 }
 
