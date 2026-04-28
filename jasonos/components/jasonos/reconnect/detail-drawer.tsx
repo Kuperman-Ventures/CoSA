@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   Copy,
   ExternalLink,
@@ -24,7 +24,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
 import { addReconnectNote, setReconnectStatus } from "@/app/actions/reconnect";
-import { sendContactToTriage, setContactTriage } from "@/lib/server-actions/triage";
+import {
+  getFirmContextForContact,
+  sendContactToTriage,
+  setContactTriage,
+  type FirmContext,
+} from "@/lib/server-actions/triage";
+import { FirmContextPanel } from "@/components/jasonos/runners/firm-context-panel";
 import {
   generateDraftFromHistory,
   type DraftSource,
@@ -61,6 +67,17 @@ export function ReconnectDetailDrawer({
 }) {
   const [note, setNote] = useState("");
   const [draftState, setDraftState] = useState({ key: "", text: "", base: "" });
+  const [firmContext, setFirmContext] = useState<FirmContext | null>(null);
+
+  useEffect(() => {
+    if (!contact?.id) return;
+    let active = true;
+    setFirmContext(null);
+    getFirmContextForContact(contact.id)
+      .then((data) => { if (active) setFirmContext(data ?? null); })
+      .catch(() => { if (active) setFirmContext(null); });
+    return () => { active = false; };
+  }, [contact?.id]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [sourceState, setSourceState] = useState<{
     key: string;
@@ -364,6 +381,12 @@ export function ReconnectDetailDrawer({
               </Button>
             </div>
           </section>
+
+          {firmContext ? (
+            <section>
+              <FirmContextPanel context={firmContext} />
+            </section>
+          ) : null}
 
           <section>
             <h3 className="mb-2 text-sm font-semibold tracking-tight">Intent</h3>
