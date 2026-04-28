@@ -414,6 +414,17 @@ function extractEmail(value: string): string {
   return (m?.[1] ?? value).trim().toLowerCase();
 }
 
+/** Returns the display name part of a "Name <email>" header, lower-cased. */
+function extractDisplayName(value: string): string {
+  const m = value.match(/^([^<]+)<[^>]+>/);
+  return (m?.[1] ?? "").trim().replace(/^"|"$/g, "").toLowerCase();
+}
+
+/** Normalize a full name for fuzzy comparison: lowercase, collapse spaces. */
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function oneLineSnippet(body: string | null | undefined): string {
   if (!body) return "";
   return body.replace(/\s+/g, " ").trim().slice(0, 200);
@@ -448,6 +459,21 @@ export async function syncSentToday(): Promise<SyncSentTodayResult> {
       .map((r) => [r.primaryEmail!.toLowerCase(), r])
   );
 
+  // Fallback: match by full name when email isn't linked in jasonos.contacts
+  const nameToRecruiter = new Map<string, TriagedRecruiter>(
+    triaged.map((r) => [normalizeName(r.name), r])
+  );
+
+  function findRecruiter(toHeader: string): TriagedRecruiter | undefined {
+    const email = extractEmail(toHeader);
+    const byEmail = emailToRecruiter.get(email);
+    if (byEmail) return byEmail;
+    // Fall back to display name match
+    const displayName = extractDisplayName(toHeader);
+    if (displayName) return nameToRecruiter.get(displayName);
+    return undefined;
+  }
+
   let skippedUnmatched = 0;
 
   // --- Gmail ---
@@ -467,8 +493,7 @@ export async function syncSentToday(): Promise<SyncSentTodayResult> {
         if (!m.from || !isFromMe(m.from)) continue;
         if (!m.date || new Date(m.date).getTime() < today.getTime()) continue;
 
-        const toEmail = extractEmail(m.to ?? "");
-        const recruiter = emailToRecruiter.get(toEmail);
+        const recruiter = findRecruiter(m.to ?? "");
         if (!recruiter) {
           skippedUnmatched++;
           continue;
