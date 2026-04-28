@@ -159,6 +159,8 @@ export function CommunicationsClient({
   const [sort, setSort] = useState<SortOption>("Priority score");
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [needsSchedOpen, setNeedsSchedOpen] = useState(true);
+  const [scheduledOpen, setScheduledOpen] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -297,56 +299,97 @@ export function CommunicationsClient({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto divide-y divide-border/50 min-h-0">
-          {filteredForList.length === 0 ? (
-            <div className="py-12 text-center text-xs text-muted-foreground">
-              No contacts found
-            </div>
-          ) : (
-            filteredForList.map((contact) => {
-              const urgency = URGENCY_CONFIG[contact.urgency];
-              const isSelected = selectedId === contact.id;
-              return (
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Needs Scheduling — top, collapsible */}
+          {(() => {
+            const bucket = filteredForList.filter((c) => c.urgency === "needs_scheduling");
+            if (!bucket.length) return null;
+            return (
+              <div className="shrink-0 border-b">
                 <button
-                  key={contact.id}
                   type="button"
-                  onClick={() => handleSelect(contact.id)}
-                  className={`w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/40 border-l-2 ${
-                    isSelected
-                      ? "bg-muted/60 border-foreground/60"
-                      : "border-transparent"
-                  }`}
+                  onClick={() => setNeedsSchedOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">
-                        {contact.name}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {contact.firm ?? "—"}
-                      </div>
-                    </div>
-                    <div className="shrink-0 flex flex-col items-end gap-1">
-                      <StrengthDots strength={contact.strength} />
-                      {contact.lastTouch ? (
-                        <span className="text-[10px] text-muted-foreground">
-                          {CHANNEL_LABELS[contact.lastTouch.channel]} ·{" "}
-                          {fmtDate(contact.lastTouch.touched_at)}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="mt-0.5">
-                    <span
-                      className={`text-[10px] font-medium ${urgency.textColor}`}
-                    >
-                      {urgency.label}
-                    </span>
-                  </div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Needs Scheduling · {bucket.length}
+                  </span>
+                  {needsSchedOpen
+                    ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                    : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
                 </button>
-              );
-            })
-          )}
+                {needsSchedOpen && (
+                  <div className="max-h-52 overflow-y-auto divide-y divide-border/40">
+                    {bucket.map((contact) => (
+                      <LeftListRow
+                        key={contact.id}
+                        contact={contact}
+                        selected={selectedId === contact.id}
+                        onSelect={handleSelect}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Active contacts — middle, scrollable */}
+          <div className="flex-1 overflow-y-auto divide-y divide-border/50 min-h-0">
+            {filteredForList.filter(
+              (c) => c.urgency !== "needs_scheduling" && c.urgency !== "scheduled"
+            ).length === 0 &&
+            filteredForList.filter((c) => c.urgency === "needs_scheduling" || c.urgency === "scheduled").length === 0 ? (
+              <div className="py-12 text-center text-xs text-muted-foreground">
+                No contacts found
+              </div>
+            ) : (
+              filteredForList
+                .filter((c) => c.urgency !== "needs_scheduling" && c.urgency !== "scheduled")
+                .map((contact) => (
+                  <LeftListRow
+                    key={contact.id}
+                    contact={contact}
+                    selected={selectedId === contact.id}
+                    onSelect={handleSelect}
+                  />
+                ))
+            )}
+          </div>
+
+          {/* Scheduled — bottom, collapsible */}
+          {(() => {
+            const bucket = filteredForList.filter((c) => c.urgency === "scheduled");
+            if (!bucket.length) return null;
+            return (
+              <div className="shrink-0 border-t">
+                <button
+                  type="button"
+                  onClick={() => setScheduledOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-sky-900/20 hover:bg-sky-900/30 transition-colors"
+                >
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/80">
+                    Scheduled · {bucket.length}
+                  </span>
+                  {scheduledOpen
+                    ? <ChevronUp className="h-3.5 w-3.5 text-sky-400/60" />
+                    : <ChevronDown className="h-3.5 w-3.5 text-sky-400/60" />}
+                </button>
+                {scheduledOpen && (
+                  <div className="max-h-52 overflow-y-auto divide-y divide-border/40">
+                    {bucket.map((contact) => (
+                      <LeftListRow
+                        key={contact.id}
+                        contact={contact}
+                        selected={selectedId === contact.id}
+                        onSelect={handleSelect}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="border-t p-2 text-center text-[11px] text-muted-foreground shrink-0">
@@ -840,6 +883,51 @@ function ContactCard({
           {fmtDate(contact.lastTouch.touched_at)}
         </div>
       ) : null}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Left column contact row
+// ---------------------------------------------------------------------------
+
+function LeftListRow({
+  contact,
+  selected,
+  onSelect,
+}: {
+  contact: CommunicationsContact;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const urgency = URGENCY_CONFIG[contact.urgency];
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(contact.id)}
+      className={`w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/40 border-l-2 ${
+        selected ? "bg-muted/60 border-foreground/60" : "border-transparent"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-medium truncate">{contact.name}</div>
+          <div className="text-xs text-muted-foreground truncate">{contact.firm ?? "—"}</div>
+        </div>
+        <div className="shrink-0 flex flex-col items-end gap-1">
+          <StrengthDots strength={contact.strength} />
+          {contact.lastTouch ? (
+            <span className="text-[10px] text-muted-foreground">
+              {CHANNEL_LABELS[contact.lastTouch.channel]} · {fmtDate(contact.lastTouch.touched_at)}
+            </span>
+          ) : contact.nextActionDueDate ? (
+            <span className="text-[10px] text-sky-400">{fmtDate(contact.nextActionDueDate)}</span>
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-0.5">
+        <span className={`text-[10px] font-medium ${urgency.textColor}`}>{urgency.label}</span>
+      </div>
     </button>
   );
 }
