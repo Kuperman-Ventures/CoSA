@@ -104,6 +104,7 @@ export interface ActionCard {
   why_now?: string;
   verbs: Verb[];
   snoozed_until?: string;
+  pinned_at?: string | null;
   created_at: string;
   updated_at: string;
   actioned_at?: string;

@@ -1,12 +1,14 @@
 "use client";
 
-import { Sparkles, Star } from "lucide-react";
+import { Sparkles, Star, Pin, PinOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TrackPill } from "./track-pill";
 import { cn } from "@/lib/utils";
 import { type ActionCard as Card, type Verb } from "@/lib/types";
 import { toast } from "sonner";
+import { useTransition } from "react";
+import { pinCardToToday, unpinCard } from "@/lib/server-actions/pin";
 
 const VERB_LABEL: Record<Verb, string> = {
   send: "Send",
@@ -49,9 +51,27 @@ export function ActionCardItem({
   whyNowOverride?: string;
   rank?: number;
 }) {
+  const [pinPending, startPinTransition] = useTransition();
   const primary = card.verbs.find((v) => PRIMARY_VERBS.includes(v));
   const secondary = card.verbs.filter((v) => v !== primary && v !== "tell_claude");
   const why = whyNowOverride ?? card.why_now;
+
+  const isPinnedToday =
+    card.pinned_at != null &&
+    new Date(card.pinned_at).toDateString() === new Date().toDateString();
+
+  const handleTogglePin = () => {
+    startPinTransition(async () => {
+      const result = isPinnedToday
+        ? await unpinCard(card.id)
+        : await pinCardToToday(card.id);
+      if (result.ok) {
+        toast.success(isPinnedToday ? "Unpinned" : "Pinned to today");
+      } else {
+        toast.error(result.error);
+      }
+    });
+  };
 
   const fire = (verb: Verb) =>
     verb === "tell_claude"
@@ -110,6 +130,16 @@ export function ActionCardItem({
             <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{card.subtitle}</p>
           ) : null}
         </div>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          onClick={handleTogglePin}
+          disabled={pinPending}
+          aria-label={isPinnedToday ? "Unpin from today" : "Pin to today"}
+          className={isPinnedToday ? "text-amber-400 hover:text-amber-300" : "text-muted-foreground"}
+        >
+          {isPinnedToday ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
+        </Button>
       </header>
 
       {why ? (

@@ -29,6 +29,7 @@ export interface GlobalState {
   active_intents_breakdown: Record<string, number>;
   open_alerts: number;
   current_date: string;
+  high_priority_untriaged: number;
 }
 
 export interface FirmContext {
@@ -71,6 +72,7 @@ const EMPTY_GLOBAL_STATE: GlobalState = {
   active_intents_breakdown: {},
   open_alerts: 0,
   current_date: new Date().toISOString().slice(0, 10),
+  high_priority_untriaged: 0,
 };
 
 const INTENT_KEYWORDS: Record<string, RegExp> = {
@@ -158,19 +160,36 @@ async function fetchGlobalState(): Promise<GlobalState> {
   const sb = createServiceRoleClient();
   const sbPublic = createPublicServiceRoleClient();
 
-  const [{ data: contacts }, { data: recruiters }, { data: rrStates }, { data: alerts }] =
+  const [{ data: contacts }, { data: recruiters }, { data: rrStates }, { data: alerts }, { data: highPriRecruiters }] =
     await Promise.all([
-      sb.from("contacts").select("id,intent").limit(2000),
+      sb.from("contacts").select("id,intent,source_ids").limit(2000),
       sbPublic.from("rr_recruiters").select("id").limit(2000),
       sbPublic.from("rr_contact_state").select("status"),
       sb.from("alerts").select("id").eq("state", "open").eq("severity", "critical"),
+      sbPublic
+        .from("rr_recruiters")
+        .select("id")
+        .not("strategic_score", "is", null)
+        .gte("strategic_score", 80)
+        .limit(1000),
     ]);
 
   const intentBreakdown: Record<string, number> = {};
+  const untriagedSourceIds = new Set<string>();
+
   for (const contact of contacts ?? []) {
     const intent = getString(contact.intent);
-    if (intent) intentBreakdown[intent] = (intentBreakdown[intent] ?? 0) + 1;
+    if (intent) {
+      intentBreakdown[intent] = (intentBreakdown[intent] ?? 0) + 1;
+    } else {
+      const sourceIds = contact.source_ids as Record<string, unknown> | null;
+      const recruiterId = getString(sourceIds?.recruiter_pipeline_id);
+      if (recruiterId) untriagedSourceIds.add(recruiterId);
+    }
   }
+
+  const highPriIds = new Set((highPriRecruiters ?? []).map((r) => getString(r.id)).filter((id): id is string => !!id));
+  const highPriorityUntriaged = [...untriagedSourceIds].filter((id) => highPriIds.has(id)).length;
 
   const statusCounts = (rrStates ?? []).reduce<Record<string, number>>((acc, row) => {
     const status = getString(row.status);
@@ -187,6 +206,7 @@ async function fetchGlobalState(): Promise<GlobalState> {
     active_intents_breakdown: intentBreakdown,
     open_alerts: alerts?.length ?? 0,
     current_date: new Date().toISOString().slice(0, 10),
+    high_priority_untriaged: highPriorityUntriaged,
   };
 }
 

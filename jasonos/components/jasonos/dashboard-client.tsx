@@ -9,11 +9,22 @@ import { MonitoringGrid } from "@/components/jasonos/monitoring-grid";
 import { RecruiterOutreachCard } from "@/components/jasonos/recruiter-outreach-card";
 import { DailyWrap } from "@/components/jasonos/daily-wrap";
 import { ThisWeekCard } from "@/components/jasonos/this-week-card";
+import { WhatNowCard } from "@/components/jasonos/what-now-card";
+import { PinnedToday } from "@/components/jasonos/pinned-today";
 import { AskDispatchButton } from "@/components/dispatch/AskDispatchButton";
-import type { Track } from "@/lib/types";
+import type { Track, ActionCard } from "@/lib/types";
 import type { DashboardData } from "@/lib/data/dashboard";
+import type { WhatNowAdvice } from "@/lib/server-actions/what-now";
 
-export function DashboardClient({ data }: { data: DashboardData }) {
+export function DashboardClient({
+  data,
+  whatNow,
+  pinned,
+}: {
+  data: DashboardData;
+  whatNow: WhatNowAdvice;
+  pinned: ActionCard[];
+}) {
   const [trackFilter, setTrackFilter] = useState<Track | null>(null);
 
   return (
@@ -30,6 +41,12 @@ export function DashboardClient({ data }: { data: DashboardData }) {
           label="Ask Dispatch for briefing"
         />
       </div>
+
+      <div className="space-y-3">
+        <PinnedToday cards={pinned} />
+        <WhatNowCard initial={whatNow} />
+      </div>
+
       <ThisWeekCard />
       <HeroStrip
         data={data.hero}
