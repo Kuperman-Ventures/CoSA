@@ -96,10 +96,17 @@ export function ReconnectQueueCard({
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <span className="mr-auto text-xs text-muted-foreground">
-          Last contact:{" "}
-          {contact.last_contact_date
-            ? formatDistanceToNow(new Date(contact.last_contact_date), { addSuffix: true })
-            : "No contact yet"}
+          {contact.last_contact_date ? (
+            <>
+              Last contact:{" "}
+              {formatDistanceToNow(new Date(contact.last_contact_date), { addSuffix: true })}
+              {contact.touches[0]?.channel ? (
+                <> · via {channelLabel(contact.touches[0].channel)}</>
+              ) : null}
+            </>
+          ) : (
+            "No contact yet"
+          )}
         </span>
         <AskDispatchButton
           requestType="outreach_draft"
@@ -154,4 +161,17 @@ export function ReconnectQueueCard({
       </div>
     </article>
   );
+}
+
+function channelLabel(channel: string): string {
+  const map: Record<string, string> = {
+    email: "email",
+    linkedin: "LinkedIn",
+    phone: "phone",
+    meeting: "meeting",
+    event: "event",
+    referral: "referral",
+    other: "other",
+  };
+  return map[channel] ?? channel;
 }

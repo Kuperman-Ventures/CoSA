@@ -20,6 +20,7 @@ import { ReconnectQueueCard } from "./queue-card";
 import { ReconnectDetailDrawer } from "./detail-drawer";
 import { AddColdTargetDialog } from "./add-cold-target-dialog";
 import { PriorityOutreachStrip } from "./priority-outreach-strip";
+import { ReconnectStatsStrip } from "./stats-strip";
 import type { FirstContactState } from "@/lib/first-contact/types";
 
 type IntentFilter = null | "triaged" | "untriaged" | "triaged_ready" | Intent;
@@ -262,6 +263,14 @@ export function ReconnectClient({
         selected={intentFilter}
         counts={intentCounts}
         onSelect={setIntentFilter}
+      />
+
+      <ReconnectStatsStrip
+        stats={stats}
+        onTriagedReadyClick={() =>
+          setIntentFilter((current) => (current === "triaged_ready" ? null : "triaged_ready"))
+        }
+        triagedReadyActive={intentFilter === "triaged_ready"}
       />
 
       <PriorityOutreachStrip

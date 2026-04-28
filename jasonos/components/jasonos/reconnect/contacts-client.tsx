@@ -364,11 +364,16 @@ function ContactRow({
       <td className="px-3 py-2 text-muted-foreground">{contact.firm}</td>
       <td className="px-3 py-2 text-muted-foreground">{contact.specialty}</td>
       <td className="px-3 py-2 text-muted-foreground">
-        {contact.last_contact_date
-          ? formatDistanceToNow(new Date(contact.last_contact_date), {
-              addSuffix: true,
-            })
-          : "No contact yet"}
+        {contact.last_contact_date ? (
+          <>
+            {formatDistanceToNow(new Date(contact.last_contact_date), { addSuffix: true })}
+            {contact.touches[0]?.channel ? (
+              <span className="text-muted-foreground"> · via {channelLabel(contact.touches[0].channel)}</span>
+            ) : null}
+          </>
+        ) : (
+          "No contact yet"
+        )}
       </td>
       <td className="px-3 py-2">{RECRUITER_STATUS_LABELS[contact.state.status]}</td>
       <td className="px-3 py-2">
@@ -416,6 +421,19 @@ function FilterGroup<T extends string>({
       })}
     </div>
   );
+}
+
+function channelLabel(channel: string): string {
+  const map: Record<string, string> = {
+    email: "email",
+    linkedin: "LinkedIn",
+    phone: "phone",
+    meeting: "meeting",
+    event: "event",
+    referral: "referral",
+    other: "other",
+  };
+  return map[channel] ?? channel;
 }
 
 function toggle<T extends string>(selected: T[], setSelected: (next: T[]) => void) {

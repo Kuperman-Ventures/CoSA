@@ -66,12 +66,12 @@ export function TriageRunner(props: TriageRunnerProps) {
     body.prior_communication
   );
   const scoreItems = [
-    ["Strategic", strategicScore],
-    ["Firm Fit", firmFitScore],
-    ["Practice", practiceScore],
-    ["Recency", recencyScore],
-    ["Signal", signalScore],
-  ].filter((item): item is [string, number] => typeof item[1] === "number");
+    ["Strategic", strategicScore, 100],
+    ["Firm Fit", firmFitScore, 40],
+    ["Practice", practiceScore, 30],
+    ["Recency", recencyScore, 15],
+    ["Signal", signalScore, 15],
+  ].filter((item): item is [string, number, number] => typeof item[1] === "number");
   const outlookHistory = getNonEmptyString(body.outlook_history);
   const aiSummary = getNonEmptyString(body.summary_of_prior_comms);
   const suggestedAngle = getNonEmptyString(body.strategic_recommended_approach);
@@ -169,10 +169,10 @@ export function TriageRunner(props: TriageRunnerProps) {
             {scoreItems.length ? (
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                {scoreItems.map(([label, score], index) => (
+                {scoreItems.map(([label, score, max], index) => (
                   <span key={label} className="text-muted-foreground">
                     {index > 0 ? "· " : null}
-                    <span className="text-foreground">{label}</span> {score}/5
+                    <span className="text-foreground">{label}</span> {score}/{max}
                   </span>
                 ))}
               </div>

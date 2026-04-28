@@ -34,6 +34,7 @@ import { extractFirstName, generateDraft } from "@/lib/triage/draft-templates";
 import type { ReconnectContact, RecruiterStatus } from "@/lib/reconnect/types";
 import type { FirstContactState } from "@/lib/first-contact/types";
 import { RECRUITER_STATUS_LABELS } from "@/lib/reconnect/constants";
+import { SCORE_MAX } from "@/lib/reconnect/score-constants";
 import { TierBadge } from "./tier-badge";
 import { ScoreChip } from "./score-chip";
 import { NotesTimeline } from "./notes-timeline";
@@ -455,18 +456,27 @@ export function ReconnectDetailDrawer({
 
           <section>
             <h3 className="mb-2 text-sm font-semibold tracking-tight">Score Breakdown</h3>
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-              {[
-                ["Firm Fit", contact.firm_fit_score],
-                ["Practice Match", contact.practice_match_score],
-                ["Recency", contact.recency_score],
-                ["Signal", contact.signal_score],
-              ].map(([label, value]) => (
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+              {(
+                [
+                  ["Strategic", contact.strategic_score, SCORE_MAX.strategic],
+                  ["Firm Fit", contact.firm_fit_score, SCORE_MAX.firm_fit],
+                  ["Practice", contact.practice_match_score, SCORE_MAX.practice_match],
+                  ["Recency", contact.recency_score, SCORE_MAX.recency],
+                  ["Signal", contact.signal_score, SCORE_MAX.signal],
+                ] as const
+              ).map(([label, value, max]) => (
                 <div key={label} className="rounded-lg border bg-background/40 p-3">
                   <div className="text-[11px] text-muted-foreground">{label}</div>
-                  <div className="num-mono mt-1 text-lg font-semibold">{value}</div>
+                  <div className="num-mono mt-1 text-lg font-semibold">
+                    {value}
+                    <span className="text-sm font-normal text-muted-foreground">/{max}</span>
+                  </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full bg-orange-400" style={{ width: `${value}%` }} />
+                    <div
+                      className="h-full bg-orange-400"
+                      style={{ width: `${Math.min(100, (value / max) * 100)}%` }}
+                    />
                   </div>
                 </div>
               ))}
