@@ -262,14 +262,16 @@ export function ReconnectDetailDrawer({
                 {contact.title ? `${contact.title} · ` : ""}
                 {contact.firm}
               </SheetDescription>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Badge variant={contact.intent ? "secondary" : "outline"}>
-                  Intent: {contact.intent ? INTENT_LABELS[contact.intent] : "not set"}
-                </Badge>
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={contact.intent ? "secondary" : "outline"}>
+                    Intent: {contact.intent ? INTENT_LABELS[contact.intent] : "not set"}
+                  </Badge>
+                </div>
                 {contact.personal_goal ? (
-                  <span className="text-xs text-muted-foreground">
-                    Goal: {contact.personal_goal}
-                  </span>
+                  <blockquote className="border-l-2 border-foreground/40 pl-3 text-sm italic text-foreground/85">
+                    {contact.personal_goal}
+                  </blockquote>
                 ) : null}
               </div>
             </div>

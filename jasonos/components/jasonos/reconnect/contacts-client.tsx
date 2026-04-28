@@ -360,7 +360,17 @@ function ContactRow({
       <td className="px-3 py-2">
         <ScoreChip score={contact.strategic_score} />
       </td>
-      <td className="px-3 py-2 font-medium">{contact.name}</td>
+      <td className="px-3 py-2">
+        <div className="text-sm font-medium">{contact.name}</div>
+        {contact.title ? (
+          <div className="text-xs text-muted-foreground">{contact.title}</div>
+        ) : null}
+        {contact.personal_goal ? (
+          <div className="mt-1 text-xs italic text-foreground/75">
+            &ldquo;{contact.personal_goal}&rdquo;
+          </div>
+        ) : null}
+      </td>
       <td className="px-3 py-2 text-muted-foreground">{contact.firm}</td>
       <td className="px-3 py-2 text-muted-foreground">{contact.specialty}</td>
       <td className="px-3 py-2 text-muted-foreground">

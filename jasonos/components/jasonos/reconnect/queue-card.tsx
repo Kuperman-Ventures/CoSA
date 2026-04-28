@@ -62,6 +62,11 @@ export function ReconnectQueueCard({
           </div>
           <h2 className="mt-3 text-lg font-semibold tracking-tight">{contact.name}</h2>
           <p className="text-sm text-muted-foreground">{contact.firm}</p>
+          {contact.personal_goal ? (
+            <p className="mt-1.5 text-xs italic text-foreground/75">
+              &ldquo;{contact.personal_goal}&rdquo;
+            </p>
+          ) : null}
         </div>
         <Button
           variant="ghost"
