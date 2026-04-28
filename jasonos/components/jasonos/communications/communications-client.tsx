@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useMemo } from "react";
+import { useState, useTransition, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
@@ -34,11 +34,13 @@ import type {
   CommunicationsContact,
   CommChannel,
   CommUrgency,
+  LastContactContents,
 } from "@/lib/server-actions/communications";
 import {
   dismissCommunicationContact,
-  postDispatchRequest,
   scheduleNextTouch,
+  syncSentToday,
+  getLastContactContents,
 } from "@/lib/server-actions/communications";
 
 // ---------------------------------------------------------------------------
@@ -164,24 +166,16 @@ export function CommunicationsClient({
     if (isSyncing) return;
     setIsSyncing(true);
     try {
-      const result = await postDispatchRequest({
-        requestType: "sync_today_emails",
-        sourcePage: "/communications",
-        context: {
-          date: today,
-          instruction:
-            "Fetch all emails sent today from Gmail (Sent folder, after midnight local time). Also pull any HubSpot engagement activity logged today (emails sent, meetings, calls). For each interaction: (1) identify the contact by email address or name, (2) find their row in the rr_recruiters table by matching email address or full name, (3) upsert a new row into rr_touches with columns: contact_id (rr_recruiters.id), channel ('email'|'linkedin'|'phone'|'meeting'), direction ('outbound'), touched_at (ISO timestamp of the send), brief (1-sentence summary of the interaction). Skip contacts not found in rr_recruiters. Return a markdown summary: how many interactions found, how many matched to rr_recruiters contacts, how many rr_touches rows written.",
-          sources: ["gmail_sent", "hubspot_engagements"],
-        },
-      });
-      if (!result.ok) throw new Error(result.error ?? "Dispatch request failed");
-      toast.success("Email sync requested", {
-        description:
-          "Claude Cowork is fetching Gmail + HubSpot. Check the Dispatch inbox for a summary — then hit Refresh to update the grid.",
-      });
+      const result = await syncSentToday();
+      if (!result.ok) throw new Error(result.error ?? "Sync failed");
+      toast.success(
+        `Synced ${result.written} new touch${result.written === 1 ? "" : "es"}`,
+        { description: `Gmail: ${result.gmail} · HubSpot: ${result.hubspot} · Skipped (unmatched): ${result.skippedUnmatched}` }
+      );
+      router.refresh();
     } catch (err) {
-      toast.error("Sync request failed", {
-        description: err instanceof Error ? err.message : "Unknown error. Check the server logs.",
+      toast.error("Sync failed", {
+        description: err instanceof Error ? err.message : "Check the server logs.",
       });
     } finally {
       setIsSyncing(false);
@@ -356,8 +350,7 @@ export function CommunicationsClient({
         </div>
 
         <div className="border-t p-2 text-center text-[11px] text-muted-foreground shrink-0">
-          {activeContacts.length} contacts ·{" "}
-          <span className="italic">Gmail + HubSpot sync coming</span>
+          {activeContacts.length} contacts
         </div>
       </aside>
 
@@ -393,7 +386,7 @@ export function CommunicationsClient({
               disabled={isSyncing}
             >
               <Mail className="h-3 w-3" />
-              {isSyncing ? "Requesting…" : `Sync ${today}`}
+              {isSyncing ? "Syncing…" : "Sync today"}
             </Button>
           </div>
         </div>
@@ -554,6 +547,9 @@ function ContactDetailPanel({
             </p>
           )}
         </section>
+
+        {/* Last contact contents */}
+        <LastContactContentsSection contactId={contact.id} />
 
         {/* Next touch scheduler */}
         <section className="space-y-2">
@@ -845,6 +841,81 @@ function ContactCard({
         </div>
       ) : null}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Last Contact Contents — lazy-fetches Gmail / HubSpot email body
+// ---------------------------------------------------------------------------
+
+function LastContactContentsSection({ contactId }: { contactId: string }) {
+  const [state, setState] = useState<"idle" | "loading" | "loaded" | "empty" | "error">("idle");
+  const [content, setContent] = useState<LastContactContents | null>(null);
+
+  useEffect(() => {
+    setState("loading");
+    setContent(null);
+    getLastContactContents(contactId)
+      .then((c) => {
+        if (!c) { setState("empty"); return; }
+        setContent(c);
+        setState("loaded");
+      })
+      .catch(() => setState("error"));
+  }, [contactId]);
+
+  return (
+    <section className="space-y-1.5">
+      <SectionLabel>Last Contact Contents</SectionLabel>
+      {state === "loading" ? (
+        <p className="text-xs text-muted-foreground italic">Fetching from Gmail + HubSpot…</p>
+      ) : state === "empty" ? (
+        <p className="text-xs text-muted-foreground italic">
+          No email found in Gmail or HubSpot.
+        </p>
+      ) : state === "error" ? (
+        <p className="text-xs text-muted-foreground italic">
+          Could not load. Check integrations or hit Refresh.
+        </p>
+      ) : content ? (
+        <div className="space-y-1.5 rounded-md border bg-muted/30 p-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-[11px] font-medium leading-snug truncate">
+              {content.subject ?? "(no subject)"}
+            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              <span
+                className={`text-[9px] px-1 py-0.5 rounded border ${
+                  content.direction === "inbound"
+                    ? "border-blue-500/40 text-blue-400"
+                    : "border-emerald-500/40 text-emerald-400"
+                }`}
+              >
+                {content.direction}
+              </span>
+              <span className="text-[9px] text-muted-foreground uppercase tracking-wide">
+                {content.source}
+              </span>
+            </div>
+          </div>
+          <div className="text-[10px] text-muted-foreground">{fmtDate(content.sentAt)}</div>
+          <p className="text-xs leading-relaxed text-foreground/80 whitespace-pre-wrap line-clamp-8">
+            {content.body}
+          </p>
+          {content.threadUrl ? (
+            <a
+              href={content.threadUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Link2 className="h-3 w-3" />
+              Open in {content.source === "gmail" ? "Gmail" : "HubSpot"}
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

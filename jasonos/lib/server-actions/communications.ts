@@ -2,7 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
-import { createPublicServiceRoleClient } from "@/lib/supabase/server";
+import {
+  createPublicServiceRoleClient,
+  createServiceRoleClient,
+} from "@/lib/supabase/server";
+import {
+  searchGmailThreads,
+  getGmailThread,
+} from "@/lib/integrations/gmail";
+import {
+  getHubSpotContactActivities,
+} from "@/lib/integrations/hubspot";
+
+// Kupe's known outbound email addresses (v1 hardcode — update if addresses change)
+const MY_EMAILS = ["jason@kupermanadvisors.com", "jskuperman@gmail.com"];
 
 // ---------------------------------------------------------------------------
 // Types
@@ -328,4 +341,336 @@ export async function scheduleNextTouch(
     { onConflict: "contact_id" }
   );
   revalidatePath("/communications");
+}
+
+// ---------------------------------------------------------------------------
+// syncSentToday — in-process Gmail + HubSpot sync, writes rr_touches rows
+// Requires migration 0011 to be applied first (adds source/external_id cols).
+// ---------------------------------------------------------------------------
+
+interface TouchUpsert {
+  contact_id: string;
+  channel: "email";
+  direction: "outbound";
+  touched_at: string;
+  brief: string;
+  subject: string | null;
+  source: "gmail" | "hubspot";
+  external_id: string;
+  thread_url: string | null;
+}
+
+interface TriagedRecruiter {
+  recruiterId: string;
+  name: string;
+  primaryEmail: string | null;
+  hubspotContactId: string | null;
+}
+
+async function getActiveTriagedRecruitersWithEmail(): Promise<TriagedRecruiter[]> {
+  const sbPublic = createPublicServiceRoleClient();
+  const sbJasonos = createServiceRoleClient();
+
+  const [{ data: recruiters }, { data: dismissedStates }] = await Promise.all([
+    sbPublic.from("rr_recruiters").select("id,name,hubspot_contact_id"),
+    sbPublic.from("rr_contact_state").select("contact_id").eq("status", "dismissed"),
+  ]);
+
+  if (!recruiters?.length) return [];
+
+  const dismissedIds = new Set((dismissedStates ?? []).map((s) => s.contact_id as string));
+  const active = recruiters.filter((r) => !dismissedIds.has(r.id as string));
+  if (!active.length) return [];
+
+  // Resolve primary email from jasonos.contacts via source_ids->>'recruiter_pipeline_id'
+  const { data: contacts } = await sbJasonos
+    .from("contacts")
+    .select("emails,source_ids")
+    .not("source_ids->>recruiter_pipeline_id", "is", null);
+
+  const rpIdToEmail = new Map<string, string>();
+  for (const c of contacts ?? []) {
+    const si = c.source_ids as Record<string, unknown> | null;
+    const rpId = typeof si?.recruiter_pipeline_id === "string" ? si.recruiter_pipeline_id : null;
+    const email = (c.emails as string[] | null)?.[0] ?? null;
+    if (rpId && email) rpIdToEmail.set(rpId, email);
+  }
+
+  return active.map((r) => ({
+    recruiterId: r.id as string,
+    name: r.name as string,
+    primaryEmail: rpIdToEmail.get(r.id as string) ?? null,
+    hubspotContactId: (r.hubspot_contact_id as string | null) ?? null,
+  }));
+}
+
+function isFromMe(fromHeader: string): boolean {
+  const lower = fromHeader.toLowerCase();
+  return MY_EMAILS.some((e) => lower.includes(e));
+}
+
+function extractEmail(value: string): string {
+  const m = value.match(/<([^>]+)>/);
+  return (m?.[1] ?? value).trim().toLowerCase();
+}
+
+function oneLineSnippet(body: string | null | undefined): string {
+  if (!body) return "";
+  return body.replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
+export interface SyncSentTodayResult {
+  ok: boolean;
+  written: number;
+  gmail: number;
+  hubspot: number;
+  skippedUnmatched: number;
+  error?: string;
+}
+
+export async function syncSentToday(): Promise<SyncSentTodayResult> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, written: 0, gmail: 0, hubspot: 0, skippedUnmatched: 0, error: "supabase_not_configured" };
+  }
+
+  const sbPublic = createPublicServiceRoleClient();
+  const today = startOfToday();
+  const todayEpoch = Math.floor(today.getTime() / 1000);
+
+  const triaged = await getActiveTriagedRecruitersWithEmail();
+  if (!triaged.length) {
+    return { ok: true, written: 0, gmail: 0, hubspot: 0, skippedUnmatched: 0 };
+  }
+
+  const emailToRecruiter = new Map<string, TriagedRecruiter>(
+    triaged
+      .filter((r) => r.primaryEmail)
+      .map((r) => [r.primaryEmail!.toLowerCase(), r])
+  );
+
+  let skippedUnmatched = 0;
+
+  // --- Gmail ---
+  const gmailRows: TouchUpsert[] = [];
+  try {
+    const threads = await searchGmailThreads({
+      query: `in:sent after:${todayEpoch}`,
+      pageSize: 50,
+    });
+
+    for (const t of threads) {
+      const full = await getGmailThread(t.id);
+      if (!full) continue;
+
+      for (const m of full.messages) {
+        // Only my outbound messages sent today (fixed: must have from header AND be from me)
+        if (!m.from || !isFromMe(m.from)) continue;
+        if (!m.date || new Date(m.date).getTime() < today.getTime()) continue;
+
+        const toEmail = extractEmail(m.to ?? "");
+        const recruiter = emailToRecruiter.get(toEmail);
+        if (!recruiter) {
+          skippedUnmatched++;
+          continue;
+        }
+
+        gmailRows.push({
+          contact_id: recruiter.recruiterId,
+          channel: "email",
+          direction: "outbound",
+          touched_at: new Date(m.date).toISOString(),
+          brief: oneLineSnippet(m.plaintextBody) || m.snippet || "Email sent",
+          subject: m.subject ?? null,
+          source: "gmail",
+          external_id: m.id,
+          thread_url: `https://mail.google.com/mail/u/0/#all/${t.id}`,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[communications] gmail sync failed", err);
+  }
+
+  // --- HubSpot ---
+  const hubspotRows: TouchUpsert[] = [];
+  try {
+    await Promise.all(
+      triaged
+        .filter((r) => r.hubspotContactId)
+        .map(async (r) => {
+          const acts = await getHubSpotContactActivities(r.hubspotContactId!, { limit: 5 });
+          for (const a of acts) {
+            if (a.type !== "email") continue;
+            if (!a.createdAt || new Date(a.createdAt).getTime() < today.getTime()) continue;
+            hubspotRows.push({
+              contact_id: r.recruiterId,
+              channel: "email",
+              direction: "outbound",
+              touched_at: new Date(a.createdAt).toISOString(),
+              brief: oneLineSnippet(a.body) || a.subject || "Email",
+              subject: a.subject ?? null,
+              source: "hubspot",
+              external_id: a.id,
+              thread_url: null,
+            });
+          }
+        })
+    );
+  } catch (err) {
+    console.error("[communications] hubspot sync failed", err);
+  }
+
+  // --- Upsert ---
+  const allRows = [...gmailRows, ...hubspotRows];
+  let written = 0;
+
+  if (allRows.length) {
+    try {
+      const { data, error } = await sbPublic
+        .from("rr_touches")
+        .upsert(allRows, { onConflict: "source,external_id", ignoreDuplicates: true })
+        .select("id");
+
+      if (error) {
+        const hint = error.message.includes("column")
+          ? " — Apply migration 0011 in Supabase Dashboard SQL Editor first."
+          : "";
+        return {
+          ok: false,
+          written: 0,
+          gmail: gmailRows.length,
+          hubspot: hubspotRows.length,
+          skippedUnmatched,
+          error: error.message + hint,
+        };
+      }
+      written = data?.length ?? 0;
+    } catch (err) {
+      return {
+        ok: false,
+        written: 0,
+        gmail: gmailRows.length,
+        hubspot: hubspotRows.length,
+        skippedUnmatched,
+        error: String(err),
+      };
+    }
+  }
+
+  revalidatePath("/communications");
+  return { ok: true, written, gmail: gmailRows.length, hubspot: hubspotRows.length, skippedUnmatched };
+}
+
+// ---------------------------------------------------------------------------
+// getLastContactContents — lazy-load most recent email body for right column
+// ---------------------------------------------------------------------------
+
+export interface LastContactContents {
+  source: "gmail" | "hubspot";
+  subject: string | null;
+  body: string;
+  sentAt: string;
+  direction: "inbound" | "outbound";
+  threadUrl: string | null;
+}
+
+async function getRecruiterCommsContext(
+  recruiterId: string
+): Promise<{ primaryEmail: string | null; hubspotContactId: string | null } | null> {
+  const sbPublic = createPublicServiceRoleClient();
+  const sbJasonos = createServiceRoleClient();
+
+  const { data: recruiter } = await sbPublic
+    .from("rr_recruiters")
+    .select("hubspot_contact_id")
+    .eq("id", recruiterId)
+    .maybeSingle();
+
+  if (!recruiter) return null;
+
+  const { data: contact } = await sbJasonos
+    .from("contacts")
+    .select("emails")
+    .filter("source_ids->>recruiter_pipeline_id", "eq", recruiterId)
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    primaryEmail: (contact?.emails as string[] | null)?.[0] ?? null,
+    hubspotContactId: (recruiter.hubspot_contact_id as string | null) ?? null,
+  };
+}
+
+async function fetchGmailLatest(email: string | null): Promise<LastContactContents | null> {
+  if (!email) return null;
+  try {
+    const threads = await searchGmailThreads({
+      query: `from:${email} OR to:${email}`,
+      pageSize: 1,
+    });
+    if (!threads.length) return null;
+    const full = await getGmailThread(threads[0].id);
+    if (!full?.messages?.length) return null;
+
+    const last = full.messages[full.messages.length - 1];
+    const direction: "inbound" | "outbound" =
+      last.from && isFromMe(last.from) ? "outbound" : "inbound";
+
+    return {
+      source: "gmail",
+      subject: last.subject ?? null,
+      body: (last.plaintextBody || last.snippet || "").slice(0, 3000),
+      sentAt: last.date ? new Date(last.date).toISOString() : new Date().toISOString(),
+      direction,
+      threadUrl: `https://mail.google.com/mail/u/0/#all/${threads[0].id}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchHubspotLatest(hubspotContactId: string | null): Promise<LastContactContents | null> {
+  if (!hubspotContactId) return null;
+  try {
+    const acts = await getHubSpotContactActivities(hubspotContactId, { limit: 5 });
+    const emails = acts.filter((a) => a.type === "email" && a.createdAt);
+    if (!emails.length) return null;
+    emails.sort((a, b) => Date.parse(b.createdAt!) - Date.parse(a.createdAt!));
+    const top = emails[0];
+    const portalId = process.env.HUBSPOT_PORTAL_ID;
+    return {
+      source: "hubspot",
+      subject: top.subject ?? null,
+      body: (top.body ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 3000),
+      sentAt: new Date(top.createdAt!).toISOString(),
+      direction: "outbound",
+      threadUrl: portalId
+        ? `https://app.hubspot.com/contacts/${portalId}/record/0-1/${hubspotContactId}/?engagement=${top.id}`
+        : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getLastContactContents(
+  recruiterId: string
+): Promise<LastContactContents | null> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+
+  const ctx = await getRecruiterCommsContext(recruiterId);
+  if (!ctx) return null;
+
+  const [gmail, hubspot] = await Promise.allSettled([
+    fetchGmailLatest(ctx.primaryEmail),
+    fetchHubspotLatest(ctx.hubspotContactId),
+  ]);
+
+  const candidates: LastContactContents[] = [];
+  if (gmail.status === "fulfilled" && gmail.value) candidates.push(gmail.value);
+  if (hubspot.status === "fulfilled" && hubspot.value) candidates.push(hubspot.value);
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => Date.parse(b.sentAt) - Date.parse(a.sentAt));
+  return candidates[0];
 }
