@@ -96,6 +96,7 @@ function addDays(base: Date, n: number): Date {
 function computeUrgency(
   nextActionDueDate: string | null,
   contactedToday: boolean,
+  recentlyContacted: boolean, // outbound touch within last 3 days
 ): CommUrgency {
   if (contactedToday) return "sent_today";
 
@@ -107,6 +108,9 @@ function computeUrgency(
   const diffDays = (due.getTime() - today.getTime()) / 86_400_000;
 
   if (diffDays <= 0) return "due_today";
+  // If already reached out recently and next touch is in the future, they're
+  // scheduled — not an active action item for this week.
+  if (recentlyContacted) return "scheduled";
   if (diffDays <= 7) return "this_week";
   return "scheduled";
 }
@@ -178,6 +182,12 @@ export async function getCommunicationsData(): Promise<CommunicationsContact[]> 
             t.direction === "outbound" && new Date(t.touched_at as string) >= today
         );
 
+        const threeDaysAgo = addDays(today, -3);
+        const recentlyContacted = contactTouches.some(
+          (t) =>
+            t.direction === "outbound" && new Date(t.touched_at as string) >= threeDaysAgo
+        );
+
         const lastTouchRaw = contactTouches[0] ?? null;
         const lastTouch: CommTouch | null = lastTouchRaw
           ? {
@@ -217,7 +227,8 @@ export async function getCommunicationsData(): Promise<CommunicationsContact[]> 
           strength: normalizeStrength(r.strategic_score as number | null),
           urgency: computeUrgency(
             (state?.next_action_due_date as string) ?? null,
-            contactedToday
+            contactedToday,
+            recentlyContacted,
           ),
           lastTouch,
           recentTouches,
