@@ -149,7 +149,7 @@ export async function addContactToNeedsSchedulingQueue(input: {
   // Close the triage card so it no longer appears in the queue
   const { error: cardErr } = await supabase
     .from("cards")
-    .update({ state: "done", updated_at: new Date().toISOString() })
+    .update({ state: "actioned", updated_at: new Date().toISOString() })
     .eq("id", input.cardId);
   if (cardErr) return { ok: false, error: cardErr.message };
 
@@ -211,7 +211,7 @@ export async function skipContactFromTriage(input: {
 
   const { error: cardErr } = await supabase
     .from("cards")
-    .update({ state: "done", updated_at: new Date().toISOString() })
+    .update({ state: "actioned", updated_at: new Date().toISOString() })
     .eq("id", input.cardId);
   if (cardErr) return { ok: false, error: cardErr.message };
 
