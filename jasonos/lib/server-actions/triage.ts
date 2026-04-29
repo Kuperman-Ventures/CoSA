@@ -208,12 +208,35 @@ export async function skipContactFromTriage(input: {
   }
 
   const supabase = createServiceRoleClient();
+  const sbPublic = createPublicServiceRoleClient();
 
   const { error: cardErr } = await supabase
     .from("cards")
     .update({ state: "actioned", updated_at: new Date().toISOString() })
     .eq("id", input.cardId);
   if (cardErr) return { ok: false, error: cardErr.message };
+
+  // Resolve rr_recruiters.id and dismiss the contact from Communications so
+  // they are removed from the Needs to Be Scheduled list.
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("source_ids")
+    .eq("id", input.contactId)
+    .maybeSingle();
+
+  const recruiterId = (contact?.source_ids as Record<string, unknown> | null)
+    ?.recruiter_pipeline_id;
+
+  if (typeof recruiterId === "string" && recruiterId) {
+    await sbPublic.from("rr_contact_state").upsert(
+      {
+        contact_id: recruiterId,
+        status: "dismissed",
+        status_updated_at: new Date().toISOString(),
+      },
+      { onConflict: "contact_id" }
+    );
+  }
 
   await supabase.from("runner_artifacts").insert({
     runner_id: "triage",
@@ -222,12 +245,14 @@ export async function skipContactFromTriage(input: {
     payload: {
       contact_id: input.contactId,
       card_id: input.cardId,
-      action: "skipped_not_queued",
+      action: "skipped_and_dismissed",
+      recruiter_id: recruiterId ?? null,
       triaged_at: new Date().toISOString(),
     },
   });
 
   revalidatePath("/runner/triage");
+  revalidatePath("/communications");
   return { ok: true };
 }
 
