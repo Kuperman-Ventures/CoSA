@@ -21,7 +21,6 @@ const TRACK_TABS: Array<{ track: Track; label: string; always?: boolean }> = [
 
 export function TriageRunnerWrapper({
   initial,
-  skippedContactIds,
   currentTrack,
   counts,
 }: {
@@ -33,7 +32,7 @@ export function TriageRunnerWrapper({
   const router = useRouter();
   const [triagedThisSession, setTriagedThisSession] = useState(0);
   const trackLabel = currentTrack
-    ? TRACK_TABS.find((tab) => tab.track === currentTrack)?.label ?? currentTrack
+    ? (TRACK_TABS.find((tab) => tab.track === currentTrack)?.label ?? currentTrack)
     : null;
 
   return (
@@ -53,20 +52,11 @@ export function TriageRunnerWrapper({
           cardSubtitle={initial.subtitle}
           cardBody={initial.body}
           daysSinceContact={initial.days_since_contact}
-          initialIntent={initial.current_intent}
-          initialGoal={initial.current_goal}
           remainingCount={initial.remaining_count}
           firmContext={initial.firm_context}
           triagedThisSession={triagedThisSession}
           onTriaged={() => setTriagedThisSession((count) => count + 1)}
           onAdvance={() => router.refresh()}
-          onSkip={(contactId) => {
-            const skipped = [...new Set([...skippedContactIds, contactId])];
-            const params = new URLSearchParams();
-            if (currentTrack) params.set("track", currentTrack);
-            params.set("skip", skipped.join(","));
-            router.replace(`/runner/triage?${params}`);
-          }}
         />
       ) : (
         <div className="mx-auto max-w-2xl space-y-4 rounded-xl border bg-card p-12 text-center">
@@ -74,8 +64,8 @@ export function TriageRunnerWrapper({
             {trackLabel ? `All caught up on ${trackLabel}` : "All caught up"}
           </h1>
           <p className="text-muted-foreground">
-            Every reconnect contact in this queue has an intent set. Come back
-            after the next ranker run.
+            All contacts in this queue have been processed. Come back
+            when new contacts are added.
           </p>
           {currentTrack ? (
             <Link href="/runner/triage" className="underline">

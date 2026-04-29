@@ -130,6 +130,107 @@ export async function getUntriagedReconnectCountsByTrack(): Promise<TriageTrackC
   return counts.total > 0 ? counts : getOpenReconnectCountsByTrack(supabase);
 }
 
+/**
+ * Puts a contact into the "Needs to Be Scheduled" queue on the Communications
+ * page and closes the triage card so it does not show again.
+ * Called by the right-arrow action in the Triage runner.
+ */
+export async function addContactToNeedsSchedulingQueue(input: {
+  contactId: string;
+  cardId: string;
+}): Promise<ActionResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, error: "Supabase service role env vars are not configured." };
+  }
+
+  const supabase = createServiceRoleClient();
+  const sbPublic = createPublicServiceRoleClient();
+
+  // Close the triage card so it no longer appears in the queue
+  const { error: cardErr } = await supabase
+    .from("cards")
+    .update({ state: "done", updated_at: new Date().toISOString() })
+    .eq("id", input.cardId);
+  if (cardErr) return { ok: false, error: cardErr.message };
+
+  // Resolve the rr_recruiters.id via contacts.source_ids.recruiter_pipeline_id
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("source_ids")
+    .eq("id", input.contactId)
+    .maybeSingle();
+
+  const recruiterId = (contact?.source_ids as Record<string, unknown> | null)
+    ?.recruiter_pipeline_id;
+
+  if (typeof recruiterId === "string" && recruiterId) {
+    // Ensure this recruiter is active (not dismissed) with no next-touch date
+    // → computeUrgency returns "needs_scheduling" on the Communications page
+    await sbPublic.from("rr_contact_state").upsert(
+      {
+        contact_id: recruiterId,
+        status: "queue",
+        next_action_due_date: null,
+        status_updated_at: new Date().toISOString(),
+      },
+      { onConflict: "contact_id" }
+    );
+  }
+
+  await supabase.from("runner_artifacts").insert({
+    runner_id: "triage",
+    task_id: "contact_triage",
+    schema_version: "v1",
+    payload: {
+      contact_id: input.contactId,
+      card_id: input.cardId,
+      action: "added_to_needs_scheduling",
+      recruiter_id: recruiterId ?? null,
+      triaged_at: new Date().toISOString(),
+    },
+  });
+
+  revalidatePath("/runner/triage");
+  revalidatePath("/communications");
+  return { ok: true };
+}
+
+/**
+ * Permanently closes a triage card without adding the contact to the
+ * scheduling queue. Called by the left-arrow action in the Triage runner.
+ */
+export async function skipContactFromTriage(input: {
+  contactId: string;
+  cardId: string;
+}): Promise<ActionResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, error: "Supabase service role env vars are not configured." };
+  }
+
+  const supabase = createServiceRoleClient();
+
+  const { error: cardErr } = await supabase
+    .from("cards")
+    .update({ state: "done", updated_at: new Date().toISOString() })
+    .eq("id", input.cardId);
+  if (cardErr) return { ok: false, error: cardErr.message };
+
+  await supabase.from("runner_artifacts").insert({
+    runner_id: "triage",
+    task_id: "contact_triage",
+    schema_version: "v1",
+    payload: {
+      contact_id: input.contactId,
+      card_id: input.cardId,
+      action: "skipped_not_queued",
+      triaged_at: new Date().toISOString(),
+    },
+  });
+
+  revalidatePath("/runner/triage");
+  return { ok: true };
+}
+
 export async function sendContactToTriage(input: {
   contactId: string;
   track?: Track;
