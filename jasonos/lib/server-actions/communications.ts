@@ -18,6 +18,18 @@ import {
 // Kupe's known outbound email addresses (v1 hardcode — update if addresses change)
 const MY_EMAILS = ["jason@kupermanadvisors.com", "jskuperman@gmail.com"];
 
+/** Strip +tags so jason+jobalerts@… canonicalises to jason@… */
+function canonicalEmail(raw: string): string {
+  const e = extractEmail(raw);
+  return e.replace(/\+[^@]*@/, "@");
+}
+
+/** Returns true if the To: header resolves to one of the user's own addresses. */
+function isMyOwnAddress(toHeader: string): boolean {
+  const canon = canonicalEmail(toHeader);
+  return MY_EMAILS.some((me) => canonicalEmail(me) === canon);
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -535,6 +547,8 @@ export async function syncSentToday(): Promise<SyncSentTodayResult> {
         // Only my outbound messages sent today (fixed: must have from header AND be from me)
         if (!m.from || !isFromMe(m.from)) continue;
         if (!m.date || new Date(m.date).getTime() < today.getTime()) continue;
+        // Skip emails sent to myself (job alerts, auto-forwards, etc.)
+        if (m.to && isMyOwnAddress(m.to)) continue;
 
         const recruiter = findRecruiter(m.to ?? "");
         if (!recruiter) {
