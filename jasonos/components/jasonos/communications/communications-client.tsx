@@ -153,8 +153,10 @@ type SortOption = (typeof SORT_OPTIONS)[number];
 
 export function CommunicationsClient({
   contacts,
+  gmailConnected = true,
 }: {
   contacts: CommunicationsContact[];
+  gmailConnected?: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -187,7 +189,7 @@ export function CommunicationsClient({
   const [sort, setSort] = useState<SortOption>("Priority score");
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [isSyncing, setIsSyncing] = useState(false);
-  const [gmailNotConnected, setGmailNotConnected] = useState(false);
+  const [gmailNotConnected, setGmailNotConnected] = useState(!gmailConnected);
   const [needsSchedOpen, setNeedsSchedOpen] = useState(true);
   const [sentTodayOpen, setSentTodayOpen] = useState(true);
   const [scheduledOpen, setScheduledOpen] = useState(false);
