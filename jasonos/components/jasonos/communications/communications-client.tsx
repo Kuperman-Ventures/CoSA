@@ -210,9 +210,14 @@ export function CommunicationsClient({
         throw new Error(result.error ?? "Sync failed");
       }
       setGmailNotConnected(false);
+      const skippedLine = result.skippedDetails?.length
+        ? ` · Unmatched: ${result.skippedDetails.map((d) => d.to).join(", ")}`
+        : result.skippedUnmatched
+        ? ` · Skipped: ${result.skippedUnmatched}`
+        : "";
       toast.success(
         `Synced ${result.written} new touch${result.written === 1 ? "" : "es"}`,
-        { description: `Gmail: ${result.gmail} · HubSpot: ${result.hubspot} · Skipped: ${result.skippedUnmatched}` }
+        { description: `Gmail: ${result.gmail} · HubSpot: ${result.hubspot}${skippedLine}` }
       );
       router.refresh();
     } catch (err) {

@@ -452,6 +452,7 @@ export interface SyncSentTodayResult {
   gmail: number;
   hubspot: number;
   skippedUnmatched: number;
+  skippedDetails?: Array<{ to: string; subject?: string }>;
   error?: string;
 }
 
@@ -495,15 +496,28 @@ export async function syncSentToday(): Promise<SyncSentTodayResult> {
 
   function findRecruiter(toHeader: string): TriagedRecruiter | undefined {
     const email = extractEmail(toHeader);
+
+    // 1. Match by linked email in jasonos.contacts
     const byEmail = emailToRecruiter.get(email);
     if (byEmail) return byEmail;
-    // Fall back to display name match
+
+    // 2. Match by display name from "Name <email>" header
     const displayName = extractDisplayName(toHeader);
-    if (displayName) return nameToRecruiter.get(displayName);
+    if (displayName) {
+      const byDisplay = nameToRecruiter.get(displayName);
+      if (byDisplay) return byDisplay;
+    }
+
+    // 3. Derive name from email username (jennifer.fisher@… → "jennifer fisher")
+    const username = email.split("@")[0] ?? "";
+    const nameFromEmail = username.replace(/[._\-+]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    if (nameFromEmail) return nameToRecruiter.get(nameFromEmail);
+
     return undefined;
   }
 
   let skippedUnmatched = 0;
+  const skippedDetails: Array<{ to: string; subject?: string }> = [];
 
   // --- Gmail ---
   const gmailRows: TouchUpsert[] = [];
@@ -525,6 +539,7 @@ export async function syncSentToday(): Promise<SyncSentTodayResult> {
         const recruiter = findRecruiter(m.to ?? "");
         if (!recruiter) {
           skippedUnmatched++;
+          skippedDetails.push({ to: m.to ?? "(no to header)", subject: m.subject ?? undefined });
           continue;
         }
 
@@ -612,7 +627,7 @@ export async function syncSentToday(): Promise<SyncSentTodayResult> {
   }
 
   revalidatePath("/communications");
-  return { ok: true, written, gmail: gmailRows.length, hubspot: hubspotRows.length, skippedUnmatched };
+  return { ok: true, written, gmail: gmailRows.length, hubspot: hubspotRows.length, skippedUnmatched, skippedDetails: skippedDetails.length ? skippedDetails : undefined };
 }
 
 // ---------------------------------------------------------------------------
